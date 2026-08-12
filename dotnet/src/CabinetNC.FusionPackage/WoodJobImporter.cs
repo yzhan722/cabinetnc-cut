@@ -18,15 +18,9 @@ public static class WoodJobImporter
     {
         if (!File.Exists(path) || !path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             return false;
-        try
-        {
-            using var zip = ZipFile.OpenRead(path);
-            return zip.GetEntry("manifest.json") is not null;
-        }
-        catch
-        {
-            return false;
-        }
+        // Require woodjob format — a manufacturing-snapshot zip also has manifest.json.
+        var format = PackageImporter.PeekZipManifestFormat(path);
+        return string.Equals(format, CutPackage.WoodJobFormat, StringComparison.Ordinal);
     }
 
     public static PackageImportResult FromPath(string path)
@@ -464,6 +458,12 @@ public static class WoodJobImporter
             {
                 FeatureId = TryGetString(f, "featureId") ?? TryGetString(f, "id") ?? $"F{fi}",
                 Kind = kind,
+                FaceId = TryGetString(f, "faceId") ?? TryGetString(f, "sourceFace") ?? TryGetString(f, "fromFace"),
+                Through = (f.TryGetProperty("through", out var throughEl) && throughEl.ValueKind == JsonValueKind.True)
+                    || string.Equals(TryGetString(f, "cutType"), "FULL", StringComparison.OrdinalIgnoreCase),
+                GroupId = TryGetString(f, "groupId"),
+                Purpose = TryGetString(f, "purpose"),
+                SourceRelationshipId = TryGetString(f, "sourceRelationshipId"),
                 X = x,
                 Y = y,
                 DiameterMm = TryGetDouble(f, "diameterMm"),

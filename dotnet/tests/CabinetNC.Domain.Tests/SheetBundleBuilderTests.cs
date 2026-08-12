@@ -77,7 +77,13 @@ public class SheetBundleBuilderTests
                     DepthMm = 18.5, Path = [(0, 0), (10, 0), (10, 10), (0, 10)],
                 },
             ],
-            MachineCatalog.Get("fanuc_like_m30"));
+            new MachineProfile
+            {
+                Id = "fanuc_like_m30",
+                Name = "Fanuc-like (M30 end)",
+                Dialect = "fanuc_like",
+                ProgramEnd = "M30",
+            });
         Assert.Contains("M30", nc);
         Assert.Equal("fanuc_like", post.Id);
     }

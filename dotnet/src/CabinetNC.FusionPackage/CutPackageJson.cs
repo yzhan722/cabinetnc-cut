@@ -19,7 +19,9 @@ public static class CutPackageJson
     {
         var dto = new
         {
-            schema = pkg.SchemaName == CutPackage.WoodJobFormat ? CutPackage.Schema : pkg.SchemaName,
+            // This serializer is the editable flat runtime projection. The immutable
+            // manufacturing snapshot is persisted separately.
+            schema = CutPackage.Schema,
             schemaVersion = CutPackage.SchemaVersion,
             jobId = pkg.JobId,
             units = pkg.Units,
@@ -65,6 +67,14 @@ public static class CutPackageJson
                     left = p.EdgeBanding.Left,
                     right = p.EdgeBanding.Right,
                 },
+                faces = p.Faces.Select(f => new
+                {
+                    faceId = f.FaceId,
+                    role = f.Role,
+                    finishId = f.FinishId,
+                    finishName = f.FinishName,
+                    machiningPermission = f.MachiningPermission,
+                }),
                 outline = new
                 {
                     points = p.Outline.Points.Select(pt => new[] { pt.X, pt.Y }),
@@ -81,11 +91,17 @@ public static class CutPackageJson
     {
         featureId = f.FeatureId,
         kind = f.Kind,
+        faceId = f.FaceId,
+        through = f.Through,
+        groupId = f.GroupId,
+        purpose = f.Purpose,
+        sourceRelationshipId = f.SourceRelationshipId,
         x = f.X,
         y = f.Y,
         diameterMm = f.DiameterMm,
         depthMm = f.DepthMm,
         widthMm = f.WidthMm,
         path = f.Path?.Select(pt => new[] { pt.X, pt.Y }),
+        profile = f.Profile?.Select(pt => new[] { pt.X, pt.Y }),
     };
 }

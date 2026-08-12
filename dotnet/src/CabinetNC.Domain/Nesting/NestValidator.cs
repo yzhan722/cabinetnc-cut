@@ -13,7 +13,8 @@ public static class NestValidator
     public static IReadOnlyList<NestCollision> FindAabbCollisions(
         IReadOnlyList<NestPart> parts,
         IReadOnlyList<NestPlacement> placements,
-        double spacingMm = 12)
+        double spacingMm = 12,
+        IReadOnlySet<(string A, string B)>? ignorePairs = null)
     {
         var byId = parts.ToDictionary(p => p.PanelId, p => p);
         var gap = Math.Max(0, spacingMm);
@@ -29,6 +30,7 @@ public static class NestValidator
             {
                 var b = list[j];
                 if (a.SheetIndex != b.SheetIndex) continue;
+                if (ignorePairs is not null && ignorePairs.Contains((a.PanelId, b.PanelId))) continue;
                 if (!byId.TryGetValue(b.PanelId, out var pb)) continue;
                 var boxB = PlacementAabb(pb, b);
                 if (AabbsConflict(boxA, boxB, gap))
@@ -41,7 +43,8 @@ public static class NestValidator
     public static IReadOnlyList<NestCollision> FindPolygonCollisions(
         IReadOnlyList<Panel> panels,
         IReadOnlyList<NestPlacement> placements,
-        double spacingMm = 0)
+        double spacingMm = 0,
+        IReadOnlySet<(string A, string B)>? ignorePairs = null)
     {
         var byId = panels.ToDictionary(p => p.PanelId, p => p);
         var paths = new Dictionary<string, Path64>(StringComparer.Ordinal);
@@ -60,6 +63,7 @@ public static class NestValidator
             {
                 var b = placements[j];
                 if (a.SheetIndex != b.SheetIndex) continue;
+                if (ignorePairs is not null && ignorePairs.Contains((a.PanelId, b.PanelId))) continue;
                 if (!paths.TryGetValue(b.PanelId, out var pathB)) continue;
                 if (PolygonsConflict(pathA, pathB, spacingMm))
                     hits.Add(new(a.PanelId, b.PanelId, a.SheetIndex));

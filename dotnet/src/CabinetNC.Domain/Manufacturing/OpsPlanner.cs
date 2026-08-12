@@ -16,6 +16,7 @@ public sealed record CutOp
     public double? SheetY { get; init; }
     public double? DiameterMm { get; init; }
     public double? DepthMm { get; init; }
+    public double? WidthMm { get; init; }
     public double? StepdownMm { get; init; }
     public IReadOnlyList<(double X, double Y)>? Path { get; init; }
     /// <summary>Disjoint path segments for pocket clear (scan strokes). Prefer over flat Path.</summary>
@@ -88,6 +89,7 @@ public static class OpsPlanner
                         PanelId = panel.PanelId,
                         FeatureId = f.FeatureId,
                         DepthMm = f.DepthMm,
+                        WidthMm = f.WidthMm,
                         Path = path.Select(p => (p.X, p.Y)).ToList(),
                         PanelBounds = bounds,
                         Side = panel.Side ?? panel.Orientation?.MillingFace,

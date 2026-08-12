@@ -68,7 +68,10 @@ public static class PanelEdit
         {
             if (IsHole(f)) return CloneFeature(f, x: f.X + dx, y: f.Y + dy);
             if (IsGroove(f) && f.Path is not null)
-                return CloneFeature(f, path: f.Path.Select(p => new Point2(p.X + dx, p.Y + dy)).ToList());
+                return CloneFeature(
+                    f,
+                    path: f.Path.Select(p => new Point2(p.X + dx, p.Y + dy)).ToList(),
+                    profile: f.Profile?.Select(p => new Point2(p.X + dx, p.Y + dy)).ToList());
             return f;
         }).ToList();
         return ClonePanel(panel, feats);
@@ -103,7 +106,10 @@ public static class PanelEdit
                 return CloneFeature(f, x: q.X, y: q.Y);
             }
             if (IsGroove(f) && f.Path is not null)
-                return CloneFeature(f, path: f.Path.Select(Map).ToList());
+                return CloneFeature(
+                    f,
+                    path: f.Path.Select(Map).ToList(),
+                    profile: f.Profile?.Select(Map).ToList());
             return f;
         }).ToList();
         return ClonePanel(panel, feats, outline);
@@ -143,7 +149,10 @@ public static class PanelEdit
                 return CloneFeature(f, x: q.X, y: q.Y);
             }
             if (IsGroove(f) && f.Path is not null)
-                return CloneFeature(f, path: f.Path.Select(Map).ToList());
+                return CloneFeature(
+                    f,
+                    path: f.Path.Select(Map).ToList(),
+                    profile: f.Profile?.Select(Map).ToList());
             return f;
         }).ToList();
         return ClonePanel(panel, feats, outline);
@@ -157,6 +166,8 @@ public static class PanelEdit
         {
             FeatureId = id,
             Kind = "holeVertical",
+            FaceId = panel.Side ?? panel.Orientation?.MillingFace,
+            Through = (depthMm ?? panel.ThicknessMm) >= panel.ThicknessMm - 0.01,
             X = x,
             Y = y,
             DiameterMm = diameterMm,
@@ -174,6 +185,7 @@ public static class PanelEdit
         {
             FeatureId = id,
             Kind = "grooveVertical",
+            FaceId = panel.Side ?? panel.Orientation?.MillingFace,
             X = path[0].X,
             Y = path[0].Y,
             WidthMm = widthMm,
@@ -199,12 +211,18 @@ public static class PanelEdit
             {
                 FeatureId = f.FeatureId,
                 Kind = f.Kind,
+                FaceId = f.FaceId,
+                Through = f.Through,
+                GroupId = f.GroupId,
+                Purpose = f.Purpose,
+                SourceRelationshipId = f.SourceRelationshipId,
                 X = x ?? f.X,
                 Y = y ?? f.Y,
                 DiameterMm = diameterMm ?? f.DiameterMm,
                 DepthMm = depthMm ?? f.DepthMm,
                 WidthMm = widthMm ?? f.WidthMm,
                 Path = f.Path,
+                Profile = f.Profile,
             };
         }).ToList();
         return ClonePanel(panel, feats);
@@ -244,7 +262,10 @@ public static class PanelEdit
                 return CloneFeature(f, x: q.X, y: q.Y);
             }
             if (IsGroove(f) && f.Path is not null)
-                return CloneFeature(f, path: f.Path.Select(Map).ToList());
+                return CloneFeature(
+                    f,
+                    path: f.Path.Select(Map).ToList(),
+                    profile: f.Profile?.Select(Map).ToList());
             return f;
         }).ToList();
 
@@ -292,6 +313,10 @@ public static class PanelEdit
             Name = panel.Name,
             Material = panel.Material,
             ThicknessMm = panel.ThicknessMm,
+            DecorId = panel.DecorId,
+            SubstrateId = panel.SubstrateId,
+            ColorName = panel.ColorName,
+            SurfaceMode = panel.SurfaceMode,
             Quantity = panel.Quantity,
             AllowedRotations = panel.AllowedRotations,
             GrainDirection = panel.GrainDirection,
@@ -302,6 +327,7 @@ public static class PanelEdit
             EdgeBanding = banding,
             Notes = panel.Notes,
             Side = side ?? panel.Side,
+            Faces = panel.Faces,
         };
     }
 
@@ -312,12 +338,18 @@ public static class PanelEdit
         {
             FeatureId = $"{f.FeatureId}_c",
             Kind = f.Kind,
+            FaceId = f.FaceId,
+            Through = f.Through,
+            GroupId = f.GroupId,
+            Purpose = f.Purpose,
+            SourceRelationshipId = f.SourceRelationshipId,
             X = f.X,
             Y = f.Y,
             DiameterMm = f.DiameterMm,
             DepthMm = f.DepthMm,
             WidthMm = f.WidthMm,
             Path = f.Path?.ToList(),
+            Profile = f.Profile?.ToList(),
         }).ToList();
         // ensure unique feature ids within panel
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -332,12 +364,18 @@ public static class PanelEdit
                 {
                     FeatureId = id,
                     Kind = feats[i].Kind,
+                    FaceId = feats[i].FaceId,
+                    Through = feats[i].Through,
+                    GroupId = feats[i].GroupId,
+                    Purpose = feats[i].Purpose,
+                    SourceRelationshipId = feats[i].SourceRelationshipId,
                     X = feats[i].X,
                     Y = feats[i].Y,
                     DiameterMm = feats[i].DiameterMm,
                     DepthMm = feats[i].DepthMm,
                     WidthMm = feats[i].WidthMm,
                     Path = feats[i].Path,
+                    Profile = feats[i].Profile,
                 };
         }
 
@@ -348,6 +386,7 @@ public static class PanelEdit
                 ProjectId = panel.Identity.ProjectId,
                 ModuleId = panel.Identity.ModuleId,
                 WorkpieceId = newPanelId,
+                Role = panel.Identity.Role,
                 SourcePath = panel.Identity.SourcePath,
                 SourceFormat = panel.Identity.SourceFormat,
             };
@@ -358,6 +397,10 @@ public static class PanelEdit
             Name = panel.Name is null ? null : $"{panel.Name} (copy)",
             Material = panel.Material,
             ThicknessMm = panel.ThicknessMm,
+            DecorId = panel.DecorId,
+            SubstrateId = panel.SubstrateId,
+            ColorName = panel.ColorName,
+            SurfaceMode = panel.SurfaceMode,
             Quantity = panel.Quantity,
             AllowedRotations = panel.AllowedRotations,
             GrainDirection = panel.GrainDirection,
@@ -381,6 +424,7 @@ public static class PanelEdit
                 },
             Notes = panel.Notes,
             Side = panel.Side,
+            Faces = panel.Faces,
         };
     }
 
@@ -421,6 +465,26 @@ public static class PanelEdit
     public static bool IsGroove(PanelFeature f) =>
         f.Kind.Contains("groove", StringComparison.OrdinalIgnoreCase);
 
+    public static bool IsCutout(PanelFeature f) =>
+        f.Kind.Contains("cutout", StringComparison.OrdinalIgnoreCase)
+        || (f.Through && f.Kind.Contains("pocket", StringComparison.OrdinalIgnoreCase)
+            && f.Path is { Count: >= 3 });
+
+    /// <summary>Blind closed floor (LED channels, cups, etc.) — not a through cutout.</summary>
+    public static bool IsPocket(PanelFeature f) =>
+        !f.Through
+        && f.Kind.Contains("pocket", StringComparison.OrdinalIgnoreCase)
+        && (f.Path is { Count: >= 3 } || f.Profile is { Count: >= 3 });
+
+    public static string FeatureDisplayLabel(PanelFeature f)
+    {
+        var purpose = (f.Purpose ?? "").Trim();
+        if (purpose.Length == 0) return "";
+        if (purpose.Contains("led", StringComparison.OrdinalIgnoreCase))
+            return "LED";
+        return purpose;
+    }
+
     static string NextId(Panel panel, string prefix)
     {
         var n = panel.Features.Count + 1;
@@ -437,6 +501,10 @@ public static class PanelEdit
             Name = panel.Name,
             Material = panel.Material,
             ThicknessMm = panel.ThicknessMm,
+            DecorId = panel.DecorId,
+            SubstrateId = panel.SubstrateId,
+            ColorName = panel.ColorName,
+            SurfaceMode = panel.SurfaceMode,
             Quantity = panel.Quantity,
             AllowedRotations = panel.AllowedRotations,
             GrainDirection = panel.GrainDirection,
@@ -447,22 +515,30 @@ public static class PanelEdit
             EdgeBanding = panel.EdgeBanding,
             Notes = panel.Notes,
             Side = panel.Side,
+            Faces = panel.Faces,
         };
 
     static PanelFeature CloneFeature(
         PanelFeature f,
         double? x = null,
         double? y = null,
-        IReadOnlyList<Point2>? path = null) =>
+        IReadOnlyList<Point2>? path = null,
+        IReadOnlyList<Point2>? profile = null) =>
         new()
         {
             FeatureId = f.FeatureId,
             Kind = f.Kind,
+            FaceId = f.FaceId,
+            Through = f.Through,
+            GroupId = f.GroupId,
+            Purpose = f.Purpose,
+            SourceRelationshipId = f.SourceRelationshipId,
             X = x ?? f.X,
             Y = y ?? f.Y,
             DiameterMm = f.DiameterMm,
             DepthMm = f.DepthMm,
             WidthMm = f.WidthMm,
             Path = path ?? f.Path,
+            Profile = profile ?? f.Profile,
         };
 }

@@ -49,6 +49,7 @@
           <Button Content="打开方案…" Click="OnOpenClick" />
           <Button Content="打开工程…" Click="OnOpenProjectClick" />
           <Button Content="保存工程" Click="OnSaveProjectClick" />
+          <Button Content="使用日志" Click="OnOpenUsageLogsClick" ToolTip="打开 app_usage.jsonl / latest（问题排查）" />
           <Button Content="Ping" Click="OnPingClick" />
         </WrapPanel>
       </Grid>
@@ -56,7 +57,13 @@
 
     <Border DockPanel.Dock="Bottom" Padding="12,7" Background="#E8E8E8" BorderBrush="#C8C8C8" BorderThickness="0,1,0,0">
       <Grid>
-        <TextBlock x:Name="StatusText" Text="Ready" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,220,0" FontSize="12" />
+        <DockPanel Margin="0,0,220,0" LastChildFill="True">
+          <ProgressBar x:Name="NestProgress" DockPanel.Dock="Left" Width="140" Height="10"
+                       Margin="0,0,10,0" Minimum="0" Maximum="100" Value="0"
+                       Visibility="Collapsed" VerticalAlignment="Center" />
+          <TextBlock x:Name="StatusText" Text="Ready" VerticalAlignment="Center"
+                     TextTrimming="CharacterEllipsis" FontSize="12" />
+        </DockPanel>
         <TextBlock x:Name="WorkerBadge" Text="Worker: —" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="12" />
       </Grid>
     </Border>
@@ -156,11 +163,48 @@
 
             <Border Grid.Column="0" Background="#F7F7F7" BorderBrush="#C8C8C8" BorderThickness="0,0,1,0" Padding="8">
               <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel>
+                <StackPanel x:Name="LeftRailContent">
                   <TextBlock Text="工程" Style="{StaticResource RailH2}" Margin="0,0,0,4" />
                   <TextBlock x:Name="PackageMeta" Text="尚未加载" TextWrapping="Wrap" FontSize="12" Foreground="#888" Margin="0,0,0,8" />
                   <TextBlock Text="板件" Style="{StaticResource RailH2}" />
-                  <ListBox x:Name="PartList" BorderThickness="0" Background="Transparent" SelectionChanged="OnPartSelected" FontSize="12">
+                  <ListBox x:Name="PartList" BorderThickness="0" Background="Transparent" SelectionChanged="OnPartSelected" FontSize="12"
+                           ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.GroupStyle>
+                      <GroupStyle>
+                        <GroupStyle.ContainerStyle>
+                          <Style TargetType="{x:Type GroupItem}">
+                            <Setter Property="Template">
+                              <Setter.Value>
+                                <ControlTemplate TargetType="{x:Type GroupItem}">
+                                  <Expander IsExpanded="True" Margin="0,4,0,2"
+                                            Foreground="#1A3A5C" FontSize="12" FontWeight="Bold">
+                                    <Expander.Header>
+                                      <TextBlock>
+                                        <TextBlock.Text>
+                                          <MultiBinding StringFormat="{}{0} ({1})">
+                                            <Binding Path="Name" Mode="OneWay" />
+                                            <Binding Path="ItemCount" Mode="OneWay" />
+                                          </MultiBinding>
+                                        </TextBlock.Text>
+                                      </TextBlock>
+                                    </Expander.Header>
+                                    <ItemsPresenter Margin="0,2,0,0" />
+                                  </Expander>
+                                </ControlTemplate>
+                              </Setter.Value>
+                            </Setter>
+                          </Style>
+                        </GroupStyle.ContainerStyle>
+                      </GroupStyle>
+                    </ListBox.GroupStyle>
+                    <ListBox.ItemTemplate>
+                      <DataTemplate>
+                        <StackPanel Margin="8,1,0,3">
+                          <TextBlock Text="{Binding DisplayPartName}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#222" />
+                          <TextBlock Text="{Binding DisplayDetail}" TextWrapping="Wrap" FontSize="11" Foreground="#666" />
+                        </StackPanel>
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
                     <ListBox.ContextMenu>
                       <ContextMenu>
                         <MenuItem Header="复制 (Ctrl+C)" Click="OnGeomDuplicateClick" />
@@ -186,14 +230,46 @@
                     LostMouseCapture="OnCanvasLostCapture">
               <Grid>
                 <skia:SKElement x:Name="CanvasHost" PaintSurface="OnPaintSurface" />
+                <Grid x:Name="NestCanvasChrome" Visibility="Collapsed">
+                  <Border VerticalAlignment="Top" Background="#F7F7F7" BorderBrush="#DDDDDD" BorderThickness="0,0,0,1" Padding="8,5">
+                    <Grid>
+                      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="NestSheetPrevBtn" Content="◀" Click="OnNestSheetPrevClick" Padding="8,2" Margin="0,0,6,0" />
+                        <TextBlock x:Name="NestSheetLabel" Text="大板 1 / 1" VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" />
+                        <Button x:Name="NestSheetNextBtn" Content="▶" Click="OnNestSheetNextClick" Padding="8,2" Margin="6,0,0,0" />
+                      </StackPanel>
+                      <TextBlock x:Name="NestSheetMeta" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                 FontSize="11" Foreground="#666" Text="" />
+                    </Grid>
+                  </Border>
+                  <Border VerticalAlignment="Bottom" Background="#F7F7F7" BorderBrush="#DDDDDD" BorderThickness="0,1,0,0" Padding="8,4">
+                    <WrapPanel>
+                      <TextBlock Text="选中" Foreground="#0066CC" FontSize="11" Margin="0,0,10,0" />
+                      <TextBlock Text="锁定" Foreground="#886600" FontSize="11" Margin="0,0,10,0" />
+                      <TextBlock Text="冲突" Foreground="#CC2222" FontSize="11" Margin="0,0,10,0" />
+                      <TextBlock Text="右侧=待用区" Foreground="#666" FontSize="11" Margin="0,0,10,0" />
+                      <TextBlock Text="间距按板材种类" Foreground="#666" FontSize="11" />
+                    </WrapPanel>
+                  </Border>
+                </Grid>
                 <TextBlock x:Name="CanvasHint" Visibility="Collapsed" IsHitTestVisible="False"
                            HorizontalAlignment="Center" VerticalAlignment="Center"
                            FontSize="14" Foreground="#888" />
+                <!-- Nest awaiting initial nest -->
+                <Border x:Name="NestAwaitingState" Background="#FFFFFF" Visibility="Collapsed">
+                  <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="420">
+                    <TextBlock Text="尚未生成密排" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,8" />
+                    <TextBlock Text="请先到「板材与设备」确认各材料尺寸与间距，再点「初始密排」。"
+                               TextWrapping="Wrap" TextAlignment="Center" Foreground="#666" Margin="0,0,0,16" FontSize="12" />
+                    <Button Content="前往板材与设备" Click="OnGoStockForNestClick"
+                            Padding="14,8" HorizontalAlignment="Center" FontWeight="SemiBold" />
+                  </StackPanel>
+                </Border>
                 <!-- Empty state (no package) -->
                 <Border x:Name="EmptyState" Background="#FFFFFF" Visibility="Visible">
                   <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="420">
                     <TextBlock Text="尚未载入方案" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,8" />
-                    <TextBlock Text="打开 cabinetnc.woodjob（.zip）或 cut-package JSON，再进入板材 / 密排 / 加工档。"
+                    <TextBlock Text="打开 Fusion 导出的 .cnjob（manufacturing-snapshot），再进入板材 / 密排 / 加工档。也支持 woodjob / cut-package。"
                                TextWrapping="Wrap" TextAlignment="Center" Foreground="#666" Margin="0,0,0,16" FontSize="12" />
                     <WrapPanel HorizontalAlignment="Center">
                       <Button x:Name="EmptyLoadBtn" Content="载入方案…" Click="OnOpenClick" Padding="14,8" Margin="0,0,8,0" />
@@ -267,49 +343,160 @@
               </ScrollViewer>
             </Border>
 
-            <!-- Stock / nest rail -->
-            <Border x:Name="NestPane" Grid.Column="2" Background="#F7F7F7" BorderBrush="#C8C8C8" BorderThickness="1,0,0,0" Padding="10" Visibility="Collapsed">
-              <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel>
-                  <TextBlock x:Name="NestPaneTitle" Text="板材 / 密排参数" Style="{StaticResource RailH2}" Margin="0" />
-                  <Grid Margin="0,0,0,6">
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="*" /><ColumnDefinition Width="6" /><ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel>
-                      <TextBlock Text="板宽 mm" FontSize="11" Foreground="#555" />
-                      <TextBox x:Name="StockWidthBox" Text="1220" />
-                    </StackPanel>
-                    <StackPanel Grid.Column="2">
-                      <TextBlock Text="板长 mm" FontSize="11" Foreground="#555" />
-                      <TextBox x:Name="StockLengthBox" Text="2440" />
-                    </StackPanel>
-                  </Grid>
-                  <Grid Margin="0,0,0,6">
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="*" /><ColumnDefinition Width="6" /><ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel>
-                      <TextBlock Text="间距 mm" FontSize="11" Foreground="#555" />
-                      <TextBox x:Name="NestSpacingBox" Text="12" />
-                    </StackPanel>
-                    <StackPanel Grid.Column="2">
-                      <TextBlock Text="边距 mm" FontSize="11" Foreground="#555" />
-                      <TextBox x:Name="NestBorderBox" Text="15" />
-                    </StackPanel>
-                  </Grid>
-                  <CheckBox x:Name="NestAllowRotChk" Content="允许旋转排版" IsChecked="True" Margin="0,2,0,8" FontSize="12" />
+            <!-- Stock rail: one parameter box per cnjob material kind -->
+            <Border x:Name="StockPane" Grid.Column="2" Background="#F7F7F7" BorderBrush="#C8C8C8" BorderThickness="1,0,0,0" Padding="10" Visibility="Collapsed">
+              <DockPanel>
+                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                  <TextBlock Text="板材与设备" Style="{StaticResource RailH2}" Margin="0" />
+                  <TextBlock Text="每种板材单独设大板尺寸、密排间距/边距、旋转；勾选 parts-in-part 后小件可排进大件贯通开窗。"
+                             TextWrapping="Wrap" FontSize="11" Foreground="#666" Margin="0,2,0,8" />
                   <TextBlock Text="机型" FontSize="11" Foreground="#555" />
-                  <ComboBox x:Name="MachineCombo" DisplayMemberPath="Name" SelectedValuePath="Id" Margin="0,0,0,8" />
-                  <Button x:Name="NestApplyBtn" Content="应用并重排" Click="OnApplyNestSettingsClick" HorizontalAlignment="Stretch" Margin="0,0,0,4" />
-                  <Button x:Name="NestNcBtn" Content="密排 + 生成加工档" Click="OnNestClick" HorizontalAlignment="Stretch" Margin="0,0,0,12" />
-                  <Button x:Name="NestVerifyPolyBtn" Content="Clipper2 多边形校验" Click="OnNestVerifyPolyClick"
-                          HorizontalAlignment="Stretch" Margin="0,0,0,12" />
-                  <TextBlock Text="排版报告" Style="{StaticResource RailH2}" />
-                  <TextBlock x:Name="NestReportMeta" Text="尚未排版" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" Foreground="#444" Margin="0,0,0,6" />
-                  <ListBox x:Name="NestUnplacedList" BorderThickness="0" Background="Transparent" FontSize="11" />
+                  <ComboBox x:Name="StockMachineCombo" DisplayMemberPath="Name" SelectedValuePath="Id"
+                            Margin="0,0,0,4" SelectionChanged="OnStockMachineChanged" />
                 </StackPanel>
-              </ScrollViewer>
+                <TextBlock x:Name="StockPaneEmpty" DockPanel.Dock="Top"
+                           Text="载入方案后，这里会按板材种类列出参数框。"
+                           TextWrapping="Wrap" Foreground="#888" FontSize="12" Margin="0,8,0,0" />
+                <Button x:Name="StockInitialNestBtn" DockPanel.Dock="Bottom"
+                        Content="初始密排" Click="OnStockInitialNestClick"
+                        Margin="0,10,0,0" Padding="12,8" FontWeight="SemiBold"
+                        HorizontalAlignment="Stretch"
+                        ToolTip="按当前各板材尺寸生成第一版密排，再进入密排页微调" />
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                  <ItemsControl x:Name="StockMaterialCards">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Border Margin="0,0,0,8" Padding="10,8" Background="#FFFFFF"
+                                BorderBrush="#C8C8C8" BorderThickness="1">
+                          <StackPanel>
+                            <TextBlock Text="{Binding Label}" FontWeight="SemiBold" FontSize="12"
+                                       TextWrapping="Wrap" Foreground="#1A3A5C" />
+                            <TextBlock Margin="0,2,0,6" FontSize="11" Foreground="#666">
+                              <TextBlock.Text>
+                                <MultiBinding StringFormat="{}{0} · {1} 件">
+                                  <Binding Path="MaterialId" />
+                                  <Binding Path="PanelCount" />
+                                </MultiBinding>
+                              </TextBlock.Text>
+                            </TextBlock>
+                            <Grid>
+                              <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" /><ColumnDefinition Width="6" /><ColumnDefinition Width="*" />
+                              </Grid.ColumnDefinitions>
+                              <StackPanel>
+                                <TextBlock Text="板宽 mm" FontSize="10" Foreground="#666" />
+                                <TextBox Text="{Binding WidthMmText, UpdateSourceTrigger=PropertyChanged}" />
+                              </StackPanel>
+                              <StackPanel Grid.Column="2">
+                                <TextBlock Text="板长 mm" FontSize="10" Foreground="#666" />
+                                <TextBox Text="{Binding LengthMmText, UpdateSourceTrigger=PropertyChanged}" />
+                              </StackPanel>
+                            </Grid>
+                            <Grid Margin="0,6,0,0">
+                              <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" /><ColumnDefinition Width="6" /><ColumnDefinition Width="*" />
+                              </Grid.ColumnDefinitions>
+                              <StackPanel>
+                                <TextBlock Text="密排间距 mm" FontSize="10" Foreground="#666" />
+                                <TextBox Text="{Binding SpacingMmText, UpdateSourceTrigger=PropertyChanged}" />
+                              </StackPanel>
+                              <StackPanel Grid.Column="2">
+                                <TextBlock Text="边缘距离 mm" FontSize="10" Foreground="#666" />
+                                <TextBox Text="{Binding BorderMmText, UpdateSourceTrigger=PropertyChanged}" />
+                              </StackPanel>
+                            </Grid>
+                            <CheckBox Content="允许90度旋转" IsChecked="{Binding AllowRotate90}"
+                                      Margin="0,8,0,2" FontSize="12" />
+                            <CheckBox Content="允许 parts in part" IsChecked="{Binding AllowPartsInPart}"
+                                      Margin="0,0,0,2" FontSize="12"
+                                      ToolTip="零件嵌套进另一零件的空洞（引擎预留；勾选后写入本材料密排参数）" />
+                            <TextBlock Margin="0,4,0,0" FontSize="10" Foreground="#888"
+                                       Text="{Binding ThicknessHint}" />
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+              </DockPanel>
+            </Border>
+
+            <!-- Nest rail -->
+            <Border x:Name="NestPane" Grid.Column="2" Background="#F7F7F7" BorderBrush="#C8C8C8" BorderThickness="1,0,0,0" Padding="10" Visibility="Collapsed">
+              <DockPanel>
+                <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+                  <Button x:Name="NestApplyBtn" Content="重新密排" Click="OnApplyNestSettingsClick"
+                          HorizontalAlignment="Stretch" Padding="10,8" FontWeight="SemiBold" Margin="0,0,0,6" />
+                  <Button x:Name="NestGuillotineBtn" Content="本张余料线" Click="OnNestGuillotineClick"
+                          HorizontalAlignment="Stretch" Padding="8,6" Margin="0,0,0,4"
+                          ToolTip="按当前大板排版轮廓外 20mm 生成横/竖/L 余料分割线（预览）；余料边 &lt; 400mm 则跳过" />
+                  <Button x:Name="NestNcBtn" Content="生成加工档" Click="OnNestClick"
+                          HorizontalAlignment="Stretch" Padding="8,6" Margin="0,0,0,4" />
+                  <Expander Header="高级" FontSize="12" Margin="0,4,0,0">
+                    <StackPanel Margin="0,6,0,0">
+                      <Button x:Name="NestVerifyPolyBtn" Content="多边形间距校验" Click="OnNestVerifyPolyClick"
+                              HorizontalAlignment="Stretch" Margin="0,0,0,6" />
+                      <TextBlock Text="下列为兼容旧逻辑的全局默认值；正式排版以「板材与设备」各材料为准。"
+                                 TextWrapping="Wrap" FontSize="10" Foreground="#888" Margin="0,0,0,6" />
+                      <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" /><ColumnDefinition Width="6" /><ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                          <TextBlock Text="默认板宽" FontSize="10" Foreground="#666" />
+                          <TextBox x:Name="StockWidthBox" Text="1220" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                          <TextBlock Text="默认板长" FontSize="10" Foreground="#666" />
+                          <TextBox x:Name="StockLengthBox" Text="2440" />
+                        </StackPanel>
+                      </Grid>
+                      <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" /><ColumnDefinition Width="6" /><ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                          <TextBlock Text="默认间距" FontSize="10" Foreground="#666" />
+                          <TextBox x:Name="NestSpacingBox" Text="12" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                          <TextBlock Text="默认边距" FontSize="10" Foreground="#666" />
+                          <TextBox x:Name="NestBorderBox" Text="15" />
+                        </StackPanel>
+                      </Grid>
+                      <CheckBox x:Name="NestAllowRotChk" Content="默认允许旋转" IsChecked="True" FontSize="11" />
+                    </StackPanel>
+                  </Expander>
+                </StackPanel>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                  <StackPanel>
+                    <TextBlock x:Name="NestPaneTitle" Text="密排" Style="{StaticResource RailH2}" Margin="0" />
+                    <TextBlock Text="尺寸 / 间距 / 边距以「板材与设备」各材料种类为准。"
+                               TextWrapping="Wrap" FontSize="11" Foreground="#666" Margin="0,2,0,8" />
+                    <TextBlock Text="当前材料参数" FontSize="11" Foreground="#555" FontWeight="SemiBold" />
+                    <TextBlock x:Name="NestStockSummary" Text="—" TextWrapping="Wrap" FontSize="11"
+                               Foreground="#333" Margin="0,2,0,10" />
+                    <TextBlock Text="排版方式" FontSize="11" Foreground="#555" />
+                    <ComboBox x:Name="NestEngineCombo" SelectedIndex="0" Margin="0,0,0,8">
+                      <ComboBoxItem Tag="nfp" Content="推荐精排（异形友好）" />
+                      <ComboBoxItem Tag="blf" Content="快速矩形" />
+                      <ComboBoxItem Tag="deepnest" Content="实验预览（较慢）" />
+                    </ComboBox>
+                    <TextBlock Text="机型" FontSize="11" Foreground="#555" />
+                    <ComboBox x:Name="MachineCombo" DisplayMemberPath="Name" SelectedValuePath="Id"
+                              Margin="0,0,0,10" SelectionChanged="OnNestMachineChanged" />
+                    <TextBlock Text="排版结果" Style="{StaticResource RailH2}" />
+                    <TextBlock x:Name="NestReportMeta" Text="尚未排版" TextWrapping="Wrap" FontSize="12"
+                               Foreground="#222" Margin="0,2,0,6" />
+                    <TextBlock Text="按材料" FontSize="11" Foreground="#555" FontWeight="SemiBold" Margin="0,2,0,2" />
+                    <ItemsControl x:Name="NestGroupReportList" Margin="0,0,0,8" />
+                    <Expander x:Name="NestWarningsExpander" Header="未排 / 警告" FontSize="12" IsExpanded="False">
+                      <ListBox x:Name="NestUnplacedList" BorderThickness="0" Background="Transparent"
+                               FontSize="11" Margin="0,4,0,0" MaxHeight="180" />
+                    </Expander>
+                  </StackPanel>
+                </ScrollViewer>
+              </DockPanel>
             </Border>
 
             <Border x:Name="NcPane" Grid.Column="2" Background="#1E1E1E" BorderBrush="#C8C8C8" BorderThickness="1,0,0,0" Visibility="Collapsed">

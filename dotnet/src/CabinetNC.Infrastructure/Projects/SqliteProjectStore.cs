@@ -31,6 +31,7 @@ public sealed class SqliteProjectStore
               id INTEGER PRIMARY KEY CHECK (id = 1),
               name TEXT NOT NULL,
               package_json TEXT NOT NULL,
+              source_snapshot_json TEXT,
               machine_id TEXT NOT NULL,
               nest_json TEXT,
               nc_text TEXT,
@@ -38,6 +39,7 @@ public sealed class SqliteProjectStore
             );
             """;
         cmd.ExecuteNonQuery();
+        EnsureColumn(conn, "project", "source_snapshot_json", "TEXT");
     }
 
     public void Save(string dbPath, ProjectDocument doc)
@@ -56,11 +58,12 @@ public sealed class SqliteProjectStore
             cmd.Transaction = tx;
             cmd.CommandText =
                 """
-                INSERT INTO project (id, name, package_json, machine_id, nest_json, nc_text, updated_at)
-                VALUES (1, $name, $pkg, $machine, $nest, $nc, $updated);
+                INSERT INTO project (id, name, package_json, source_snapshot_json, machine_id, nest_json, nc_text, updated_at)
+                VALUES (1, $name, $pkg, $sourceSnapshot, $machine, $nest, $nc, $updated);
                 """;
             cmd.Parameters.AddWithValue("$name", doc.Name);
             cmd.Parameters.AddWithValue("$pkg", doc.PackageJson);
+            cmd.Parameters.AddWithValue("$sourceSnapshot", (object?)doc.SourceSnapshotJson ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$machine", doc.MachineId);
             cmd.Parameters.AddWithValue("$nest", (object?)doc.NestPlacementsJson ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$nc", (object?)doc.NcText ?? DBNull.Value);
@@ -76,17 +79,18 @@ public sealed class SqliteProjectStore
         using var conn = Open(dbPath);
         using var cmd = conn.CreateCommand();
         cmd.CommandText =
-            "SELECT name, package_json, machine_id, nest_json, nc_text, updated_at FROM project WHERE id = 1;";
+            "SELECT name, package_json, source_snapshot_json, machine_id, nest_json, nc_text, updated_at FROM project WHERE id = 1;";
         using var reader = cmd.ExecuteReader();
         if (!reader.Read()) return null;
         return new ProjectDocument
         {
             Name = reader.GetString(0),
             PackageJson = reader.GetString(1),
-            MachineId = reader.GetString(2),
-            NestPlacementsJson = reader.IsDBNull(3) ? null : reader.GetString(3),
-            NcText = reader.IsDBNull(4) ? null : reader.GetString(4),
-            UpdatedAt = DateTimeOffset.TryParse(reader.GetString(5), out var t) ? t : DateTimeOffset.UtcNow,
+            SourceSnapshotJson = reader.IsDBNull(2) ? null : reader.GetString(2),
+            MachineId = reader.GetString(3),
+            NestPlacementsJson = reader.IsDBNull(4) ? null : reader.GetString(4),
+            NcText = reader.IsDBNull(5) ? null : reader.GetString(5),
+            UpdatedAt = DateTimeOffset.TryParse(reader.GetString(6), out var t) ? t : DateTimeOffset.UtcNow,
         };
     }
 
@@ -101,6 +105,21 @@ public sealed class SqliteProjectStore
 
     public static PackageImportResult ImportPackage(ProjectDocument doc) =>
         CutPackageImporter.FromJson(doc.PackageJson);
+
+    static void EnsureColumn(SqliteConnection conn, string table, string column, string type)
+    {
+        using var probe = conn.CreateCommand();
+        probe.CommandText = $"PRAGMA table_info({table});";
+        using var reader = probe.ExecuteReader();
+        while (reader.Read())
+            if (reader.GetString(1).Equals(column, StringComparison.OrdinalIgnoreCase))
+                return;
+        reader.Close();
+
+        using var alter = conn.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {type};";
+        alter.ExecuteNonQuery();
+    }
 
     static SqliteConnection Open(string dbPath)
     {

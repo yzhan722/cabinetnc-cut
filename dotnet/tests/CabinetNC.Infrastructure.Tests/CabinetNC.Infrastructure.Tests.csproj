@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -20,8 +20,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\CabinetNC.Infrastructure\CabinetNC.Infrastructure.csproj" />
-    <ProjectReference Include="..\..\src\CabinetNC.Domain\CabinetNC.Domain.csproj" />
-    <ProjectReference Include="..\..\src\CabinetNC.FusionPackage\CabinetNC.FusionPackage.csproj" />
   </ItemGroup>
 
 </Project>

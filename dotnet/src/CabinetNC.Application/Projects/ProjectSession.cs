@@ -9,8 +9,11 @@ public sealed class ProjectSession
     public CutPackage? Package { get; private set; }
     public string? SourcePath { get; private set; }
     public string? PackageJson { get; private set; }
+    public string? SourceSnapshotJson { get; private set; }
+    /// <summary>Parsed manufacturing-snapshot when the last successful open was a .cnjob / snapshot JSON.</summary>
+    public ManufacturingSnapshot? LastImportSnapshot { get; private set; }
     public string? ProjectDbPath { get; private set; }
-    public string MachineId { get; set; } = "nesting_router_6";
+    public string MachineId { get; set; } = "osai_e4_1325";
     public IReadOnlyList<ValidationIssue> LastWarnings { get; private set; } = [];
     public IReadOnlyList<ValidationIssue> LastErrors { get; private set; } = [];
 
@@ -28,6 +31,8 @@ public sealed class ProjectSession
             Package = result.Package;
             // ponytail: project.db still stores flat cut-package JSON; woodjob zip stays on SourcePath.
             PackageJson = CutPackageJson.Serialize(result.Package);
+            SourceSnapshotJson = result.SourceSnapshotJson;
+            LastImportSnapshot = result.Snapshot ?? TryParseSnapshot(result.SourceSnapshotJson);
             SourcePath = path;
             ProjectDbPath = null;
             ManufacturingDirty = false;
@@ -36,7 +41,10 @@ public sealed class ProjectSession
         return result;
     }
 
-    public PackageImportResult OpenPackageJson(string json, string? sourceLabel = null)
+    public PackageImportResult OpenPackageJson(
+        string json,
+        string? sourceLabel = null,
+        string? sourceSnapshotJson = null)
     {
         var result = CutPackageImporter.FromJson(json);
         LastWarnings = result.Warnings;
@@ -45,11 +53,27 @@ public sealed class ProjectSession
         {
             Package = result.Package;
             PackageJson = json;
+            SourceSnapshotJson = sourceSnapshotJson;
+            LastImportSnapshot = TryParseSnapshot(sourceSnapshotJson);
             SourcePath = sourceLabel;
             ManufacturingDirty = false;
             History.Clear();
         }
         return result;
+    }
+
+    static ManufacturingSnapshot? TryParseSnapshot(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            var parsed = ManufacturingSnapshotImporter.FromJson(json);
+            return parsed.Snapshot;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     public void SetProjectDbPath(string? path) => ProjectDbPath = path;
@@ -119,6 +143,7 @@ public sealed class ProjectSession
         Package = null;
         SourcePath = null;
         PackageJson = null;
+        SourceSnapshotJson = null;
         ProjectDbPath = null;
         LastWarnings = [];
         LastErrors = [];

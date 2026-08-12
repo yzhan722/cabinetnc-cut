@@ -1,4 +1,4 @@
-﻿using CabinetNC.Infrastructure.Projects;
+using CabinetNC.Infrastructure.Projects;
 using CabinetNC.Infrastructure.Library;
 using CabinetNC.FusionPackage;
 
@@ -18,6 +18,7 @@ public class SqliteProjectStoreTests
             var pkgJson = """
                 {"schema":"cabinetnc.cut-package","schemaVersion":1,"panels":[{"panelId":"P1","thicknessMm":18,"outline":{"points":[[0,0],[10,0],[10,10],[0,10]],"closed":true},"features":[]}]}
                 """;
+            var sourceSnapshotJson = """{"schema":"cabinetnc.manufacturing-snapshot","schemaVersion":"1.0.0"}""";
             var nest = SqliteProjectStore.SerializeNest([
                 new NestPlacementDto { PanelId = "P1", SheetIndex = 0, OffsetX = 15, OffsetY = 20, RotationDeg = 0 },
             ]);
@@ -25,7 +26,8 @@ public class SqliteProjectStoreTests
             {
                 Name = "demo",
                 PackageJson = pkgJson,
-                MachineId = "nesting_router_6",
+                SourceSnapshotJson = sourceSnapshotJson,
+                MachineId = "osai_e4_1325",
                 NestPlacementsJson = nest,
                 NcText = "G21\nM2\n",
             });
@@ -33,7 +35,8 @@ public class SqliteProjectStoreTests
             var loaded = store.Load(db);
             Assert.NotNull(loaded);
             Assert.Equal("demo", loaded!.Name);
-            Assert.Equal("nesting_router_6", loaded.MachineId);
+            Assert.Equal("osai_e4_1325", loaded.MachineId);
+            Assert.Equal(sourceSnapshotJson, loaded.SourceSnapshotJson);
             Assert.Contains("G21", loaded.NcText);
             var places = SqliteProjectStore.DeserializeNest(loaded.NestPlacementsJson);
             Assert.Single(places);

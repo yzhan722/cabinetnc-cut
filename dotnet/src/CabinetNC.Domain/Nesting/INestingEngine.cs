@@ -12,7 +12,8 @@ public interface INestingEngine
         NestSettings settings,
         IReadOnlyList<NestSheetSpec> stockTemplates,
         Func<Panel, (double w, double h)> sizeOf,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        IProgress<NestProgressReport>? progress = null);
 }
 
 public sealed class BlfNestingEngine : INestingEngine
@@ -24,10 +25,11 @@ public sealed class BlfNestingEngine : INestingEngine
         NestSettings settings,
         IReadOnlyList<NestSheetSpec> stockTemplates,
         Func<Panel, (double w, double h)> sizeOf,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IProgress<NestProgressReport>? progress = null)
     {
         ct.ThrowIfCancellationRequested();
-        return GroupedBlfNester.Pack(panels, settings, stockTemplates, sizeOf);
+        return GroupedBlfNester.Pack(panels, settings, stockTemplates, sizeOf, ct, progress);
     }
 }
 
@@ -46,8 +48,10 @@ public sealed class AdvancedNestingEngineStub : INestingEngine
         NestSettings settings,
         IReadOnlyList<NestSheetSpec> stockTemplates,
         Func<Panel, (double w, double h)> sizeOf,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IProgress<NestProgressReport>? progress = null)
     {
+        _ = progress;
         if (AlwaysFail)
             throw new InvalidOperationException("advanced_stub: not implemented (no NFP)");
         // Simulate timeout path
@@ -64,9 +68,10 @@ public sealed class NestEngineRequest
     public required NestSettings Settings { get; init; }
     public required IReadOnlyList<NestSheetSpec> StockTemplates { get; init; }
     public required Func<Panel, (double w, double h)> SizeOf { get; init; }
-    /// <summary>preferred | blf | advanced</summary>
+    /// <summary>preferred | blf | advanced/deepnest</summary>
     public string EnginePreference { get; init; } = "preferred";
     public TimeSpan AdvancedTimeout { get; init; } = TimeSpan.FromSeconds(2);
+    public IProgress<NestProgressReport>? Progress { get; init; }
 }
 
 public sealed class NestEngineRunLog
@@ -95,11 +100,22 @@ public sealed class NestEngineRouter
         var sw = Stopwatch.StartNew();
         var pref = (req.EnginePreference ?? "preferred").Trim().ToLowerInvariant();
 
+        void Report(string message, int done = 0, int total = 0) =>
+            req.Progress?.Report(new NestProgressReport
+            {
+                Done = done,
+                Total = total,
+                Message = message,
+            });
+
         if (pref is "blf" or "grouped_blf" or "grouped_blf_v0")
         {
-            var r = _blf.Pack(req.Panels, req.Settings, req.StockTemplates, req.SizeOf, ct);
+            Report("BLF 密排…");
+            var r = ApplyPartsInPart(
+                TagEngine(_blf.Pack(req.Panels, req.Settings, req.StockTemplates, req.SizeOf, ct, req.Progress), _blf.Name),
+                req);
             sw.Stop();
-            return (TagEngine(r, _blf.Name), new NestEngineRunLog
+            return (r, new NestEngineRunLog
             {
                 SelectedEngine = _blf.Name,
                 AttemptedEngine = _blf.Name,
@@ -108,15 +124,20 @@ public sealed class NestEngineRouter
             });
         }
 
-        if (pref is "advanced" or "preferred")
+        if (pref is "advanced" or "deepnest" or "deepnest_next" or "nfp" or "clipper_nfp" or "preferred")
         {
             try
             {
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(req.AdvancedTimeout);
-                var adv = _advanced.Pack(req.Panels, req.Settings, req.StockTemplates, req.SizeOf, cts.Token);
+                Report($"{_advanced.Name} 密排…");
+                var adv = ApplyPartsInPart(
+                    TagEngine(
+                        _advanced.Pack(req.Panels, req.Settings, req.StockTemplates, req.SizeOf, cts.Token, req.Progress),
+                        _advanced.Name),
+                    req);
                 sw.Stop();
-                return (TagEngine(adv, _advanced.Name), new NestEngineRunLog
+                return (adv, new NestEngineRunLog
                 {
                     SelectedEngine = _advanced.Name,
                     AttemptedEngine = _advanced.Name,
@@ -126,24 +147,31 @@ public sealed class NestEngineRouter
             }
             catch (Exception ex) when (ex is InvalidOperationException or TimeoutException or OperationCanceledException)
             {
-                var fallback = _blf.Pack(req.Panels, req.Settings, req.StockTemplates, req.SizeOf, ct);
+                Report("超时/失败 → BLF 回退…");
+                var fallback = ApplyPartsInPart(
+                    TagEngine(
+                        _blf.Pack(req.Panels, req.Settings, req.StockTemplates, req.SizeOf, ct, req.Progress),
+                        "blf_fallback"),
+                    req);
                 sw.Stop();
-                var tagged = TagEngine(fallback, "blf_fallback");
-                return (tagged, new NestEngineRunLog
+                return (fallback, new NestEngineRunLog
                 {
                     SelectedEngine = "blf_fallback",
                     AttemptedEngine = _advanced.Name,
                     FallbackReason = ex.GetType().Name + ": " + ex.Message,
                     ElapsedMs = sw.ElapsedMilliseconds,
-                    UtilizationHintPct = UtilHint(tagged),
+                    UtilizationHintPct = UtilHint(fallback),
                 });
             }
         }
 
         // Unknown preference → BLF
-        var def = _blf.Pack(req.Panels, req.Settings, req.StockTemplates, req.SizeOf, ct);
+        Report("BLF 密排…");
+        var def = ApplyPartsInPart(
+            TagEngine(_blf.Pack(req.Panels, req.Settings, req.StockTemplates, req.SizeOf, ct, req.Progress), _blf.Name),
+            req);
         sw.Stop();
-        return (TagEngine(def, _blf.Name), new NestEngineRunLog
+        return (def, new NestEngineRunLog
         {
             SelectedEngine = _blf.Name,
             AttemptedEngine = pref,
@@ -163,7 +191,15 @@ public sealed class NestEngineRouter
             UnplacedReasons = r.UnplacedReasons,
             GroupReports = r.GroupReports,
             SheetsUsed = r.SheetsUsed,
+            PartInPartSlots = r.PartInPartSlots,
         };
+
+    static NestResult ApplyPartsInPart(NestResult primary, NestEngineRequest req)
+    {
+        var pip = PartsInPartPacker.Apply(
+            primary, req.Panels, req.Settings, req.StockTemplates, req.SizeOf);
+        return TagEngine(pip, primary.Engine);
+    }
 
     static double? UtilHint(NestResult r)
     {
@@ -172,10 +208,12 @@ public sealed class NestEngineRouter
     }
 }
 
-/// <summary>Part-in-part placeholder (not enabled in RC packer).</summary>
+/// <summary>Child panel nested inside a host through-cutout void.</summary>
 public sealed class PartInPartSlot
 {
     public required string HostPanelId { get; init; }
     public required string ChildPanelId { get; init; }
-    public bool Enabled { get; init; }
+    public string? FeatureId { get; init; }
+    public int SheetIndex { get; set; }
+    public bool Enabled { get; init; } = true;
 }

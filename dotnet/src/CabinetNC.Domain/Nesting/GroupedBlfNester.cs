@@ -12,7 +12,9 @@ public static class GroupedBlfNester
         IReadOnlyList<Panel> panels,
         NestSettings settings,
         IReadOnlyList<NestSheetSpec> stockTemplates,
-        Func<Panel, (double w, double h)> sizeOf)
+        Func<Panel, (double w, double h)> sizeOf,
+        CancellationToken ct = default,
+        IProgress<NestProgressReport>? progress = null)
     {
         var groups = panels
             .GroupBy(p => NestGroupKey.From(p.Material, p.ThicknessMm))
@@ -26,25 +28,21 @@ public static class GroupedBlfNester
         var groupReports = new List<NestGroupReport>();
         var sheetCursor = 0;
         var sheetMeta = new List<NestSheetSpec>();
+        var totalPanels = Math.Max(1, panels.Count);
+        var placedCursor = 0;
 
-        foreach (var group in groups)
+        for (var gi = 0; gi < groups.Count; gi++)
         {
+            ct.ThrowIfCancellationRequested();
+            var group = groups[gi];
             var key = group.Key;
             var groupPanels = group.ToList();
-            var parts = groupPanels.Select(p =>
+            progress?.Report(new NestProgressReport
             {
-                var (w, h) = sizeOf(p);
-                return new NestPart
-                {
-                    PanelId = p.PanelId,
-                    WidthMm = w,
-                    HeightMm = h,
-                    MayRotate = settings.PanelMayRotate90(p),
-                    Material = key.Material,
-                    ThicknessMm = key.ThicknessMm,
-                };
-            }).ToList();
-
+                Done = placedCursor,
+                Total = totalPanels,
+                Message = $"BLF · {key} ({gi + 1}/{groups.Count})",
+            });
             var matched = MatchSheets(stockTemplates, key);
             if (matched.Count == 0)
             {
@@ -66,15 +64,32 @@ public static class GroupedBlfNester
                     SheetCount = 0,
                     LocalSheetStart = sheetCursor,
                 });
+                placedCursor += groupPanels.Count;
                 continue;
             }
+
+            var stock = matched[0];
+            var groupSettings = NestStockOverrides.ForGroup(settings, stock);
+            var parts = groupPanels.Select(p =>
+            {
+                var (w, h) = sizeOf(p);
+                return new NestPart
+                {
+                    PanelId = p.PanelId,
+                    WidthMm = w,
+                    HeightMm = h,
+                    MayRotate = groupSettings.PanelMayRotate90(p),
+                    Material = key.Material,
+                    ThicknessMm = key.ThicknessMm,
+                };
+            }).ToList();
 
             var packed = BlfNester.Pack(new NestRequest
             {
                 Parts = parts,
-                SpacingMm = settings.ClearanceMm,
-                BorderMm = settings.MarginMm,
-                AllowRotation = settings.AllowRotation,
+                SpacingMm = groupSettings.ClearanceMm,
+                BorderMm = groupSettings.MarginMm,
+                AllowRotation = groupSettings.AllowRotation,
                 Sheets = matched,
                 SheetWidthMm = matched[0].WidthMm,
                 SheetLengthMm = matched[0].LengthMm,
@@ -138,6 +153,13 @@ public static class GroupedBlfNester
                 LocalSheetStart = localStart,
                 UtilizationPct = sheetArea > 0 ? used / sheetArea * 100 : 0,
             });
+            placedCursor += groupPanels.Count;
+            progress?.Report(new NestProgressReport
+            {
+                Done = placedCursor,
+                Total = totalPanels,
+                Message = $"BLF · {key} 完成 · {packed.Placements.Count}/{groupPanels.Count}",
+            });
         }
 
         return new NestResult
@@ -183,6 +205,9 @@ public static class GroupedBlfNester
             WidthMm = s.WidthMm,
             LengthMm = s.LengthMm,
             BorderMm = s.BorderMm,
+            SpacingMm = s.SpacingMm,
+            AllowRotation = s.AllowRotation,
+            AllowPartsInPart = s.AllowPartsInPart,
             Blocked = s.Blocked,
             Label = string.IsNullOrWhiteSpace(s.Label)
                 ? $"{key.Material}_{key.ThicknessMm:0.##}"
@@ -197,6 +222,9 @@ public static class GroupedBlfNester
             WidthMm = s.WidthMm,
             LengthMm = s.LengthMm,
             BorderMm = s.BorderMm,
+            SpacingMm = s.SpacingMm,
+            AllowRotation = s.AllowRotation,
+            AllowPartsInPart = s.AllowPartsInPart,
             Blocked = [],
             Label = s.Label,
             Material = key.Material,
@@ -222,7 +250,9 @@ public static class NestExportGate
         IReadOnlyList<Panel> panels,
         IReadOnlyList<NestPlacement> placements,
         double clearanceMm,
-        bool requirePlacements = true)
+        bool requirePlacements = true,
+        bool allowAabbOverlap = false,
+        IReadOnlyList<PartInPartSlot>? partInPartSlots = null)
     {
         var errors = new List<string>();
         if (requirePlacements && placements.Count == 0)
@@ -234,10 +264,19 @@ public static class NestExportGate
             return new NestPart { PanelId = p.PanelId, WidthMm = w, HeightMm = h };
         }).ToList();
 
-        foreach (var hit in NestValidator.FindAabbCollisions(parts, placements, clearanceMm))
-            errors.Add($"aabb_gap: {hit.PanelIdA} × {hit.PanelIdB} · S{hit.SheetIndex + 1}");
+        var ignore = partInPartSlots is { Count: > 0 }
+            ? PartsInPartPacker.IgnoreCollisionPairs(partInPartSlots)
+            : null;
 
-        foreach (var hit in NestValidator.FindPolygonCollisions(panels, placements, clearanceMm))
+        // True-shape engines may intentionally overlap bounding boxes while the
+        // actual polygons remain safely separated.
+        if (!allowAabbOverlap)
+        {
+            foreach (var hit in NestValidator.FindAabbCollisions(parts, placements, clearanceMm, ignore))
+                errors.Add($"aabb_gap: {hit.PanelIdA} × {hit.PanelIdB} · S{hit.SheetIndex + 1}");
+        }
+
+        foreach (var hit in NestValidator.FindPolygonCollisions(panels, placements, clearanceMm, ignore))
             errors.Add($"poly_gap: {hit.PanelIdA} × {hit.PanelIdB} · S{hit.SheetIndex + 1}");
 
         // Mixed material/thickness on same sheet index = hard fail

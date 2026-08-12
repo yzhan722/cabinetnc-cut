@@ -1,0 +1,118 @@
+{
+  "schema": "cabinetnc.manufacturing-snapshot",
+  "schemaVersion": "1.0.0",
+  "jobId": "SNAPSHOT-DEMO-001",
+  "units": "mm",
+  "exportedAt": "2026-08-07T00:00:00Z",
+  "source": {
+    "cadApp": "Fusion 360",
+    "pluginId": "fusion360-unified-cabinet-plugin",
+    "pluginVersion": "development",
+    "designName": "Single-side contract demo"
+  },
+  "materials": [
+    {
+      "materialId": "PB-WHITE-18",
+      "substrateId": "particleboard",
+      "displayName": "White Stipple 18mm",
+      "thicknessMm": 18,
+      "decorId": "white-stipple"
+    }
+  ],
+  "workpieces": [
+    {
+      "workpieceId": "WP-LEFT-001",
+      "panelId": "P-LEFT-001",
+      "name": "Left side",
+      "quantity": 1,
+      "identity": {
+        "projectId": "DEMO-KITCHEN",
+        "moduleId": "BASE-01",
+        "role": "left_side"
+      },
+      "material": {
+        "materialId": "PB-WHITE-18",
+        "thicknessMm": 18
+      },
+      "geometry": {
+        "quality": "tessellated",
+        "toleranceMm": 0.1,
+        "outerProfile": {
+          "closed": true,
+          "points": [[0, 0], [560, 0], [560, 720], [0, 720]]
+        },
+        "innerProfiles": [],
+        "nestingPolygon": [[0, 0], [560, 0], [560, 720], [0, 720]]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "exterior",
+          "finish": {
+            "finishId": "white-stipple",
+            "finishName": "White Stipple"
+          },
+          "machiningPermission": "PRIMARY"
+        },
+        {
+          "faceId": "B",
+          "role": "interior",
+          "finish": {
+            "finishId": "white-stipple",
+            "finishName": "White Stipple"
+          },
+          "machiningPermission": "NOT_ALLOWED"
+        }
+      ],
+      "features": [
+        {
+          "featureId": "H-001",
+          "groupId": "CONNECTOR-LEFT",
+          "kind": "bore",
+          "sourceFace": "A",
+          "geometry": {
+            "center": [37, 80],
+            "diameterMm": 5
+          },
+          "depthMm": 12,
+          "through": false,
+          "intent": {
+            "purpose": "connector",
+            "operationType": "SCREW_HOLE_FROM_RELATIONSHIP",
+            "sourceRelationshipId": "REL-001"
+          }
+        },
+        {
+          "featureId": "G-001",
+          "kind": "groove",
+          "sourceFace": "A",
+          "geometry": {
+            "centerline": [[10, 18], [550, 18]],
+            "widthMm": 6
+          },
+          "depthMm": 8,
+          "through": false,
+          "intent": {
+            "purpose": "back_panel_slot"
+          }
+        }
+      ],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "A"
+      },
+      "provenance": {
+        "geometrySource": "analyzedBody",
+        "classificationSource": "generator"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "relationshipId": "REL-001",
+      "relationshipType": "structural_butt_joint",
+      "hostWorkpieceId": "WP-LEFT-001"
+    }
+  ],
+  "diagnostics": []
+}

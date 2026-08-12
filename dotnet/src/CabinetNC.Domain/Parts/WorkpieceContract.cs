@@ -8,6 +8,8 @@ public sealed class WorkpieceIdentity
     public string? ProjectId { get; init; }
     public string? ModuleId { get; init; }
     public string? WorkpieceId { get; init; }
+    /// <summary>Shop role from snapshot identity (carcass / door / …).</summary>
+    public string? Role { get; init; }
     public string? SourcePath { get; init; }
     public string? SourceFormat { get; init; }
 }

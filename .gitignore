@@ -18,3 +18,7 @@ native/cabinetnc_core/build/
 dotnet/**/bin/
 dotnet/**/obj/
 dotnet/**/*.user
+
+# Desktop / plugin usage logs (keep folder, ignore payloads)
+logs/*
+!logs/.gitkeep

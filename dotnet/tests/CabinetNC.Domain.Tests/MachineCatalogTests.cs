@@ -5,10 +5,12 @@ namespace CabinetNC.Domain.Tests;
 public class MachineCatalogTests
 {
     [Fact]
-    public void Has_nesting_router_default()
+    public void Default_is_osai_e4_1325_only()
     {
-        var p = MachineCatalog.Get("nesting_router_6");
-        Assert.Equal("nesting_router_6", p.Id);
-        Assert.True(MachineCatalog.All.Count >= 3);
+        var p = MachineCatalog.Get(null);
+        Assert.Equal(MachineCatalog.DefaultId, p.Id);
+        Assert.Equal("OSAI E4 1325", p.Name);
+        Assert.Single(MachineCatalog.All);
+        Assert.Equal(MachineCatalog.DefaultId, MachineCatalog.Get("unknown_machine").Id);
     }
 }

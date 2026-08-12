@@ -74,4 +74,65 @@ public class NestEngineRouterTests
         Assert.Equal("blf_fallback", result.Engine);
         Assert.NotNull(log.FallbackReason);
     }
+
+    [Fact]
+    public void Deepnest_preview_places_real_polygons_through_engine_interface()
+    {
+        var panels = new[]
+        {
+            LShape("L1"),
+            LShape("L2"),
+            Rect("R1", "oak", 18),
+        };
+        var req = new NestEngineRequest
+        {
+            Panels = panels,
+            Settings = new NestSettings
+            {
+                MarginMm = 10,
+                ClearanceMm = 5,
+                AllowRotation = true,
+            },
+            StockTemplates =
+            [
+                new NestSheetSpec
+                {
+                    WidthMm = 600,
+                    LengthMm = 500,
+                    BorderMm = 10,
+                    Material = "oak",
+                    ThicknessMm = 18,
+                },
+            ],
+            SizeOf = GroupedBlfNester.SizeOfOutline,
+            EnginePreference = "deepnest",
+            AdvancedTimeout = TimeSpan.FromSeconds(5),
+        };
+
+        var router = new NestEngineRouter(advanced: new DeepnestPreviewNestingEngine());
+        var (result, log) = router.Run(req);
+
+        Assert.Equal("deepnest_preview_v0", result.Engine);
+        Assert.Equal("deepnest_preview_v0", log.SelectedEngine);
+        Assert.Equal(panels.Length, result.Placements.Count);
+        Assert.Empty(result.Unplaced);
+        Assert.Empty(NestValidator.FindPolygonCollisions(
+            panels, result.Placements, req.Settings.ClearanceMm));
+    }
+
+    static Panel LShape(string id) => new()
+    {
+        PanelId = id,
+        Material = "oak",
+        ThicknessMm = 18,
+        Outline = new Outline
+        {
+            Points =
+            [
+                new(0, 0), new(180, 0), new(180, 60),
+                new(60, 60), new(60, 180), new(0, 180),
+            ],
+            Closed = true,
+        },
+    };
 }

@@ -31,7 +31,7 @@ if (!import.Ok || import.Package is null)
         string.Join("; ", import.Errors.Select(e => e.Message)));
 
 var package = import.Package;
-var profile = MachineCatalog.Get("nesting_router_6");
+var profile = MachineCatalog.Get(MachineCatalog.DefaultId);
 
 var parts = package.Panels.Select(p =>
 {

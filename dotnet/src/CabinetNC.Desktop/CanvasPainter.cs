@@ -38,21 +38,75 @@ static class CanvasPainter
                 DrawHandle(canvas, cx, cy, new SKColor(0x00, 0x00, 0xCC));
                 DrawText(canvas, $"⌀{Fmt(f.DiameterMm ?? 0)}", cx + r + 4, cy + 4, 11, new SKColor(0x00, 0x00, 0xCC));
             }
-            else if (PanelEdit.IsGroove(f) && f.Path is { Count: >= 2 } gp)
+            else if (PanelEdit.IsCutout(f) && (f.Path ?? f.Profile) is { Count: >= 3 } cutRing)
             {
-                using var path = new SKPath();
-                for (var i = 0; i < gp.Count; i++)
+                DrawClosedFeature(
+                    canvas, view, cutRing,
+                    fill: new SKColor(0x18, 0x6A, 0x8A, 0x55),
+                    stroke: new SKColor(0x0E, 0x4A, 0x66),
+                    dashed: true,
+                    label: "通孔");
+            }
+            else if (PanelEdit.IsPocket(f) && (f.Path ?? f.Profile) is { Count: >= 3 } pocketRing)
+            {
+                var label = PanelEdit.FeatureDisplayLabel(f);
+                if (string.IsNullOrEmpty(label))
+                    label = f.DepthMm is > 0 ? $"pocket d{Fmt(f.DepthMm.Value)}" : "pocket";
+                DrawClosedFeature(
+                    canvas, view, pocketRing,
+                    fill: new SKColor(0xC4, 0x7A, 0x00, 0x66),
+                    stroke: new SKColor(0x8A, 0x52, 0x00),
+                    dashed: false,
+                    label: label);
+            }
+            else if (PanelEdit.IsGroove(f))
+            {
+                // Prefer CAD opening polygon; else reconstruct strip from centreline+width.
+                var outline = GrooveGeometry.DisplayOutline(f);
+                if (outline.Count >= 3)
                 {
-                    var (sx, sy) = GeomInteraction.ToScreen(view, gp[i].X, gp[i].Y);
-                    if (i == 0) path.MoveTo(sx, sy); else path.LineTo(sx, sy);
+                    using var sk = new SKPath();
+                    double minX = double.MaxValue, maxX = double.MinValue;
+                    double minY = double.MaxValue, maxY = double.MinValue;
+                    for (var i = 0; i < outline.Count; i++)
+                    {
+                        var p = outline[i];
+                        minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X);
+                        minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y);
+                        var (sx, sy) = GeomInteraction.ToScreen(view, p.X, p.Y);
+                        if (i == 0) sk.MoveTo(sx, sy); else sk.LineTo(sx, sy);
+                    }
+                    sk.Close();
+                    using var fill = new SKPaint
+                    {
+                        Style = SKPaintStyle.Fill,
+                        Color = new SKColor(0xCC, 0x22, 0x22, 0x66),
+                        IsAntialias = true,
+                    };
+                    using var stroke = new SKPaint
+                    {
+                        Style = SKPaintStyle.Stroke,
+                        Color = new SKColor(0xAA, 0x00, 0x00),
+                        StrokeWidth = 1.5f,
+                        IsAntialias = true,
+                    };
+                    canvas.DrawPath(sk, fill);
+                    canvas.DrawPath(sk, stroke);
+                    var wMm = Math.Min(maxX - minX, maxY - minY);
+                    if (wMm > 0.5)
+                    {
+                        var (tx, ty) = GeomInteraction.ToScreen(view, (minX + maxX) * 0.5, (minY + maxY) * 0.5);
+                        DrawText(canvas, $"w{Fmt(wMm)}", tx + 6, ty - 4, 10, new SKColor(0x88, 0x00, 0x00));
+                    }
                 }
-                var lw = Math.Max(2f, (float)((f.WidthMm ?? 6) * view.Scale * 0.3));
-                using var groove = new SKPaint { Color = new SKColor(0xCC, 0x00, 0x00), IsStroke = true, StrokeWidth = lw, IsAntialias = true };
-                canvas.DrawPath(path, groove);
-                foreach (var pt in gp)
+                // Edit handles stay on the centreline endpoints when present.
+                if (f.Path is { Count: >= 2 } gp)
                 {
-                    var (sx, sy) = GeomInteraction.ToScreen(view, pt.X, pt.Y);
-                    DrawHandle(canvas, sx, sy, new SKColor(0xCC, 0x00, 0x00));
+                    foreach (var pt in gp)
+                    {
+                        var (sx, sy) = GeomInteraction.ToScreen(view, pt.X, pt.Y);
+                        DrawHandle(canvas, sx, sy, new SKColor(0xCC, 0x00, 0x00));
+                    }
                 }
             }
         }
@@ -72,9 +126,16 @@ static class CanvasPainter
             }
         }
 
-        DrawText(canvas, panel.PanelId, 10, 18, 13, new SKColor(0x22, 0x22, 0x22), bold: true);
+        DrawText(canvas, panel.DisplayTitle, 10, 18, 13, new SKColor(0x22, 0x22, 0x22), bold: true);
         DrawText(canvas, hoverHint ?? "Geom · 拖孔/槽端点/边手柄", 10, 36, 11, new SKColor(0x55, 0x55, 0x55));
     }
+
+    public readonly record struct NestHoldingItem(
+        string PanelId,
+        string Title,
+        string Detail,
+        SKRect Box,
+        IReadOnlyList<(double X, double Y)> Outline);
 
     public readonly record struct NestPaintOpts(
         float SheetW,
@@ -86,7 +147,13 @@ static class CanvasPainter
         IReadOnlySet<string> Conflicts,
         IReadOnlyList<CutOp>? OpsOverlay,
         bool ShowOps,
-        CamFrame? ActiveCamFrame);
+        CamFrame? ActiveCamFrame,
+        int ActiveSheetIndex = 0,
+        IReadOnlyList<(double X, double Y)>? GuillotinePolyline = null,
+        string? GuillotineLabel = null,
+        float HoldingBayLeft = 0,
+        IReadOnlyList<NestHoldingItem>? HoldingItems = null,
+        string? HoldingDragId = null);
 
     public static void PaintNest(
         SKCanvas canvas,
@@ -119,7 +186,8 @@ static class CanvasPainter
         DrawDimVScreen(canvas, ToSy(0), ToSy(sh), ToSx(0) - 8, Fmt(sh));
 
         var byId = panels.ToDictionary(p => p.PanelId);
-        var drawList = placements.Where(p => p.SheetIndex == 0).ToList();
+        var sheetIdx = Math.Max(0, opts.ActiveSheetIndex);
+        var drawList = placements.Where(p => p.SheetIndex == sheetIdx).ToList();
         if (opts.SelectedId is not null)
             drawList = drawList.OrderBy(p => p.PanelId == opts.SelectedId ? 1 : 0).ToList();
 
@@ -161,35 +229,52 @@ static class CanvasPainter
                     if (active)
                         DrawText(canvas, $"⌀{Fmt(f.DiameterMm ?? 0)}", cx + r + 2, cy, 10, new SKColor(0x00, 0x00, 0xCC));
                 }
-                else if (PanelEdit.IsGroove(f) && f.Path is { Count: >= 2 } gp)
+                else if (PanelEdit.IsCutout(f) && (f.Path ?? f.Profile) is { Count: >= 3 } cutRing)
                 {
-                    using var gpath = new SKPath();
-                    for (var i = 0; i < gp.Count; i++)
+                    DrawClosedFeatureOnSheet(
+                        canvas, cutRing, bounds, place, ToSx, ToSy,
+                        fill: new SKColor(0x18, 0x6A, 0x8A, 0x55),
+                        stroke: new SKColor(0x0E, 0x4A, 0x66));
+                }
+                else if (PanelEdit.IsPocket(f) && (f.Path ?? f.Profile) is { Count: >= 3 } pocketRing)
+                {
+                    DrawClosedFeatureOnSheet(
+                        canvas, pocketRing, bounds, place, ToSx, ToSy,
+                        fill: new SKColor(0xC4, 0x7A, 0x00, 0x66),
+                        stroke: new SKColor(0x8A, 0x52, 0x00));
+                }
+                else if (PanelEdit.IsGroove(f))
+                {
+                    var outline = GrooveGeometry.DisplayOutline(f);
+                    if (outline.Count >= 3)
                     {
-                        var (wx, wy) = NestTransform.ToSheet(
-                            gp[i].X, gp[i].Y, bounds,
-                            place.OffsetX, place.OffsetY, place.RotationDeg);
-                        var sx = ToSx(wx);
-                        var sy = ToSy(wy);
-                        if (i == 0) gpath.MoveTo(sx, sy); else gpath.LineTo(sx, sy);
+                        DrawClosedFeatureOnSheet(
+                            canvas, outline, bounds, place, ToSx, ToSy,
+                            fill: new SKColor(0xCC, 0x22, 0x22, 0x66),
+                            stroke: new SKColor(0xAA, 0x00, 0x00));
                     }
-                    using var gpaint = new SKPaint
-                    {
-                        Color = new SKColor(0xCC, 0x00, 0x00),
-                        IsStroke = true,
-                        StrokeWidth = Math.Max(1f, (float)((f.WidthMm ?? 6) * scale * 0.3)),
-                        IsAntialias = true,
-                    };
-                    canvas.DrawPath(gpath, gpaint);
                 }
             }
 
-            // label
+            // Short shop label (not raw PanelId / @layflat…); fit inside part width.
             var aabb = NestDrag.Aabb(panel, place.OffsetX, place.OffsetY, place.RotationDeg);
             var lx = ToSx(aabb.MinX) + 2;
             var ly = ToSy(aabb.MaxY) + 12;
-            var label = locked ? $"[锁] {place.PanelId}" : place.PanelId;
-            DrawText(canvas, label, lx, ly, active ? 12 : 11, active ? new SKColor(0x00, 0x66, 0xCC) : SKColors.Black, bold: active);
+            var partW = Math.Max(0f, ToSx(aabb.MaxX) - ToSx(aabb.MinX) - 4f);
+            var partH = Math.Max(0f, ToSy(aabb.MinY) - ToSy(aabb.MaxY));
+            var fontSize = active ? 12f : 10f;
+            // Tiny strips: only label when selected to avoid overlapping neighbors.
+            if (active || (partW >= 28 && partH >= 14))
+            {
+                var shortName = string.IsNullOrWhiteSpace(panel.DisplayPartName)
+                    ? panel.DisplayTitle
+                    : panel.DisplayPartName;
+                var label = locked ? $"[锁] {shortName}" : shortName;
+                label = EllipsizeToWidth(label, Math.Max(12f, partW), fontSize, bold: active);
+                DrawText(canvas, label, lx, ly, fontSize,
+                    active ? new SKColor(0x00, 0x66, 0xCC) : new SKColor(0x22, 0x22, 0x22),
+                    bold: active);
+            }
 
             if (active)
             {
@@ -199,10 +284,190 @@ static class CanvasPainter
         }
 
         if (drawList.Count == 0)
-            DrawText(canvas, "无摆位 — 点「应用并重排」或进入排版自动排", pad + 8, pad + 20, 12, new SKColor(0x66, 0x66, 0x66));
+            DrawText(canvas, $"本张大板无摆位（第 {sheetIdx + 1} 张）", pad + 8, pad + 20, 12, new SKColor(0x66, 0x66, 0x66));
+
+        if (opts.GuillotinePolyline is { Count: >= 2 } gpoly)
+        {
+            using var path = new SKPath();
+            for (var i = 0; i < gpoly.Count; i++)
+            {
+                var sx = ToSx(gpoly[i].X);
+                var sy = ToSy(gpoly[i].Y);
+                if (i == 0) path.MoveTo(sx, sy);
+                else path.LineTo(sx, sy);
+            }
+            using var stroke = new SKPaint
+            {
+                Color = new SKColor(0xC4, 0x5A, 0x00),
+                IsStroke = true,
+                StrokeWidth = 2.5f,
+                IsAntialias = true,
+                PathEffect = SKPathEffect.CreateDash([10f, 6f], 0),
+            };
+            canvas.DrawPath(path, stroke);
+            // Endpoint markers
+            using var mark = new SKPaint { Color = new SKColor(0xC4, 0x5A, 0x00), IsAntialias = true };
+            foreach (var p in gpoly)
+                canvas.DrawCircle(ToSx(p.X), ToSy(p.Y), 3.5f, mark);
+            if (!string.IsNullOrWhiteSpace(opts.GuillotineLabel))
+            {
+                var mid = gpoly[gpoly.Count / 2];
+                DrawText(canvas, opts.GuillotineLabel!, ToSx(mid.X) + 6, ToSy(mid.Y) - 6, 11,
+                    new SKColor(0x8A, 0x3E, 0x00), bold: true);
+            }
+        }
 
         if (opts.ShowOps && opts.OpsOverlay is { Count: > 0 } ops)
             PaintOpsOverlay(canvas, ops, ToSx, ToSy, scale, opts.ActiveCamFrame);
+
+        if (opts.HoldingBayLeft > 0 && opts.HoldingBayLeft < w - 4)
+            PaintHoldingBay(canvas, w, h, opts.HoldingBayLeft, opts.HoldingItems, opts.SelectedId, opts.HoldingDragId);
+    }
+
+    /// <summary>Wider bay so square multi-column cards fit beside the sheet.</summary>
+    public const float NestHoldingBayWidth = 340f;
+
+    /// <summary>Layout holding-bay square cards in multiple columns (same geometry for hit-testing).</summary>
+    public static List<NestHoldingItem> LayoutHoldingItems(
+        IReadOnlyList<(string PanelId, string Title, string Detail, IReadOnlyList<(double X, double Y)> Outline)> items,
+        float bayLeft,
+        float bayWidth,
+        float canvasH,
+        float topPad = 56f,
+        float bottomPad = 36f)
+    {
+        var list = new List<NestHoldingItem>();
+        const float gap = 8f;
+        const float sidePad = 10f;
+        const float cell = 96f; // square cards
+        var innerW = Math.Max(cell, bayWidth - sidePad * 2);
+        var cols = Math.Max(1, (int)Math.Floor((innerW + gap) / (cell + gap)));
+        var y0 = topPad;
+        var maxY = canvasH - bottomPad;
+        for (var i = 0; i < items.Count; i++)
+        {
+            var col = i % cols;
+            var row = i / cols;
+            var x = bayLeft + sidePad + col * (cell + gap);
+            var y = y0 + row * (cell + gap);
+            if (y + cell > maxY) break;
+            var it = items[i];
+            list.Add(new NestHoldingItem(
+                it.PanelId, it.Title, it.Detail,
+                new SKRect(x, y, x + cell, y + cell),
+                it.Outline));
+        }
+        return list;
+    }
+
+    static void PaintHoldingBay(
+        SKCanvas canvas,
+        int w,
+        int h,
+        float bayLeft,
+        IReadOnlyList<NestHoldingItem>? items,
+        string? selectedId,
+        string? dragId)
+    {
+        using (var fill = new SKPaint { Color = new SKColor(0xEE, 0xF1, 0xF4), IsAntialias = true })
+            canvas.DrawRect(bayLeft, 0, w - bayLeft, h, fill);
+        using (var edge = new SKPaint { Color = new SKColor(0xCC, 0xD0, 0xD4), IsStroke = true, StrokeWidth = 1 })
+            canvas.DrawLine(bayLeft, 0, bayLeft, h, edge);
+
+        DrawText(canvas, "板件待用区", bayLeft + 10, 28, 13, new SKColor(0x33, 0x33, 0x33), bold: true);
+        DrawText(canvas, "从大板拖入 · 可拖回同材料大板", bayLeft + 10, 44, 10, new SKColor(0x77, 0x77, 0x77));
+
+        if (items is null || items.Count == 0)
+        {
+            DrawText(canvas, "（空）", bayLeft + 10, 72, 11, new SKColor(0x99, 0x99, 0x99));
+            return;
+        }
+
+        foreach (var it in items)
+        {
+            var active = it.PanelId == selectedId || it.PanelId == dragId;
+            using var fill = new SKPaint
+            {
+                Color = active ? new SKColor(0xCC, 0xDD, 0xEE) : new SKColor(0xFF, 0xFF, 0xFF),
+                IsAntialias = true,
+            };
+            using var stroke = new SKPaint
+            {
+                Color = active ? new SKColor(0x00, 0x66, 0xCC) : new SKColor(0x88, 0x88, 0x88),
+                IsStroke = true,
+                StrokeWidth = active ? 2f : 1f,
+                IsAntialias = true,
+            };
+            canvas.DrawRoundRect(it.Box, 6, 6, fill);
+            canvas.DrawRoundRect(it.Box, 6, 6, stroke);
+
+            // Shape preview in upper area; label under it.
+            var shapeRect = new SKRect(
+                it.Box.Left + 8,
+                it.Box.Top + 8,
+                it.Box.Right - 8,
+                it.Box.Bottom - 28);
+            DrawHoldingShape(canvas, shapeRect, it.Outline, active);
+
+            var title = it.Title.Length > 14 ? it.Title[..13] + "…" : it.Title;
+            DrawText(canvas, title, it.Box.Left + 6, it.Box.Bottom - 10, 10,
+                active ? new SKColor(0x00, 0x66, 0xCC) : new SKColor(0x33, 0x33, 0x33),
+                bold: active);
+        }
+    }
+
+    static void DrawHoldingShape(
+        SKCanvas canvas,
+        SKRect fit,
+        IReadOnlyList<(double X, double Y)> outline,
+        bool active)
+    {
+        if (outline.Count < 2)
+        {
+            using var ph = new SKPaint
+            {
+                Color = new SKColor(0xDD, 0xDD, 0xDD),
+                IsStroke = true,
+                StrokeWidth = 1,
+            };
+            canvas.DrawRect(fit, ph);
+            return;
+        }
+
+        var minX = outline.Min(p => p.X);
+        var minY = outline.Min(p => p.Y);
+        var maxX = outline.Max(p => p.X);
+        var maxY = outline.Max(p => p.Y);
+        var bw = Math.Max(1e-6, maxX - minX);
+        var bh = Math.Max(1e-6, maxY - minY);
+        var s = Math.Min(fit.Width / (float)bw, fit.Height / (float)bh) * 0.9f;
+        var ox = fit.MidX - (float)(bw * s) * 0.5f;
+        var oy = fit.MidY + (float)(bh * s) * 0.5f; // Y-up local → screen down
+
+        using var path = new SKPath();
+        for (var i = 0; i < outline.Count; i++)
+        {
+            var sx = ox + (float)(outline[i].X - minX) * s;
+            var sy = oy - (float)(outline[i].Y - minY) * s;
+            if (i == 0) path.MoveTo(sx, sy);
+            else path.LineTo(sx, sy);
+        }
+        path.Close();
+
+        using var fill = new SKPaint
+        {
+            Color = active ? new SKColor(0xB8, 0xD4, 0xEE) : new SKColor(0xE8, 0xE8, 0xE8),
+            IsAntialias = true,
+        };
+        using var stroke = new SKPaint
+        {
+            Color = active ? new SKColor(0x00, 0x66, 0xCC) : new SKColor(0x44, 0x44, 0x44),
+            IsStroke = true,
+            StrokeWidth = 1.5f,
+            IsAntialias = true,
+        };
+        canvas.DrawPath(path, fill);
+        canvas.DrawPath(path, stroke);
     }
 
     static void PaintOpsOverlay(
@@ -254,18 +519,35 @@ static class CanvasPainter
             }
             else if (op.Op == "groove" && op.Path is { Count: >= 2 } gpath)
             {
+                var center = gpath.Select(p => new Point2(p.X, p.Y)).ToList();
+                var outline = GrooveGeometry.OutlineFromCenterline(
+                    center,
+                    op.WidthMm is > 1e-9 ? op.WidthMm.Value : 0);
                 using var sk = new SKPath();
-                for (var i = 0; i < gpath.Count; i++)
+                if (outline.Count >= 3)
                 {
-                    var sx = toSx(gpath[i].X);
-                    var sy = toSy(gpath[i].Y);
-                    if (i == 0) sk.MoveTo(sx, sy); else sk.LineTo(sx, sy);
+                    for (var i = 0; i < outline.Count; i++)
+                    {
+                        var sx = toSx(outline[i].X);
+                        var sy = toSy(outline[i].Y);
+                        if (i == 0) sk.MoveTo(sx, sy); else sk.LineTo(sx, sy);
+                    }
+                    sk.Close();
+                }
+                else
+                {
+                    for (var i = 0; i < gpath.Count; i++)
+                    {
+                        var sx = toSx(gpath[i].X);
+                        var sy = toSy(gpath[i].Y);
+                        if (i == 0) sk.MoveTo(sx, sy); else sk.LineTo(sx, sy);
+                    }
                 }
                 using var paint = new SKPaint
                 {
                     Color = active ? new SKColor(0xFF, 0xC1, 0x07) : new SKColor(0xEE, 0x66, 0x00),
                     IsStroke = true,
-                    StrokeWidth = active ? 4f : 2.5f,
+                    StrokeWidth = active ? 3f : 1.8f,
                     IsAntialias = true,
                 };
                 canvas.DrawPath(sk, paint);
@@ -359,6 +641,88 @@ static class CanvasPainter
         canvas.DrawPath(path, s);
     }
 
+    static void DrawClosedFeature(
+        SKCanvas canvas,
+        GeomInteraction.View view,
+        IReadOnlyList<Point2> ring,
+        SKColor fill,
+        SKColor stroke,
+        bool dashed,
+        string label)
+    {
+        using var sk = new SKPath();
+        double minX = double.MaxValue, maxX = double.MinValue;
+        double minY = double.MaxValue, maxY = double.MinValue;
+        for (var i = 0; i < ring.Count; i++)
+        {
+            var p = ring[i];
+            minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X);
+            minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y);
+            var (sx, sy) = GeomInteraction.ToScreen(view, p.X, p.Y);
+            if (i == 0) sk.MoveTo(sx, sy); else sk.LineTo(sx, sy);
+        }
+        sk.Close();
+        using var fillPaint = new SKPaint
+        {
+            Style = SKPaintStyle.Fill,
+            Color = fill,
+            IsAntialias = true,
+        };
+        using var strokePaint = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            Color = stroke,
+            StrokeWidth = 1.6f,
+            IsAntialias = true,
+            PathEffect = dashed ? SKPathEffect.CreateDash([5, 3], 0) : null,
+        };
+        canvas.DrawPath(sk, fillPaint);
+        canvas.DrawPath(sk, strokePaint);
+        if (!string.IsNullOrWhiteSpace(label))
+        {
+            var (tx, ty) = GeomInteraction.ToScreen(view, (minX + maxX) * 0.5, (minY + maxY) * 0.5);
+            DrawText(canvas, label, tx + 4, ty - 2, 10, stroke);
+        }
+    }
+
+    static void DrawClosedFeatureOnSheet(
+        SKCanvas canvas,
+        IReadOnlyList<Point2> ring,
+        LocalBounds bounds,
+        NestPlacementMsg place,
+        Func<double, float> toSx,
+        Func<double, float> toSy,
+        SKColor fill,
+        SKColor stroke)
+    {
+        using var gpath = new SKPath();
+        for (var i = 0; i < ring.Count; i++)
+        {
+            var (wx, wy) = NestTransform.ToSheet(
+                ring[i].X, ring[i].Y, bounds,
+                place.OffsetX, place.OffsetY, place.RotationDeg);
+            var sx = toSx(wx);
+            var sy = toSy(wy);
+            if (i == 0) gpath.MoveTo(sx, sy); else gpath.LineTo(sx, sy);
+        }
+        gpath.Close();
+        using var gFill = new SKPaint
+        {
+            Style = SKPaintStyle.Fill,
+            Color = fill,
+            IsAntialias = true,
+        };
+        using var gStroke = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            Color = stroke,
+            StrokeWidth = 1.4f,
+            IsAntialias = true,
+        };
+        canvas.DrawPath(gpath, gFill);
+        canvas.DrawPath(gpath, gStroke);
+    }
+
     static void DrawHandle(SKCanvas canvas, float x, float y, SKColor color)
     {
         using var fill = new SKPaint { Color = color, IsAntialias = true };
@@ -412,6 +776,35 @@ static class CanvasPainter
         using var paint = new SKPaint { Color = color, IsAntialias = true };
         using var font = new SKFont(SKTypeface.FromFamilyName("Segoe UI", bold ? SKFontStyle.Bold : SKFontStyle.Normal), size);
         canvas.DrawText(text, x, y, SKTextAlign.Left, font, paint);
+    }
+
+    /// <summary>Truncate with ellipsis so nest labels stay inside the part AABB width.</summary>
+    static string EllipsizeToWidth(string text, float maxWidthPx, float fontSize, bool bold)
+    {
+        if (string.IsNullOrEmpty(text) || maxWidthPx <= 8) return "";
+        using var font = new SKFont(
+            SKTypeface.FromFamilyName("Segoe UI", bold ? SKFontStyle.Bold : SKFontStyle.Normal),
+            fontSize);
+        if (font.MeasureText(text) <= maxWidthPx) return text;
+        const string ellipsis = "…";
+        var lo = 0;
+        var hi = text.Length;
+        var best = ellipsis;
+        while (lo <= hi)
+        {
+            var mid = (lo + hi) / 2;
+            var candidate = mid <= 0 ? ellipsis : text[..mid] + ellipsis;
+            if (font.MeasureText(candidate) <= maxWidthPx)
+            {
+                best = candidate;
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid - 1;
+            }
+        }
+        return best;
     }
 
     static void DrawCentered(SKCanvas canvas, int w, int h, string text)

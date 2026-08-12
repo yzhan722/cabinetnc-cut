@@ -5,6 +5,12 @@ public sealed class NestSheetSpec
     public double WidthMm { get; init; } = 1220;
     public double LengthMm { get; init; } = 2440;
     public double BorderMm { get; init; } = 15;
+    /// <summary>Part-to-part clearance for this stock kind. Used when packing this material group.</summary>
+    public double SpacingMm { get; init; } = 12;
+    /// <summary>Allow 90° nest rotation for panels on this stock kind (still subject to grain lock).</summary>
+    public bool AllowRotation { get; init; } = true;
+    /// <summary>Request part-in-part nesting for this stock kind (engine may still ignore until implemented).</summary>
+    public bool AllowPartsInPart { get; init; }
     /// <summary>Keep-out AABBs in sheet space.</summary>
     public IReadOnlyList<NestBlockedRect> Blocked { get; init; } = [];
     public string? Label { get; init; }
@@ -60,6 +66,8 @@ public sealed class NestResult
     public IReadOnlyList<NestUnplacedReason> UnplacedReasons { get; init; } = [];
     public IReadOnlyList<NestGroupReport> GroupReports { get; init; } = [];
     public IReadOnlyList<NestSheetSpec> SheetsUsed { get; init; } = [];
+    /// <summary>Children packed into host through-cutout voids (parts-in-part).</summary>
+    public IReadOnlyList<PartInPartSlot> PartInPartSlots { get; init; } = [];
 }
 
 /// <summary>

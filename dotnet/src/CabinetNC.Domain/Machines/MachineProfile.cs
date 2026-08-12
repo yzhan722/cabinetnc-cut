@@ -22,24 +22,14 @@ public sealed class MachineProfile
 
 public static class MachineCatalog
 {
+    public const string DefaultId = "osai_e4_1325";
+
     public static IReadOnlyList<MachineProfile> All { get; } =
     [
         new()
         {
-            Id = "generic_cnc_mm",
-            Name = "Generic CNC (mm)",
-            Dialect = "generic",
-            ProgramEnd = "M2",
-            SafeZMm = 5,
-            FeedXyMmMin = 3000,
-            FeedZMmMin = 500,
-            SpindleRpm = 18000,
-            ToolDiameterMm = 12,
-        },
-        new()
-        {
-            Id = "nesting_router_6",
-            Name = "Nesting router Ø6",
+            Id = DefaultId,
+            Name = "OSAI E4 1325",
             Dialect = "generic",
             ProgramEnd = "M2",
             SafeZMm = 8,
@@ -47,21 +37,10 @@ public static class MachineCatalog
             FeedZMmMin = 800,
             SpindleRpm = 18000,
             ToolDiameterMm = 6,
-        },
-        new()
-        {
-            Id = "fanuc_like_m30",
-            Name = "Fanuc-like (M30 end)",
-            Dialect = "fanuc_like",
-            ProgramEnd = "M30",
-            SafeZMm = 10,
-            FeedXyMmMin = 2500,
-            FeedZMmMin = 400,
-            SpindleRpm = 16000,
-            ToolDiameterMm = 10,
+            OriginNote = "1325 nesting table · OSAI E4",
         },
     ];
 
     public static MachineProfile Get(string? id) =>
-        All.FirstOrDefault(p => p.Id == id) ?? All[1];
+        All.FirstOrDefault(p => p.Id == id) ?? All[0];
 }

@@ -13,6 +13,9 @@ public sealed class PackageImportResult
 {
     public required bool Ok { get; init; }
     public CutPackage? Package { get; init; }
+    public ManufacturingSnapshot? Snapshot { get; init; }
+    /// <summary>Exact immutable snapshot payload retained independently from the flat runtime projection.</summary>
+    public string? SourceSnapshotJson { get; init; }
     public IReadOnlyList<ValidationIssue> Errors { get; init; } = [];
     public IReadOnlyList<ValidationIssue> Warnings { get; init; } = [];
 }
@@ -125,19 +128,8 @@ public static class CutPackageImporter
                     var fi = 0;
                     foreach (var f in feats.EnumerateArray())
                     {
-                        IReadOnlyList<Point2>? featPath = null;
-                        if (f.TryGetProperty("path", out var pathEl) && pathEl.ValueKind == JsonValueKind.Array)
-                        {
-                            var pts = new List<Point2>();
-                            foreach (var pt in pathEl.EnumerateArray())
-                            {
-                                if (pt.ValueKind == JsonValueKind.Array && pt.GetArrayLength() >= 2)
-                                    pts.Add(new Point2(pt[0].GetDouble(), pt[1].GetDouble()));
-                                else if (pt.ValueKind == JsonValueKind.Object)
-                                    pts.Add(new Point2(GetDouble(pt, "x"), GetDouble(pt, "y")));
-                            }
-                            if (pts.Count >= 2) featPath = pts;
-                        }
+                        IReadOnlyList<Point2>? featPath = ReadFeaturePoints(f, "path", minCount: 2);
+                        IReadOnlyList<Point2>? featProfile = ReadFeaturePoints(f, "profile", minCount: 3);
 
                         double fx = GetDouble(f, "x"), fy = GetDouble(f, "y");
                         if (f.TryGetProperty("center", out var center) && center.ValueKind == JsonValueKind.Array && center.GetArrayLength() >= 2)
@@ -151,12 +143,18 @@ public static class CutPackageImporter
                         {
                             FeatureId = TryGetString(f, "featureId") ?? TryGetString(f, "id") ?? $"F{fi}",
                             Kind = WoodJobImporter.MapFeatureKind(rawKind),
+                            FaceId = TryGetString(f, "faceId") ?? TryGetString(f, "sourceFace") ?? TryGetString(f, "fromFace"),
+                            Through = f.TryGetProperty("through", out var throughEl) && throughEl.ValueKind == JsonValueKind.True,
+                            GroupId = TryGetString(f, "groupId"),
+                            Purpose = TryGetString(f, "purpose"),
+                            SourceRelationshipId = TryGetString(f, "sourceRelationshipId"),
                             X = fx,
                             Y = fy,
                             DiameterMm = TryGetDouble(f, "diameterMm"),
                             DepthMm = TryGetDouble(f, "depthMm"),
                             WidthMm = TryGetDouble(f, "widthMm"),
                             Path = featPath,
+                            Profile = featProfile,
                         });
                         fi++;
                     }
@@ -208,6 +206,24 @@ public static class CutPackageImporter
                     };
                 }
 
+                var faces = new List<WorkpieceFace>();
+                if (p.TryGetProperty("faces", out var facesEl) && facesEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var face in facesEl.EnumerateArray())
+                    {
+                        var faceId = TryGetString(face, "faceId");
+                        if (string.IsNullOrWhiteSpace(faceId)) continue;
+                        faces.Add(new WorkpieceFace
+                        {
+                            FaceId = faceId,
+                            Role = TryGetString(face, "role"),
+                            FinishId = TryGetString(face, "finishId"),
+                            FinishName = TryGetString(face, "finishName"),
+                            MachiningPermission = TryGetString(face, "machiningPermission"),
+                        });
+                    }
+                }
+
                 var thickness = GetDouble(p, "thicknessMm");
                 if (thickness <= 0)
                     errors.Add(new("thickness", $"{path}.thicknessMm", "thicknessMm must be > 0"));
@@ -228,6 +244,7 @@ public static class CutPackageImporter
                         Frame = TryGetString(outlineEl, "frame") ?? "panelLocal",
                     },
                     Features = features,
+                    Faces = faces,
                     Identity = new WorkpieceIdentity
                     {
                         ProjectId = TryGetString(p, "projectId"),
@@ -299,6 +316,21 @@ public static class CutPackageImporter
             i++;
         }
         return pts;
+    }
+
+    static IReadOnlyList<Point2>? ReadFeaturePoints(JsonElement feature, string property, int minCount)
+    {
+        if (!feature.TryGetProperty(property, out var pathEl) || pathEl.ValueKind != JsonValueKind.Array)
+            return null;
+        var pts = new List<Point2>();
+        foreach (var pt in pathEl.EnumerateArray())
+        {
+            if (pt.ValueKind == JsonValueKind.Array && pt.GetArrayLength() >= 2)
+                pts.Add(new Point2(pt[0].GetDouble(), pt[1].GetDouble()));
+            else if (pt.ValueKind == JsonValueKind.Object)
+                pts.Add(new Point2(GetDouble(pt, "x"), GetDouble(pt, "y")));
+        }
+        return pts.Count >= minCount ? pts : null;
     }
 
     static PackageImportResult Fail(string code, string path, string msg) =>
