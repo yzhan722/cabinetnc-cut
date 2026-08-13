@@ -20,7 +20,7 @@
 
 ## 总览
 
-> **验收核对：** 2026-08-12 · `dotnet test -c Release` → Domain 85 / Package 31 / Infra 4 全绿。  
+> **验收核对：** 2026-08-13 · `dotnet test -c Release` → Domain 146 / Package 31 / Infra 4 全绿。
 > 图例：PASS = 自动/文档证据充分 · PARTIAL = 部分满足或仅手工 · FAIL/PENDING = 未过或未做。详见附录 D。
 
 | # | 模块 | 需求状态 | 优先级 | 实现大致 | 验收 | 依赖 |
@@ -40,7 +40,7 @@
 | 13 | 标签 / BOM / 工单 | 草稿 | P1 | 已交付核心 | PARTIAL 1/2 | 2、12 |
 | 14 | Desktop UI 与生产流程 | 草稿 | P1 | 新 Nest UX 已实现、待验收 | PENDING（人工） | 3–13 |
 | 15 | ComputeWorker 一致性 | 草稿 | P1 | 路由/进度接口已增强 | PARTIAL | 6、12 |
-| 16 | 测试 / Smoke / 发布 | 草稿 | P0 | 自动 120 项绿；人工待签 | PARTIAL | 全部 |
+| 16 | 测试 / Smoke / 发布 | 草稿 | P0 | 自动 181 项绿；人工待签 | PARTIAL | 全部 |
 
 ---
 
@@ -640,7 +640,7 @@ P1；依赖 6、12。
 ## 16. 测试、Smoke、上机与发布门禁
 
 - **需求状态：** 草稿  
-- **现状摘要：** 合并后自动测试 Domain 85 / Package 31 / Infrastructure 4 全绿；新增 NFP、PIP、Guillotine、Snapshot、Groove、DisplayTitle、UsageLog 测试。UIA、专项 Nest UX Smoke 与机床清单仍未签；PR #1 未合 main。
+- **现状摘要：** 自动测试 Domain 146 / Package 31 / Infrastructure 4 全绿；首批新增 61 个 P0 密排用例，覆盖 Gate、守恒、进度/取消、NFP 缺陷区/纹理、PIP 边界、拖放基础与 Guillotine 隔离。UIA、专项 Nest UX Smoke 与机床清单仍未签；PR #1 未合 main。
 
 ### 目标
 可回归、可人工签、可上机检查；发布口径诚实。
@@ -655,7 +655,7 @@ P1；依赖 6、12。
 7. 离线诊断 UsageLog 可写入 `%LocalAppData%/CabinetNC/logs`，敏感数据与日志膨胀受控  
 
 ### 合 main 最低条件（草案）
-- [x] 上表自动门禁绿 — **PASS**（85 / 31 / 4）  
+- [x] 上表自动门禁绿 — **PASS**（146 / 31 / 4）
 - [ ] 人工 Smoke 签字 — **PENDING**  
 - [ ] RC_REPORT / KNOWN_LIMITATIONS 与新 NFP/PIP/Snapshot 状态一致 — **PENDING**（仍是 audit2 旧口径）  
 - [x] 双面仍 Partial 写进发布说明 — **PASS**（RC_REPORT）  
@@ -666,7 +666,7 @@ P1；依赖 6、12。
 - force-push 改写已发布 tag  
 
 ### 验收标准
-- [x] 自动套件绿有日志 — **PASS**（Domain 85 / Package 31 / Infra 4）  
+- [x] 自动套件绿有日志 — **PASS**（Domain 146 / Package 31 / Infra 4）
 - [ ] Smoke 清单无未解释的 MANUAL PENDING — **PENDING**（10/10 仍 MANUAL PENDING）  
 - [ ] 新 tag 指向含 Troy 更新、需求重写和 Smoke 结果的 commit — **PENDING**（现 tag 停在 `bab9103`）  
 - [x] UsageLog 自动测试 — **PASS**  
@@ -729,9 +729,9 @@ P0；依赖全部模块的可测声明。
 
 ---
 
-## 附录 D — 验收核对记录（2026-08-12 · Troy 更新后）
+## 附录 D — 验收核对记录（2026-08-13 · P0 密排测试首批）
 
-**证据命令：** `dotnet test -c Release` → Domain **85** / Package **31** / Infra **4** 全绿。  
+**证据命令：** `dotnet test -c Release` → Domain **146** / Package **31** / Infra **4** 全绿。
 **分支：** `sprint/14d-rc` · merge `cc418c9`（Troy `7a03ecf` + 本地需求提交 `d8e71b5`）。  
 **Tag：** 现有 `rc-14d-audit2-20260805` 仍指向旧 `bab9103`，不能代表本次更新。
 
@@ -743,7 +743,7 @@ P0；依赖全部模块的可测声明。
 | 新实现、待验收 | 2, 3, 4, 5, 6, 7, 10, 14, 15, 16 |
 | 明确 PENDING | NFP/PIP/Holding/Guillotine/Desktop 专项 Smoke；双面完整版；新 RC tag；合 main |
 
-自动测试数由 81 增至 **120**；新增测试说明实现面扩大，**不能据此把新增功能直接标为生产 PASS**。
+自动测试总数为 **181**。本轮增加 **61** 个 P0 密排用例并修复 6 项：未知板件摆位、重复摆位诊断、未排/Holding 板件漏导出、非贯通 PIP、PIP 精确边界、NFP 缺陷区候选点。自动绿仍**不能替代 Desktop 与上机验收**。
 
 ### 缺口（建议补测试或补签）
 
@@ -779,3 +779,4 @@ P0；依赖全部模块的可测声明。
 | 2026-08-12 | 按现状与原 RC 定义补全各模块草稿 |
 | 2026-08-12 | 删除过期按日报告与过时调用图/基线文档；更新引用 |
 | 2026-08-12 | 按 Troy `7a03ecf` 重写：Snapshot v1、NFP/PIP、新 Nest UX、OSAI 默认机；统一标为已实现待验收 |
+| 2026-08-13 | 首批新增 61 个 P0 密排用例；自动基线更新为 146/31/4 |

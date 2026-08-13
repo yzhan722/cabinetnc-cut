@@ -258,6 +258,34 @@ public static class NestExportGate
         if (requirePlacements && placements.Count == 0)
             errors.Add("nest_empty: 无排版结果");
 
+        var panelMap = panels.ToDictionary(p => p.PanelId, p => p);
+        foreach (var id in placements
+                     .Select(p => p.PanelId)
+                     .Where(id => !panelMap.ContainsKey(id))
+                     .Distinct(StringComparer.Ordinal))
+        {
+            errors.Add($"unknown_panel: placement references {id}");
+        }
+
+        foreach (var duplicate in placements
+                     .GroupBy(p => p.PanelId, StringComparer.Ordinal)
+                     .Where(g => g.Count() > 1))
+        {
+            errors.Add($"duplicate_placement: {duplicate.Key} ×{duplicate.Count()}");
+        }
+
+        if (requirePlacements)
+        {
+            var placedIds = placements.Select(p => p.PanelId).ToHashSet(StringComparer.Ordinal);
+            foreach (var id in panels
+                         .Select(p => p.PanelId)
+                         .Where(id => !placedIds.Contains(id))
+                         .Distinct(StringComparer.Ordinal))
+            {
+                errors.Add($"unplaced_panel: {id}");
+            }
+        }
+
         var parts = panels.Select(p =>
         {
             var (w, h) = GroupedBlfNester.SizeOfOutline(p);
@@ -281,7 +309,6 @@ public static class NestExportGate
 
         // Mixed material/thickness on same sheet index = hard fail
         var bySheet = placements.GroupBy(p => p.SheetIndex);
-        var panelMap = panels.ToDictionary(p => p.PanelId, p => p);
         foreach (var sheet in bySheet)
         {
             var keys = sheet
