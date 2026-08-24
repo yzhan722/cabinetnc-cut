@@ -9,7 +9,7 @@
 | Gate | 证据 |
 |------|------|
 | Desktop 构建成功 | `dotnet build src/CabinetNC.Desktop/...` exit 0 |
-| 全 Solution 测试成功 | `dotnet test CabinetNC.slnx` 0 failed |
+| 全 Solution 测试成功 | `dotnet test CabinetNC.slnx` 0 failed（含 `Category=GoldenRegression` 金样） |
 | 关键 UIA 冒烟成功 | `smoke_desktop.py` critical cases 全绿 |
 | 120 板 woodjob 可导入 | 弹窗/状态含 `panels=120` |
 | 旋转加工坐标安全 | 90° 单测 + UI NC 不含负 X/Y |

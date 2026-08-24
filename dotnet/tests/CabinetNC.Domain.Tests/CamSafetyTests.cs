@@ -36,6 +36,28 @@ public class CamSafetyTests
     };
 
     [Fact]
+    public void Tongue_ranks_before_clearance_groove_and_outer()
+    {
+        var drill = new CutOp { Op = "drill", PanelId = "A", FeatureId = "H1" };
+        var tongue = new CutOp { Op = "groove", PanelId = "A", FeatureId = "TG", IsTongue = true };
+        var inner = new CutOp { Op = "contour", PanelId = "A", FeatureId = "CUT1" };
+        var outer = new CutOp { Op = "contour", PanelId = "A" };
+
+        Assert.Equal(0, CamSafety.SequenceRank(drill));
+        Assert.Equal(1, CamSafety.SequenceRank(tongue));
+        Assert.Equal(2, CamSafety.SequenceRank(new CutOp { Op = "groove", PanelId = "A" }));
+        Assert.Equal(2, CamSafety.SequenceRank(new CutOp { Op = "pocket", PanelId = "A" }));
+        Assert.Equal(3, CamSafety.SequenceRank(inner));
+        Assert.Equal(4, CamSafety.SequenceRank(outer));
+
+        var ordered = CamSafety.OrderSafe([outer, tongue, drill, inner]).ToList();
+        Assert.Equal("drill", ordered[0].Op);
+        Assert.True(ordered[1].IsTongue);
+        Assert.Equal("CUT1", ordered[2].FeatureId);
+        Assert.True(string.IsNullOrWhiteSpace(ordered[3].FeatureId));
+    }
+
+    [Fact]
     public void Outer_follows_after_drill_and_groove()
     {
         var ops = OpsPlanner.FeaturesToOps([Panel("P1", 18)]).ToList();
