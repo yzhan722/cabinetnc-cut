@@ -1,0 +1,33 @@
+name: Regression
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: regression-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: dotnet test Release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dotnet
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      # Do not `dotnet test` the full slnx on Linux: Desktop is net10.0-windows.
+      - name: Domain tests
+        run: dotnet test tests/CabinetNC.Domain.Tests/CabinetNC.Domain.Tests.csproj -c Release --verbosity minimal
+
+      - name: Package tests
+        run: dotnet test tests/CabinetNC.Package.Tests/CabinetNC.Package.Tests.csproj -c Release --verbosity minimal
+
+      - name: Infrastructure tests
+        run: dotnet test tests/CabinetNC.Infrastructure.Tests/CabinetNC.Infrastructure.Tests.csproj -c Release --verbosity minimal
