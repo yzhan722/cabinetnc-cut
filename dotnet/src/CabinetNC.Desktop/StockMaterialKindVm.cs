@@ -7,8 +7,8 @@ namespace CabinetNC.Desktop;
 /// <summary>Editable stock parameters for one cnjob material kind (stock-stage card).</summary>
 public sealed class StockMaterialKindVm : INotifyPropertyChanged
 {
-    string _widthMmText = "1220";
-    string _lengthMmText = "2440";
+    string _widthMmText = "1200";
+    string _lengthMmText = "2400";
     string _spacingMmText = "12";
     string _borderMmText = "15";
     bool _allowRotate90 = true;
@@ -17,8 +17,21 @@ public sealed class StockMaterialKindVm : INotifyPropertyChanged
     string _leftoverXMmText = "";
     string _leftoverYMmText = "";
 
+    string _label = "";
+
     public required string MaterialId { get; init; }
-    public required string Label { get; init; }
+    public string AutoLabel { get; init; } = "";
+    public string Label
+    {
+        get => _label;
+        set
+        {
+            var next = value ?? "";
+            if (_label == next) return;
+            _label = next;
+            OnPropertyChanged();
+        }
+    }
     public double ThicknessMm { get; init; }
     public int PanelCount { get; init; }
 
@@ -139,8 +152,8 @@ public sealed class StockMaterialKindVm : INotifyPropertyChanged
     public bool HasLeftoverSheet =>
         UseLeftoverPieces && LeftoverXMm > 0 && LeftoverYMm > 0;
 
-    public double WidthMm => ParsePositive(_widthMmText, 1220);
-    public double LengthMm => ParsePositive(_lengthMmText, 2440);
+    public double WidthMm => ParsePositive(_widthMmText, 1200);
+    public double LengthMm => ParsePositive(_lengthMmText, 2400);
     public double SpacingMm => ParseNonNegative(_spacingMmText, 12);
     public double BorderMm => ParseNonNegative(_borderMmText, 15);
     public double LeftoverXMm => ParsePositive(_leftoverXMmText, 0);

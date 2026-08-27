@@ -132,7 +132,7 @@ public class PocketClearerTests
     }
 
     [Fact]
-    public void Small_panel_warns_in_preflight()
+    public void Small_panel_does_not_warn_in_preflight()
     {
         var panel = new Panel
         {
@@ -151,6 +151,20 @@ public class PocketClearerTests
             Machines.MachineCatalog.Get("nesting_router_6"),
             1220, 2440,
             new Dictionary<string, Panel> { ["S"] = panel });
-        Assert.Contains(report.Issues, i => i.Code == "small_panel" && i.Level == "warn");
+        Assert.DoesNotContain(report.Issues, i => i.Code == "small_panel");
+    }
+
+    [Fact]
+    public void Clear_ring_pocket_follows_both_walls()
+    {
+        var result = PocketClearer.Clear(new PocketClearer.PocketClearRequest
+        {
+            Outline = Rect(90, 70),
+            Holes = [[(9, 9), (81, 9), (81, 61), (9, 61)]],
+            ToolDiameterMm = 6.35,
+        });
+        Assert.False(result.TooSmallForTool);
+        Assert.True(result.Segments.Count >= 2, $"segments={result.Segments.Count}");
+        Assert.True(result.Path.Count > 8);
     }
 }

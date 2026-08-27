@@ -30,7 +30,8 @@ public static class LabelExport
     public static IReadOnlyList<LabelPaste> Build(
         IReadOnlyList<Panel> panels,
         IReadOnlyList<NestPlacement> placements,
-        IReadOnlyDictionary<string, (double X, double Y)>? overrides = null)
+        IReadOnlyDictionary<string, (double X, double Y)>? overrides = null,
+        Func<Panel, string>? materialTitle = null)
     {
         var byId = panels.ToDictionary(p => p.PanelId, StringComparer.Ordinal);
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -63,7 +64,7 @@ public static class LabelExport
                     ? panel.DisplayTitle
                     : panel.DisplayPartName,
                 Group = panel.DisplayGroup,
-                Material = panel.MaterialGroupLabel,
+                Material = materialTitle?.Invoke(panel) ?? panel.MaterialGroupLabel,
                 ThicknessMm = panel.ThicknessMm,
                 WidthMm = Math.Max(0, bounds.MaxX - bounds.MinX),
                 HeightMm = Math.Max(0, bounds.MaxY - bounds.MinY),

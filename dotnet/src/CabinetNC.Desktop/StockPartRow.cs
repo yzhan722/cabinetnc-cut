@@ -9,7 +9,7 @@ public sealed class StockPartRow
     public required IReadOnlyList<Panel> Members { get; init; }
 
     public string DisplayPartName => Representative.DisplayPartName;
-    public string MaterialGroupLabel => Representative.MaterialGroupLabel;
+    public required string MaterialGroupLabel { get; init; }
     public string DisplayDetail
     {
         get

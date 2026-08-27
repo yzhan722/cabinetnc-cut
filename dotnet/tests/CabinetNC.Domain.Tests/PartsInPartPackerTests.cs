@@ -107,6 +107,59 @@ public class PartsInPartPackerTests
     }
 
     [Fact]
+    public void Duplicate_host_cutouts_do_not_stack_children()
+    {
+        var host = new Panel
+        {
+            PanelId = "HOST",
+            Material = "oak",
+            ThicknessMm = 18,
+            Outline = new Outline
+            {
+                Points = [new(0, 0), new(400, 0), new(400, 300), new(0, 300)],
+            },
+            Features =
+            [
+                new PanelFeature
+                {
+                    FeatureId = "CUT1",
+                    Kind = "throughCutout",
+                    Through = true,
+                    Path = [new(40, 40), new(360, 40), new(360, 260), new(40, 260)],
+                },
+                new PanelFeature
+                {
+                    FeatureId = "inner-1",
+                    Kind = "throughCutout",
+                    Through = true,
+                    Purpose = "innerProfile",
+                    Path = [new(40, 40), new(360, 40), new(360, 260), new(40, 260)],
+                },
+            ],
+        };
+        var a = Rect("A", 80, 200);
+        var b = Rect("B", 80, 200);
+        var stock = new[] { PipSheet() };
+
+        var (packed, _) = new NestEngineRouter().Run(new NestEngineRequest
+        {
+            Panels = [host, a, b],
+            Settings = new NestSettings { ClearanceMm = 8, MarginMm = 10, AllowRotation = true },
+            StockTemplates = stock,
+            SizeOf = GroupedBlfNester.SizeOfOutline,
+            EnginePreference = "blf",
+        });
+
+        Assert.Equal(2, packed.PartInPartSlots.Count);
+        var pa = packed.Placements.Single(p => p.PanelId == "A");
+        var pb = packed.Placements.Single(p => p.PanelId == "B");
+        var dx = Math.Abs(pa.OffsetX - pb.OffsetX);
+        var dy = Math.Abs(pa.OffsetY - pb.OffsetY);
+        Assert.True(dx >= 80 + 8 - 1e-6 || dy >= 200 + 8 - 1e-6,
+            $"children overlap A=({pa.OffsetX:0},{pa.OffsetY:0}) B=({pb.OffsetX:0},{pb.OffsetY:0})");
+    }
+
+    [Fact]
     public void Skips_when_pip_disabled()
     {
         var host = HostWithCutout("HOST", 400, 300, 90, 60, 310, 240);

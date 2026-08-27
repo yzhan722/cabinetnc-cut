@@ -5,7 +5,7 @@ using Clipper2Lib;
 
 /// <summary>
 /// Approximate NFP nest engine using Clipper2 MinkowskiDiff.
-/// Outer contour only, 0/90° rotations, grouped by material+thickness.
+/// Outer contour only, 0/90/180/270° (see <see cref="NestSettings.CandidateRotations"/>), grouped by material+thickness.
 /// Falls back to AABB contact candidates when NFP yields no legal slot.
 /// </summary>
 public sealed class ClipperNfpNestingEngine : INestingEngine
@@ -202,7 +202,7 @@ public sealed class ClipperNfpNestingEngine : INestingEngine
         CancellationToken ct)
     {
         Candidate? best = null;
-        var rotations = settings.PanelMayRotate90(panel) ? new[] { 0d, 90d } : new[] { 0d };
+        var rotations = settings.CandidateRotations(panel);
         foreach (var rot in rotations)
         {
             ct.ThrowIfCancellationRequested();

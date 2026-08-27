@@ -14,6 +14,12 @@ public sealed class ProjectSession
     /// <summary>Parsed manufacturing-snapshot when the last successful open was a .cnjob / snapshot JSON.</summary>
     public ManufacturingSnapshot? LastImportSnapshot { get; private set; }
     public string? ProjectDbPath { get; private set; }
+    /// <summary>Shop-facing project title. Used for window chrome, save default, and NC file names.</summary>
+    public string? ProjectName { get; set; }
+    public string ResolvedProjectName =>
+        !string.IsNullOrWhiteSpace(ProjectName) ? ProjectName.Trim()
+        : !string.IsNullOrWhiteSpace(Package?.JobId) ? Package!.JobId!.Trim()
+        : "未命名工程";
     public string MachineId { get; set; } = "osai_e4_1325";
     public string LabelerMachineId { get; set; } = "osai_e4_1325";
     public IReadOnlyList<ValidationIssue> LastWarnings { get; private set; } = [];
@@ -39,6 +45,7 @@ public sealed class ProjectSession
             ProjectDbPath = null;
             ManufacturingDirty = false;
             History.Clear();
+            ResetProjectName(Package.JobId, path);
         }
         return result;
     }
@@ -56,6 +63,7 @@ public sealed class ProjectSession
         {
             Package = PackageMerge.Stamp(result.Package, incomingId, incomingLabel);
             SourcePath = path;
+            SuggestProjectName(Package.JobId, path);
         }
         else
         {
@@ -88,6 +96,31 @@ public sealed class ProjectSession
             History.Clear();
         }
         return result;
+    }
+
+    public void ResetProjectName(string? hint, string? sourcePath = null)
+    {
+        ProjectName = FirstHint(hint, sourcePath);
+    }
+
+    public void SuggestProjectName(string? hint, string? sourcePath = null)
+    {
+        if (!string.IsNullOrWhiteSpace(ProjectName)) return;
+        ProjectName = FirstHint(hint, sourcePath);
+    }
+
+    static string? FirstHint(string? hint, string? sourcePath)
+    {
+        if (!string.IsNullOrWhiteSpace(hint)) return hint.Trim();
+        if (!string.IsNullOrWhiteSpace(sourcePath))
+        {
+            var stem = Path.GetFileNameWithoutExtension(sourcePath);
+            if (!string.IsNullOrWhiteSpace(stem)
+                && !stem.Equals("project", StringComparison.OrdinalIgnoreCase)
+                && !stem.EndsWith(".db", StringComparison.OrdinalIgnoreCase))
+                return stem;
+        }
+        return null;
     }
 
     static ManufacturingSnapshot? TryParseSnapshot(string? json)
@@ -128,6 +161,7 @@ public sealed class ProjectSession
         LastErrors = [];
         ManufacturingDirty = false;
         History.Clear();
+        ResetProjectName(Package.JobId, sourcePath);
     }
 
     public void ReplacePanel(Panel panel, bool recordHistory = true)
@@ -216,5 +250,6 @@ public sealed class ProjectSession
         ManufacturingDirty = false;
         History.Clear();
         LabelerMachineId = "osai_e4_1325";
+        ProjectName = null;
     }
 }

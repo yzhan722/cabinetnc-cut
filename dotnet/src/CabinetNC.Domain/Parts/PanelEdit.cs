@@ -223,6 +223,7 @@ public static class PanelEdit
                 WidthMm = widthMm ?? f.WidthMm,
                 Path = f.Path,
                 Profile = f.Profile,
+                Holes = f.Holes,
             };
         }).ToList();
         return ClonePanel(panel, feats);
@@ -350,6 +351,7 @@ public static class PanelEdit
             WidthMm = f.WidthMm,
             Path = f.Path?.ToList(),
             Profile = f.Profile?.ToList(),
+            Holes = f.Holes?.Select(ring => (IReadOnlyList<Point2>)ring.ToList()).ToList(),
         }).ToList();
         // ensure unique feature ids within panel
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -376,6 +378,7 @@ public static class PanelEdit
                     WidthMm = feats[i].WidthMm,
                     Path = feats[i].Path,
                     Profile = feats[i].Profile,
+                    Holes = feats[i].Holes,
                 };
         }
 
@@ -564,5 +567,6 @@ public static class PanelEdit
             WidthMm = f.WidthMm,
             Path = path ?? f.Path,
             Profile = profile ?? f.Profile,
+            Holes = f.Holes,
         };
 }

@@ -414,10 +414,11 @@ public static class NestDrag
         double borderMm,
         (double Ox, double Oy) fallback,
         bool allowOverlap,
-        IReadOnlySet<(string A, string B)>? ignorePairs = null) =>
+        IReadOnlySet<(string A, string B)>? ignorePairs = null,
+        bool trueShape = false) =>
         Resolve(
             panel, panelId, ox, oy, rotDeg, sheetIndex, others, byId, sheetW, sheetH, spacingMm,
-            SheetInsets.Uniform(borderMm), fallback, allowOverlap, ignorePairs);
+            SheetInsets.Uniform(borderMm), fallback, allowOverlap, ignorePairs, trueShape);
 
     public static (double Ox, double Oy, bool Blocked) Resolve(
         Panel panel,
@@ -434,10 +435,20 @@ public static class NestDrag
         SheetInsets inset,
         (double Ox, double Oy) fallback,
         bool allowOverlap,
-        IReadOnlySet<(string A, string B)>? ignorePairs = null)
+        IReadOnlySet<(string A, string B)>? ignorePairs = null,
+        bool trueShape = false)
     {
         var clamped = ClampOnSheet(panel, ox, oy, rotDeg, sheetW, sheetH, inset);
         if (allowOverlap) return (clamped.Ox, clamped.Oy, false);
+
+        if (trueShape)
+        {
+            if (NestValidator.HasPolygonConflict(
+                    panel, panelId, clamped.Ox, clamped.Oy, rotDeg, sheetIndex,
+                    byId, others, spacingMm, ignorePairs))
+                return (fallback.Ox, fallback.Oy, true);
+            return (clamped.Ox, clamped.Oy, false);
+        }
 
         var box = Aabb(panel, clamped.Ox, clamped.Oy, rotDeg);
         foreach (var op in others)

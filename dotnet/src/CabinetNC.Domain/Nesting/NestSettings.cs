@@ -50,6 +50,24 @@ public sealed class NestSettings
             });
         return panel.MayRotate90;
     }
+
+    /// <summary>Discrete nest angles to try for <paramref name="panel"/>.</summary>
+    public IReadOnlyList<double> CandidateRotations(Parts.Panel panel)
+    {
+        if (!AllowRotation) return [0];
+        var grain = GrainLock
+            && !string.IsNullOrWhiteSpace(panel.GrainDirection ?? panel.Orientation?.GrainDirection);
+        if (grain) return [0, 180];
+        if (AllowedRotations.Count > 0)
+        {
+            return AllowedRotations
+                .Select(r => (double)(((r % 360) + 360) % 360))
+                .Distinct()
+                .OrderBy(r => r)
+                .ToList();
+        }
+        return panel.MayRotate90 ? [0d, 90d, 180d, 270d] : [0d, 180d];
+    }
 }
 
 /// <summary>Material + thickness grouping key (case-insensitive material, 0.01 mm thickness).</summary>

@@ -65,17 +65,7 @@ public static class NcPreflight
         issues.AddRange(GrooveClearIssues(placed));
 
         if (panelsById is not null)
-        {
             issues.AddRange(CamSafety.DepthIssues(placed, panelsById));
-            foreach (var panel in panelsById.Values)
-            {
-                if (Parts.PanelEdit.IsSmallPanel(panel, out var reason))
-                {
-                    issues.Add(new("warn", "small_panel",
-                        $"{panel.PanelId}: 小板策略 — {reason}"));
-                }
-            }
-        }
 
         // Dual-face: B ops require registration (Day 11). Default session has no strategy → block B.
         issues.AddRange(DoubleSideGate.CheckBackSideOps(placed, registration));

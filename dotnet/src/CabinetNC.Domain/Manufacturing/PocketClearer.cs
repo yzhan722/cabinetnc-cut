@@ -1,5 +1,6 @@
 namespace CabinetNC.Domain.Manufacturing;
 
+using CabinetNC.Domain.Nesting;
 using Clipper2Lib;
 
 /// <summary>
@@ -11,11 +12,62 @@ public static class PocketClearer
 {
     public const double DefaultOnionSkinMm = 0.5;
     public const double DefaultStepoverRatio = 0.4;
+    /// <summary>
+    /// Fusion lay-flat sometimes emits a paper-thin edge ribbon (≈0.1 mm) as a pocket.
+    /// That is a tessellation leftover, not a shop feature — skip it. Real pockets that
+    /// are merely smaller than the tool stay on the hard preflight gate.
+    /// </summary>
+    public const double ExportSliverMaxShortMm = 1.0;
     const double Scale = 10000;
+
+    public static bool IsExportSliver(IReadOnlyList<(double X, double Y)> outline)
+    {
+        if (outline.Count < 3) return false;
+        var minX = outline.Min(p => p.X);
+        var maxX = outline.Max(p => p.X);
+        var minY = outline.Min(p => p.Y);
+        var maxY = outline.Max(p => p.Y);
+        return Math.Min(maxX - minX, maxY - minY) < ExportSliverMaxShortMm;
+    }
+
+    /// <summary>
+    /// Fusion sometimes writes a second copy of a feature in lay-flat world XY
+    /// (tens of metres away). Those must not become toolpaths.
+    /// </summary>
+    public const double OffPanelPadMm = 80;
+
+    public static bool IsOffPanelArtifact(
+        IReadOnlyList<(double X, double Y)> outline,
+        LocalBounds panelBounds,
+        double padMm = OffPanelPadMm)
+    {
+        if (outline.Count == 0) return false;
+        var minX = outline.Min(p => p.X);
+        var maxX = outline.Max(p => p.X);
+        var minY = outline.Min(p => p.Y);
+        var maxY = outline.Max(p => p.Y);
+        return Disjoint(minX, minY, maxX, maxY, panelBounds, padMm);
+    }
+
+    public static bool IsOffPanelArtifact(
+        double x,
+        double y,
+        LocalBounds panelBounds,
+        double padMm = OffPanelPadMm) =>
+        Disjoint(x, y, x, y, panelBounds, padMm);
+
+    static bool Disjoint(
+        double minX, double minY, double maxX, double maxY,
+        LocalBounds panel, double padMm) =>
+        maxX < panel.MinX - padMm
+        || minX > panel.MaxX + padMm
+        || maxY < panel.MinY - padMm
+        || minY > panel.MaxY + padMm;
 
     public sealed class PocketClearRequest
     {
         public required IReadOnlyList<(double X, double Y)> Outline { get; init; }
+        public IReadOnlyList<IReadOnlyList<(double X, double Y)>> Holes { get; init; } = [];
         public double ToolDiameterMm { get; init; } = 6.35;
         public double? StepoverMm { get; init; }
         public double OnionSkinMm { get; init; } = DefaultOnionSkinMm;
@@ -53,6 +105,13 @@ public static class PocketClearer
         var onion = Math.Max(0, req.OnionSkinMm);
         var inset = toolR + onion;
         var step = req.StepoverMm ?? Math.Max(0.5, req.ToolDiameterMm * DefaultStepoverRatio);
+
+        var holes = req.Holes
+            .Where(h => h.Count >= 3)
+            .Select(ToPath64)
+            .ToList();
+        if (holes.Count > 0)
+            return ClearRing(req.Outline, holes, step, inset, req.EmitFinishLoop);
 
         var outer = ToPath64(req.Outline);
         var insetPaths = Clipper.InflatePaths(
@@ -101,6 +160,85 @@ public static class PocketClearer
             StepoverMm = step,
             InsetMm = inset,
         };
+    }
+
+    static PocketClearResult ClearRing(
+        IReadOnlyList<(double X, double Y)> outline,
+        List<Path64> holes,
+        double step,
+        double inset,
+        bool emitFinish)
+    {
+        var outer = ToPath64(outline);
+        EnsureCcw(outer);
+        var outerInset = Clipper.InflatePaths(
+            new Paths64 { outer }, -inset * Scale, JoinType.Round, EndType.Polygon);
+        if (outerInset.Count == 0 || outerInset[0].Count < 3)
+            return TooSmall(outline, step, inset);
+
+        var outerLoop = ToPoints(Largest(outerInset));
+        var innerLoops = new List<IReadOnlyList<(double X, double Y)>>();
+        foreach (var hole in holes)
+        {
+            var expanded = Clipper.InflatePaths(
+                new Paths64 { hole }, inset * Scale, JoinType.Round, EndType.Polygon);
+            if (expanded.Count == 0 || expanded[0].Count < 3)
+                return TooSmall(outline, step, inset);
+            var loop = ToPoints(Largest(expanded));
+            if (RingSpan(loop) >= RingSpan(outerLoop) - 0.5)
+                return TooSmall(outline, step, inset);
+            innerLoops.Add(loop);
+        }
+
+        var segments = new List<IReadOnlyList<(double X, double Y)>> { outerLoop };
+        segments.AddRange(innerLoops);
+        var flat = new List<(double X, double Y)>();
+        foreach (var loop in segments)
+        {
+            if (flat.Count > 0)
+                flat.Add(loop[0]);
+            flat.AddRange(loop);
+            if (emitFinish)
+                flat.Add(loop[0]);
+        }
+
+        return new PocketClearResult
+        {
+            Path = flat,
+            Segments = segments,
+            FinishLoop = emitFinish ? outerLoop : null,
+            PassCount = segments.Count,
+            StepoverMm = step,
+            InsetMm = inset,
+        };
+    }
+
+    static PocketClearResult TooSmall(
+        IReadOnlyList<(double X, double Y)> outline,
+        double step,
+        double inset)
+    {
+        var cx = outline.Average(p => p.X);
+        var cy = outline.Average(p => p.Y);
+        return new PocketClearResult
+        {
+            Path = [(cx, cy)],
+            Segments = [],
+            PassCount = 0,
+            StepoverMm = step,
+            InsetMm = inset,
+            TooSmallForTool = true,
+        };
+    }
+
+    static double RingSpan(IReadOnlyList<(double X, double Y)> ring)
+    {
+        if (ring.Count == 0) return 0;
+        var minX = ring.Min(p => p.X);
+        var maxX = ring.Max(p => p.X);
+        var minY = ring.Min(p => p.Y);
+        var maxY = ring.Max(p => p.Y);
+        return Math.Max(maxX - minX, maxY - minY);
     }
 
     static List<Path64> OffsetRings(Path64 outer, double stepMm)

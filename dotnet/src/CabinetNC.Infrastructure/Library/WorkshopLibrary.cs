@@ -51,6 +51,6 @@ public sealed class NestDefaults
     public double SpacingMm { get; set; } = 12;
     public double BorderMm { get; set; } = 15;
     public bool AllowRotation { get; set; } = true;
-    public double DefaultSheetWidthMm { get; set; } = 1220;
-    public double DefaultSheetLengthMm { get; set; } = 2440;
+    public double DefaultSheetWidthMm { get; set; } = 1200;
+    public double DefaultSheetLengthMm { get; set; } = 2400;
 }

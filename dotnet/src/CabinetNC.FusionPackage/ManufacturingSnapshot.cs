@@ -121,6 +121,7 @@ public sealed class SnapshotFeatureGeometry
     public List<List<double>>? Centerline { get; init; }
     public double? WidthMm { get; init; }
     public SnapshotProfile? Profile { get; init; }
+    public List<SnapshotProfile>? Holes { get; init; }
 }
 
 public sealed class SnapshotFeatureIntent

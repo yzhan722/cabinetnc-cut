@@ -59,6 +59,24 @@ public class ClipperNfpNestingEngineTests
     }
 
     [Fact]
+    public void Engine_nests_two_triangles_with_180_on_one_sheet()
+    {
+        var panels = new[] { RightTri("T1"), RightTri("T2") };
+        var stock = new NestSheetSpec
+        {
+            WidthMm = 240, LengthMm = 200, BorderMm = 10,
+            Material = "oak", ThicknessMm = 18,
+        };
+        var settings = new NestSettings { MarginMm = 10, ClearanceMm = 4, AllowRotation = true };
+
+        Assert.Equal(new[] { 0d, 90d, 180d, 270d }, settings.CandidateRotations(panels[0]));
+        var nfp = new ClipperNfpNestingEngine().Pack(panels, settings, [stock], GroupedBlfNester.SizeOfOutline);
+        Assert.Equal(2, nfp.Placements.Count);
+        Assert.Empty(nfp.Unplaced);
+        Assert.Empty(NestValidator.FindPolygonCollisions(panels, nfp.Placements, 4));
+    }
+
+    [Fact]
     public void Router_nfp_preference_selects_clipper_nfp()
     {
         var panels = new[] { Rect("A", 100, 80), Rect("B", 100, 80) };
@@ -93,6 +111,18 @@ public class ClipperNfpNestingEngineTests
         Outline = new Outline
         {
             Points = [new(0, 0), new(w, 0), new(w, h), new(0, h)],
+            Closed = true,
+        },
+    };
+
+    static Panel RightTri(string id) => new()
+    {
+        PanelId = id,
+        Material = "oak",
+        ThicknessMm = 18,
+        Outline = new Outline
+        {
+            Points = [new(0, 0), new(200, 0), new(0, 160)],
             Closed = true,
         },
     };

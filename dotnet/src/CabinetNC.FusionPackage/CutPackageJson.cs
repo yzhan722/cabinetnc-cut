@@ -105,5 +105,6 @@ public static class CutPackageJson
         widthMm = f.WidthMm,
         path = f.Path?.Select(pt => new[] { pt.X, pt.Y }),
         profile = f.Profile?.Select(pt => new[] { pt.X, pt.Y }),
+        holes = f.Holes?.Select(ring => ring.Select(pt => new[] { pt.X, pt.Y })),
     };
 }

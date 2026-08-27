@@ -57,7 +57,8 @@ static class CanvasPainter
                     fill: new SKColor(0xC4, 0x7A, 0x00, 0x66),
                     stroke: new SKColor(0x8A, 0x52, 0x00),
                     dashed: false,
-                    label: label);
+                    label: label,
+                    holes: f.Holes);
             }
             else if (PanelEdit.IsGroove(f))
             {
@@ -182,7 +183,8 @@ static class CanvasPainter
         TroyPassKind? HighlightPass = null,
         OpsToolpathKind? HighlightToolpath = null,
         IReadOnlyList<ProfileBridge>? Bridges = null,
-        IReadOnlyDictionary<string, (double X, double Y)>? LabelOverrides = null);
+        IReadOnlyDictionary<string, (double X, double Y)>? LabelOverrides = null,
+        bool LitePaint = false);
 
     public static void PaintNest(
         SKCanvas canvas,
@@ -246,6 +248,7 @@ static class CanvasPainter
             canvas.DrawPath(path, stroke);
 
             // features on nest
+            if (!opts.LitePaint)
             foreach (var f in panel.Features)
             {
                 if (PanelEdit.IsHole(f))
@@ -273,7 +276,8 @@ static class CanvasPainter
                     DrawClosedFeatureOnSheet(
                         canvas, pocketRing, bounds, place, ToSx, ToSy,
                         fill: new SKColor(0xC4, 0x7A, 0x00, 0x66),
-                        stroke: new SKColor(0x8A, 0x52, 0x00));
+                        stroke: new SKColor(0x8A, 0x52, 0x00),
+                        holes: f.Holes);
                 }
                 else if (PanelEdit.IsGroove(f))
                 {
@@ -308,11 +312,13 @@ static class CanvasPainter
                     bold: active);
             }
 
-            if (active)
+            if (active && !opts.LitePaint)
             {
                 DrawDimHScreen(canvas, ToSx(aabb.MinX), ToSx(aabb.MaxX), ToSy(aabb.MinY) + 12, Fmt(aabb.MaxX - aabb.MinX));
                 DrawDimVScreen(canvas, ToSy(aabb.MinY), ToSy(aabb.MaxY), ToSx(aabb.MaxX) + 10, Fmt(aabb.MaxY - aabb.MinY));
             }
+
+            if (opts.LitePaint) continue;
 
             (double X, double Y)? ov = opts.LabelOverrides is { } map
                 && map.TryGetValue(panel.PanelId, out var o)
@@ -1019,20 +1025,18 @@ static class CanvasPainter
         SKColor fill,
         SKColor stroke,
         bool dashed,
-        string label)
+        string label,
+        IReadOnlyList<IReadOnlyList<Point2>>? holes = null)
     {
-        using var sk = new SKPath();
+        using var sk = new SKPath { FillType = SKPathFillType.EvenOdd };
         double minX = double.MaxValue, maxX = double.MinValue;
         double minY = double.MaxValue, maxY = double.MinValue;
-        for (var i = 0; i < ring.Count; i++)
+        AppendRing(sk, ring, p => GeomInteraction.ToScreen(view, p.X, p.Y), ref minX, ref maxX, ref minY, ref maxY);
+        foreach (var hole in holes ?? [])
         {
-            var p = ring[i];
-            minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X);
-            minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y);
-            var (sx, sy) = GeomInteraction.ToScreen(view, p.X, p.Y);
-            if (i == 0) sk.MoveTo(sx, sy); else sk.LineTo(sx, sy);
+            if (hole.Count < 3) continue;
+            AppendRing(sk, hole, p => GeomInteraction.ToScreen(view, p.X, p.Y), ref minX, ref maxX, ref minY, ref maxY);
         }
-        sk.Close();
         using var fillPaint = new SKPaint
         {
             Style = SKPaintStyle.Fill,
@@ -1127,19 +1131,24 @@ static class CanvasPainter
         Func<double, float> toSx,
         Func<double, float> toSy,
         SKColor fill,
-        SKColor stroke)
+        SKColor stroke,
+        IReadOnlyList<IReadOnlyList<Point2>>? holes = null)
     {
-        using var gpath = new SKPath();
-        for (var i = 0; i < ring.Count; i++)
+        using var gpath = new SKPath { FillType = SKPathFillType.EvenOdd };
+        (float X, float Y) ToScreen(Point2 p)
         {
             var (wx, wy) = NestTransform.ToSheet(
-                ring[i].X, ring[i].Y, bounds,
+                p.X, p.Y, bounds,
                 place.OffsetX, place.OffsetY, place.RotationDeg);
-            var sx = toSx(wx);
-            var sy = toSy(wy);
-            if (i == 0) gpath.MoveTo(sx, sy); else gpath.LineTo(sx, sy);
+            return (toSx(wx), toSy(wy));
         }
-        gpath.Close();
+        double minX = 0, maxX = 0, minY = 0, maxY = 0;
+        AppendRing(gpath, ring, ToScreen, ref minX, ref maxX, ref minY, ref maxY);
+        foreach (var hole in holes ?? [])
+        {
+            if (hole.Count < 3) continue;
+            AppendRing(gpath, hole, ToScreen, ref minX, ref maxX, ref minY, ref maxY);
+        }
         using var gFill = new SKPaint
         {
             Style = SKPaintStyle.Fill,
@@ -1155,6 +1164,26 @@ static class CanvasPainter
         };
         canvas.DrawPath(gpath, gFill);
         canvas.DrawPath(gpath, gStroke);
+    }
+
+    static void AppendRing(
+        SKPath path,
+        IReadOnlyList<Point2> ring,
+        Func<Point2, (float X, float Y)> toScreen,
+        ref double minX,
+        ref double maxX,
+        ref double minY,
+        ref double maxY)
+    {
+        for (var i = 0; i < ring.Count; i++)
+        {
+            var p = ring[i];
+            minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X);
+            minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y);
+            var (sx, sy) = toScreen(p);
+            if (i == 0) path.MoveTo(sx, sy); else path.LineTo(sx, sy);
+        }
+        path.Close();
     }
 
     static void DrawMeasureGuide(

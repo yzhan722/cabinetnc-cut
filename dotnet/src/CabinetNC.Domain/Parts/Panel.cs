@@ -21,6 +21,8 @@ public sealed class PanelFeature
     public IReadOnlyList<Point2>? Path { get; init; }
     /// <summary>Optional closed CAD opening polygon for groove display.</summary>
     public IReadOnlyList<Point2>? Profile { get; init; }
+    /// <summary>Closed holes inside a pocket (rebate ring).</summary>
+    public IReadOnlyList<IReadOnlyList<Point2>>? Holes { get; init; }
 }
 
 public sealed class WorkpieceFace

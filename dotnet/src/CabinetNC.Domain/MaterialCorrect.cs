@@ -136,6 +136,7 @@ public static class MaterialCorrect
             WidthMm = f.WidthMm,
             Path = f.Path,
             Profile = f.Profile,
+            Holes = f.Holes,
         };
 
     static IReadOnlyList<SheetStock> MergeSheets(

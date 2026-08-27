@@ -37,6 +37,49 @@ public class ManufacturingSnapshotImporterTests
     }
 
     [Fact]
+    public void Imports_rebate_pocket_holes_as_ring()
+    {
+        var json = SnapshotJson(
+            """
+            [
+              {
+                "featureId":"P1",
+                "kind":"pocket",
+                "sourceFace":"A",
+                "geometry":{
+                  "profile":{"closed":true,"points":[[10,10],[90,10],[90,70],[10,70]]},
+                  "holes":[{"closed":true,"points":[[19,19],[81,19],[81,61],[19,61]]}]
+                },
+                "depthMm":9,
+                "through":false
+              },
+              {
+                "featureId":"T1",
+                "kind":"throughProfile",
+                "sourceFace":"THROUGH",
+                "geometry":{"profile":{"closed":true,"points":[[19,19],[81,19],[81,61],[19,61]]}},
+                "depthMm":18,
+                "through":true
+              }
+            ]
+            """);
+
+        var result = ManufacturingSnapshotImporter.FromJson(json);
+        Assert.True(result.Ok, string.Join("; ", result.Errors.Select(e => e.Message)));
+        var panel = Assert.Single(result.Package!.Panels);
+        var pocket = Assert.Single(panel.Features, f => f.Kind == "pocket");
+        Assert.NotNull(pocket.Holes);
+        Assert.Single(pocket.Holes);
+        Assert.Equal(19, pocket.Holes[0][0].X);
+        Assert.Contains(panel.Features, f => f.Kind == "throughCutout" && f.Through);
+
+        var ops = OpsPlanner.FeaturesToOps(result.Package.Panels);
+        var clear = Assert.Single(ops, op => op.Op == "pocket");
+        Assert.False(clear.PocketTooSmallForTool);
+        Assert.True(clear.PathSegments!.Count >= 2);
+    }
+
+    [Fact]
     public void Imports_single_side_snapshot_and_preserves_source()
     {
         var json = SnapshotJson(
@@ -309,6 +352,54 @@ public class ManufacturingSnapshotImporterTests
         Assert.True(cut.Through);
         Assert.Equal("innerProfile", cut.Purpose);
         Assert.Contains(result.Warnings, w => w.Code == "inner_profile_projected");
+    }
+
+    [Fact]
+    public void Matching_inner_profile_does_not_duplicate_existing_through()
+    {
+        var json = """
+        {
+          "schema":"cabinetnc.manufacturing-snapshot",
+          "schemaVersion":"1.0.0",
+          "jobId":"INNER-DEDUP",
+          "units":"mm",
+          "workpieces":[
+            {
+              "workpieceId":"WP1",
+              "panelId":"P1",
+              "material":{"materialId":"PB-WHITE-18","thicknessMm":18},
+              "geometry":{
+                "quality":"tessellated",
+                "outerProfile":{"closed":true,"points":[[0,0],[100,0],[100,50],[0,50]]},
+                "innerProfiles":[
+                  {"closed":true,"points":[[20,20],[40,20],[40,35],[20,35]]}
+                ],
+                "nestingPolygon":[[0,0],[100,0],[100,50],[0,50]]
+              },
+              "faces":[
+                {"faceId":"A","machiningPermission":"PRIMARY"},
+                {"faceId":"B","machiningPermission":"NOT_ALLOWED"}
+              ],
+              "features":[
+                {
+                  "featureId":"T1",
+                  "kind":"throughProfile",
+                  "sourceFace":"THROUGH",
+                  "geometry":{"profile":{"closed":true,"points":[[20,20],[40,20],[40,35],[20,35]]}},
+                  "through":true
+                }
+              ],
+              "manufacturing":{"mode":"singleSide","machiningFace":"A"}
+            }
+          ]
+        }
+        """;
+
+        var result = ManufacturingSnapshotImporter.FromJson(json);
+        Assert.True(result.Ok, string.Join("; ", result.Errors.Select(e => e.Message)));
+        var panel = Assert.Single(result.Package!.Panels);
+        Assert.Single(panel.Features, f => f.Through);
+        Assert.DoesNotContain(result.Warnings, w => w.Code == "inner_profile_projected");
     }
 
     [Fact]

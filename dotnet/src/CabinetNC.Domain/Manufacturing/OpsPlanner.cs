@@ -79,6 +79,8 @@ public static class OpsPlanner
             {
                 if (enableDrill && ClearanceToolPick.IsDrillHole(f, drillMaxExclusiveMm))
                 {
+                    if (PocketClearer.IsOffPanelArtifact(f.X, f.Y, bounds))
+                        continue;
                     ops.Add(new CutOp
                     {
                         Op = "drill",
@@ -109,6 +111,8 @@ public static class OpsPlanner
                 else if (enableGroove && f.Kind.Contains("groove", StringComparison.OrdinalIgnoreCase)
                          && f.Path is { Count: >= 2 } path)
                 {
+                    if (PocketClearer.IsOffPanelArtifact(path.Select(p => (p.X, p.Y)).ToList(), bounds))
+                        continue;
                     var isTongue = Parts.PanelEdit.IsTongueGroove(f);
                     var width = GrooveClear.ResolveWidthMm(f);
                     var toolId = isTongue
@@ -164,6 +168,8 @@ public static class OpsPlanner
                 else if (enableContour && f.Kind.Contains("cutout", StringComparison.OrdinalIgnoreCase)
                          && f.Path is { Count: >= 3 } cutPath)
                 {
+                    if (PocketClearer.IsOffPanelArtifact(cutPath.Select(p => (p.X, p.Y)).ToList(), bounds))
+                        continue;
                     ops.Add(new CutOp
                     {
                         Op = "contour",
@@ -194,12 +200,21 @@ public static class OpsPlanner
         Nesting.LocalBounds? bounds,
         double clearanceLargeMinShortMm)
     {
+        if (PocketClearer.IsExportSliver(outline))
+            return;
+        if (bounds is { } panelBounds && PocketClearer.IsOffPanelArtifact(outline, panelBounds))
+            return;
+
         var toolId = ClearanceToolPick.Pick(f, clearanceLargeMinShortMm);
         var toolDia = ClearanceToolPick.DiameterOf(toolId);
         var directToSize = ClearanceToolPick.IsHingeFeature(f);
         var cleared = PocketClearer.Clear(new PocketClearer.PocketClearRequest
         {
             Outline = outline,
+            Holes = (f.Holes ?? [])
+                .Where(ring => ring.Count >= 3)
+                .Select(ring => ring.Select(p => (p.X, p.Y)).ToList())
+                .ToList(),
             ToolDiameterMm = toolDia,
             OnionSkinMm = directToSize ? 0 : PocketClearer.DefaultOnionSkinMm,
             EmitFinishLoop = !directToSize,

@@ -387,8 +387,7 @@ public static class ManufacturingSnapshotImporter
             }
 
             var featureId = NextUniqueFeatureId($"inner-{i + 1}", featureIds);
-            featureIds.Add(featureId);
-            features.Add(new PanelFeature
+            var candidate = new PanelFeature
             {
                 FeatureId = featureId,
                 Kind = "throughCutout",
@@ -398,7 +397,13 @@ public static class ManufacturingSnapshotImporter
                 X = points[0].X,
                 Y = points[0].Y,
                 Path = points,
-            });
+                Profile = points,
+            };
+            if (IsDuplicateThroughFeature(candidate, features))
+                continue;
+
+            featureIds.Add(featureId);
+            features.Add(candidate);
             warnings.Add(new("inner_profile_projected", ipath,
                 $"innerProfile projected as throughCutout {featureId}"));
         }
@@ -485,6 +490,7 @@ public static class ManufacturingSnapshotImporter
                 WidthMm = f.WidthMm,
                 Path = f.Path,
                 Profile = f.Profile,
+                Holes = f.Holes,
             };
         }).ToList();
 
@@ -585,6 +591,8 @@ public static class ManufacturingSnapshotImporter
             }
         }
 
+        var holes = ReadHoles(feature, path);
+
         return new PanelFeature
         {
             FeatureId = feature.FeatureId,
@@ -601,7 +609,29 @@ public static class ManufacturingSnapshotImporter
             WidthMm = asThroughCutout ? null : feature.Geometry.WidthMm,
             Path = featurePath,
             Profile = profile,
+            Holes = holes,
         };
+    }
+
+    static IReadOnlyList<IReadOnlyList<Point2>>? ReadHoles(
+        SnapshotFeature feature,
+        string path)
+    {
+        var raw = feature.Geometry.Holes;
+        if (raw is not { Count: > 0 }) return null;
+        var holes = new List<IReadOnlyList<Point2>>();
+        for (var i = 0; i < raw.Count; i++)
+        {
+            var soft = new List<ValidationIssue>();
+            var ring = ReadPoints(
+                raw[i].Points,
+                $"{path}.geometry.holes[{i}].points",
+                soft,
+                minCount: 3);
+            if (soft.Count == 0 && ring.Count >= 3)
+                holes.Add(ring);
+        }
+        return holes.Count > 0 ? holes : null;
     }
 
     static List<Point2> ReadOptionalProfile(SnapshotFeature feature, string path)
