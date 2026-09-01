@@ -23,14 +23,30 @@ public static class ContourToolOffset
             if (op.Op != "contour" || op.Path is not { Count: >= 3 } path)
                 return op;
 
-            // A tessellated stadium (door lock) should remain an exact stadium
-            // after cutter compensation. Generic polygon inset leaves a small
-            // sloped seam and undersizes both axes.
+            // Lock / stadium first. CadPath arc offset used to enlarge the
+            // CCW end-caps (R8 → R13) while the sides inset — a dumbbell.
             if (op.FeatureId is not null
-                && TryInsetCapsule(path, offsetMm, op.RotationDeg, out var capsule))
+                && TryInsetCapsule(path, offsetMm, op.RotationDeg, out var capsule, out var capsuleCad))
             {
                 var oriented = ClimbCut.OrientClosed(capsule, inner: true).ToList();
-                return op with { Path = oriented };
+                var cad = capsuleCad.Count > 0
+                    ? CadPath.OrientClosed(capsuleCad, inner: true)
+                    : null;
+                return op with { Path = oriented, CadPath = cad };
+            }
+
+            if (op.CadPath is { Count: > 0 } sourceCad
+                && CadPath.TryOffset(
+                    sourceCad,
+                    op.FeatureId is null ? offsetMm : -offsetMm,
+                    roundConvex: op.FeatureId is null,
+                    out var offsetCad)
+                && offsetCad.Count > 0)
+            {
+                var orientedCad = CadPath.OrientClosed(offsetCad, inner: op.FeatureId is not null);
+                var sampled = CadPath.ToPolyline(orientedCad, 0.4);
+                sampled = ClimbCut.OrientClosed(sampled, inner: op.FeatureId is not null).ToList();
+                return op with { Path = sampled, CadPath = orientedCad };
             }
 
             var source = new Path64(path.Count);
@@ -63,9 +79,18 @@ public static class ContourToolOffset
         IReadOnlyList<(double X, double Y)> source,
         double insetMm,
         double rotationDeg,
-        out IReadOnlyList<(double X, double Y)> inset)
+        out IReadOnlyList<(double X, double Y)> inset) =>
+        TryInsetCapsule(source, insetMm, rotationDeg, out inset, out _);
+
+    static bool TryInsetCapsule(
+        IReadOnlyList<(double X, double Y)> source,
+        double insetMm,
+        double rotationDeg,
+        out IReadOnlyList<(double X, double Y)> inset,
+        out IReadOnlyList<CadSegment> cad)
     {
         inset = [];
+        cad = [];
         if (insetMm <= 0 || source.Count < 8)
             return false;
 
@@ -137,6 +162,11 @@ public static class ContourToolOffset
         inset = rebuilt
             .Select(p => Rotate((p.X, p.Y), inverse: false))
             .ToList();
+        var localCad = LockSlotGeometry.CapsuleSegments(
+            minX + insetMm, maxX - insetMm, minY + insetMm, maxY - insetMm);
+        cad = Math.Abs(rotationDeg) < 1e-9
+            ? localCad
+            : CadPath.Rotate(localCad, rotationDeg, new Point2(0, 0));
         return true;
     }
 }

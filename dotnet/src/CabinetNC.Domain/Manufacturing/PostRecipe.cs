@@ -43,4 +43,34 @@ public sealed class PostRecipe
     public IReadOnlyList<ProfileBridge> Bridges { get; init; } = [];
 
     public static PostRecipe TroyDefault() => new();
+
+    public PostRecipe WithBridges(IReadOnlyList<ProfileBridge> bridges) => new()
+    {
+        SafeZMm = SafeZMm,
+        Z0IsBoardBottom = Z0IsBoardBottom,
+        TongueFeed = TongueFeed,
+        TongueRpm = TongueRpm,
+        TonguePlunge = TonguePlunge,
+        ClearanceFeed = ClearanceFeed,
+        ClearanceRpm = ClearanceRpm,
+        ClearancePlunge = ClearancePlunge,
+        ProfileFirstFeed = ProfileFirstFeed,
+        ProfileFirstRpm = ProfileFirstRpm,
+        ProfileFirstPlunge = ProfileFirstPlunge,
+        ProfileFirstRamp45 = ProfileFirstRamp45,
+        ProfileFirstLeaveMm = ProfileFirstLeaveMm,
+        ProfileBridgeLeaveMm = ProfileBridgeLeaveMm,
+        ProfileLastFeed = ProfileLastFeed,
+        ProfileLastRpm = ProfileLastRpm,
+        ProfileLastPlunge = ProfileLastPlunge,
+        ProfileThroughZMm = ProfileThroughZMm,
+        DrillPlunge = DrillPlunge,
+        DrillRpm = DrillRpm,
+        DrillThroughZMm = DrillThroughZMm,
+        GuillotineFeed = GuillotineFeed,
+        GuillotinePlunge = GuillotinePlunge,
+        GuillotineThroughZMm = GuillotineThroughZMm,
+        HomeXyAtEnd = HomeXyAtEnd,
+        Bridges = bridges,
+    };
 }

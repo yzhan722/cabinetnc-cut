@@ -40,6 +40,8 @@ public sealed record CutOp
     public double? ThicknessMm { get; init; }
     /// <summary>Through feature — last Z uses through overshoot, not blind depth.</summary>
     public bool Through { get; init; }
+    /// <summary>Exact CAD tool-centre loop when Fusion exported line/arc entities.</summary>
+    public IReadOnlyList<Geometry.CadSegment>? CadPath { get; init; }
 }
 
 /// <summary>Port of src/ops.js featuresToOps + attachOpsToNest (contour + drill + groove).</summary>
@@ -68,6 +70,7 @@ public static class OpsPlanner
                     Op = "contour",
                     PanelId = panel.PanelId,
                     Path = pts.Select(p => (p.X, p.Y)).ToList(),
+                    CadPath = panel.Outline.Segments,
                     PanelBounds = bounds,
                     DepthMm = CamSafety.OuterContourDepthMm(panel.ThicknessMm),
                     Side = panel.Side ?? panel.Orientation?.MillingFace,
@@ -79,6 +82,8 @@ public static class OpsPlanner
             {
                 if (enableDrill && ClearanceToolPick.IsDrillHole(f, drillMaxExclusiveMm))
                 {
+                    if (PocketClearer.IsOffPanelArtifact(f.X, f.Y, bounds))
+                        continue;
                     ops.Add(new CutOp
                     {
                         Op = "drill",
@@ -98,7 +103,10 @@ public static class OpsPlanner
                     && Parts.PanelEdit.IsHole(f)
                     && ClearanceToolPick.CupOutline(f) is { Count: >= 3 } holeOutline)
                 {
-                    AddPocketOp(ops, panel, f, holeOutline, bounds, clearanceLargeMinShortMm);
+                    if (f.Through)
+                        AddThroughHoleContour(ops, panel, f, holeOutline, bounds);
+                    else
+                        AddPocketOp(ops, panel, f, holeOutline, bounds, clearanceLargeMinShortMm);
                 }
                 else if (enableContour
                     && ClearanceToolPick.IsHingeFeature(f)
@@ -109,6 +117,8 @@ public static class OpsPlanner
                 else if (enableGroove && f.Kind.Contains("groove", StringComparison.OrdinalIgnoreCase)
                          && f.Path is { Count: >= 2 } path)
                 {
+                    if (PocketClearer.IsOffPanelArtifact(path.Select(p => (p.X, p.Y)).ToList(), bounds))
+                        continue;
                     var isTongue = Parts.PanelEdit.IsTongueGroove(f);
                     var width = GrooveClear.ResolveWidthMm(f);
                     var toolId = isTongue
@@ -120,7 +130,7 @@ public static class OpsPlanner
                     IReadOnlyList<IReadOnlyList<(double X, double Y)>>? segments = null;
                     IReadOnlyList<(double X, double Y)>? finish = null;
                     var tooSmall = false;
-                    var cleared = GrooveClear.TryClear(f, toolDia);
+                    var cleared = GrooveClear.TryClear(f, toolDia, bounds);
                     if (cleared is not null)
                     {
                         if (cleared.TooSmallForTool)
@@ -164,6 +174,8 @@ public static class OpsPlanner
                 else if (enableContour && f.Kind.Contains("cutout", StringComparison.OrdinalIgnoreCase)
                          && f.Path is { Count: >= 3 } cutPath)
                 {
+                    if (PocketClearer.IsOffPanelArtifact(cutPath.Select(p => (p.X, p.Y)).ToList(), bounds))
+                        continue;
                     ops.Add(new CutOp
                     {
                         Op = "contour",
@@ -171,6 +183,7 @@ public static class OpsPlanner
                         FeatureId = f.FeatureId,
                         DepthMm = f.DepthMm ?? CamSafety.OuterContourDepthMm(panel.ThicknessMm),
                         Path = cutPath.Select(p => (p.X, p.Y)).ToList(),
+                        CadPath = f.ProfileSegments,
                         PanelBounds = bounds,
                         Side = panel.Side ?? panel.Orientation?.MillingFace,
                         ThicknessMm = panel.ThicknessMm,
@@ -186,6 +199,33 @@ public static class OpsPlanner
         return CamSafety.OrderSafe(depthApplied).ToList();
     }
 
+    static void AddThroughHoleContour(
+        List<CutOp> ops,
+        Parts.Panel panel,
+        Parts.PanelFeature f,
+        IReadOnlyList<(double X, double Y)> outline,
+        Nesting.LocalBounds? bounds)
+    {
+        if (PocketClearer.IsExportSliver(outline))
+            return;
+        if (bounds is { } panelBounds && PocketClearer.IsOffPanelArtifact(outline, panelBounds))
+            return;
+        ops.Add(new CutOp
+        {
+            Op = "contour",
+            PanelId = panel.PanelId,
+            FeatureId = f.FeatureId,
+            DepthMm = f.DepthMm ?? CamSafety.OuterContourDepthMm(panel.ThicknessMm),
+            Path = outline,
+            CadPath = f.ProfileSegments,
+            DiameterMm = f.DiameterMm,
+            PanelBounds = bounds,
+            Side = panel.Side ?? panel.Orientation?.MillingFace,
+            ThicknessMm = panel.ThicknessMm,
+            Through = true,
+        });
+    }
+
     static void AddPocketOp(
         List<CutOp> ops,
         Parts.Panel panel,
@@ -194,16 +234,27 @@ public static class OpsPlanner
         Nesting.LocalBounds? bounds,
         double clearanceLargeMinShortMm)
     {
-        var toolId = ClearanceToolPick.Pick(f, clearanceLargeMinShortMm);
+        if (PocketClearer.IsExportSliver(outline))
+            return;
+        if (bounds is { } panelBounds && PocketClearer.IsOffPanelArtifact(outline, panelBounds))
+            return;
+
+        var islands = PocketClearIslands.Keep(panel, f);
+        var toolId = ClearanceToolPick.Pick(f, clearanceLargeMinShortMm, islandHoles: islands);
         var toolDia = ClearanceToolPick.DiameterOf(toolId);
         var directToSize = ClearanceToolPick.IsHingeFeature(f);
+        var holes = islands
+            .Select(ring => (IReadOnlyList<(double X, double Y)>)ring.Select(p => (p.X, p.Y)).ToList())
+            .ToList();
         var cleared = PocketClearer.Clear(new PocketClearer.PocketClearRequest
         {
             Outline = outline,
+            Holes = holes,
             ToolDiameterMm = toolDia,
             OnionSkinMm = directToSize ? 0 : PocketClearer.DefaultOnionSkinMm,
-            EmitFinishLoop = !directToSize,
+            EmitFinishLoop = !directToSize && holes.Count == 0,
             CloseClearRings = directToSize,
+            PanelBounds = bounds,
         });
         ops.Add(new CutOp
         {
@@ -249,6 +300,7 @@ public static class OpsPlanner
             IReadOnlyList<(double X, double Y)>? path = op.Path;
             IReadOnlyList<IReadOnlyList<(double X, double Y)>>? pathSegments = op.PathSegments;
             IReadOnlyList<(double X, double Y)>? finishLoop = op.FinishLoop;
+            IReadOnlyList<Geometry.CadSegment>? cadPath = op.CadPath;
             if (op.Op == "drill" && op.X is double x && op.Y is double y)
             {
                 var (sx, sy) = Nesting.NestTransform.ToSheet(
@@ -271,6 +323,17 @@ public static class OpsPlanner
                     pathSegments = op.PathSegments.Select(seg => (IReadOnlyList<(double X, double Y)>)seg.Select(Map).ToList()).ToList();
                 if (op.FinishLoop is { Count: > 0 })
                     finishLoop = op.FinishLoop.Select(Map).ToList();
+                if (op.CadPath is { Count: > 0 })
+                {
+                    cadPath = Geometry.CadPath.Map(
+                        op.CadPath,
+                        p =>
+                        {
+                            var (sx, sy) = Nesting.NestTransform.ToSheet(
+                                p.X, p.Y, bounds, place.OffsetX, place.OffsetY, place.RotationDeg);
+                            return new Geometry.Point2(RoundSheet(sx), RoundSheet(sy));
+                        });
+                }
             }
 
             return op with
@@ -285,6 +348,7 @@ public static class OpsPlanner
                 Path = path,
                 PathSegments = pathSegments,
                 FinishLoop = finishLoop,
+                CadPath = cadPath,
             };
         }).ToList();
     }

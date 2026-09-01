@@ -145,8 +145,9 @@ public static partial class NcEmitter
     }
 
     /// <summary>
-    /// Pocket: each scan segment is plunge→cut; G0 between segments (no cross-area G1).
-    /// Finish loop is a separate closed contour; the fill (spiral) is never closed back to path[0].
+    /// Pocket: one plunge per Z pass, then stay at cut depth between walls / finish
+    /// (Carveco). Retract only between stepdown passes and when the feature ends.
+    /// The fill is never closed back to path[0].
     /// </summary>
     static void EmitPocket(List<string> lines, CutOp c, MachineProfile profile, double feed, double feedZ)
     {
@@ -179,23 +180,21 @@ public static partial class NcEmitter
         {
             var z = -passes[p];
             if (passes.Count > 1) lines.Add($"(pass {p + 1}/{passes.Count} Z{Fmt(z)})");
+            (double X, double Y)? lastCut = null;
             for (var s = 0; s < segments.Count; s++)
             {
                 var seg = segments[s];
                 if (seg.Count < 2) continue;
-                lines.Add($"G0 Z{Fmt(safeZ)}");
-                lines.Add($"G0 X{Fmt(seg[0].X)} Y{Fmt(seg[0].Y)}");
-                lines.Add($"G1 Z{Fmt(z)} F{feedZ}");
+                LinkOrPlunge(lines, lastCut, seg[0], z, safeZ, feed, feedZ);
                 for (var i = 1; i < seg.Count; i++)
                     lines.Add($"G1 X{Fmt(seg[i].X)} Y{Fmt(seg[i].Y)} F{feed}");
+                lastCut = seg[^1];
             }
 
             if (c.FinishLoop is { Count: >= 3 } finish)
             {
                 lines.Add("(finish)");
-                lines.Add($"G0 Z{Fmt(safeZ)}");
-                lines.Add($"G0 X{Fmt(finish[0].X)} Y{Fmt(finish[0].Y)}");
-                lines.Add($"G1 Z{Fmt(z)} F{feedZ}");
+                LinkOrPlunge(lines, lastCut, finish[0], z, safeZ, feed, feedZ);
                 for (var i = 1; i < finish.Count; i++)
                     lines.Add($"G1 X{Fmt(finish[i].X)} Y{Fmt(finish[i].Y)} F{feed}");
                 var last = finish[^1];
@@ -203,6 +202,9 @@ public static partial class NcEmitter
                 if (Math.Abs(last.X - first.X) > 1e-6 || Math.Abs(last.Y - first.Y) > 1e-6)
                     lines.Add($"G1 X{Fmt(first.X)} Y{Fmt(first.Y)} F{feed}");
             }
+
+            if (p < passes.Count - 1)
+                lines.Add($"G0 Z{Fmt(safeZ)}");
         }
         lines.Add($"G0 Z{Fmt(safeZ)}");
     }
@@ -258,23 +260,21 @@ public static partial class NcEmitter
         lines.Add($"(groove {g.PanelId})");
         if (g.PathSegments is { Count: > 0 } || g.FinishLoop is { Count: >= 3 })
         {
+            (double X, double Y)? lastCut = null;
             if (g.PathSegments is { Count: > 0 })
             {
                 foreach (var seg in g.PathSegments)
                 {
                     if (seg.Count < 2) continue;
-                    lines.Add($"G0 Z{Fmt(safeZ)}");
-                    lines.Add($"G0 X{Fmt(seg[0].X)} Y{Fmt(seg[0].Y)}");
-                    lines.Add($"G1 Z{Fmt(z)} F{feedZ}");
+                    LinkOrPlunge(lines, lastCut, seg[0], z, safeZ, feed, feedZ);
                     for (var i = 1; i < seg.Count; i++)
                         lines.Add($"G1 X{Fmt(seg[i].X)} Y{Fmt(seg[i].Y)} F{feed}");
+                    lastCut = seg[^1];
                 }
             }
             if (g.FinishLoop is { Count: >= 3 } finish)
             {
-                lines.Add($"G0 Z{Fmt(safeZ)}");
-                lines.Add($"G0 X{Fmt(finish[0].X)} Y{Fmt(finish[0].Y)}");
-                lines.Add($"G1 Z{Fmt(z)} F{feedZ}");
+                LinkOrPlunge(lines, lastCut, finish[0], z, safeZ, feed, feedZ);
                 for (var i = 1; i < finish.Count; i++)
                     lines.Add($"G1 X{Fmt(finish[i].X)} Y{Fmt(finish[i].Y)} F{feed}");
             }
@@ -289,6 +289,30 @@ public static partial class NcEmitter
         for (var i = 1; i < path.Count; i++)
             lines.Add($"G1 X{Fmt(path[i].X)} Y{Fmt(path[i].Y)} F{feed}");
         lines.Add($"G0 Z{Fmt(safeZ)}");
+    }
+
+    static void LinkOrPlunge(
+        List<string> lines,
+        (double X, double Y)? lastCut,
+        (double X, double Y) next,
+        double z,
+        double safeZ,
+        double feed,
+        double feedZ)
+    {
+        if (lastCut is { } last &&
+            Math.Abs(last.X - next.X) < 1e-6 &&
+            Math.Abs(last.Y - next.Y) < 1e-6)
+            return;
+        if (lastCut is not null)
+        {
+            lines.Add($"G1 X{Fmt(next.X)} Y{Fmt(next.Y)} F{feed}");
+            return;
+        }
+
+        lines.Add($"G0 Z{Fmt(safeZ)}");
+        lines.Add($"G0 X{Fmt(next.X)} Y{Fmt(next.Y)}");
+        lines.Add($"G1 Z{Fmt(z)} F{feedZ}");
     }
 
     static string Fmt(double? n) => (Math.Round(n ?? 0, 3)).ToString("0.###");

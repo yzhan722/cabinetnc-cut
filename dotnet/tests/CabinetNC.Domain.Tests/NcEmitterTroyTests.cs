@@ -140,6 +140,78 @@ public class NcEmitterTroyTests
     }
 
     [Fact]
+    public void Inner_and_outer_share_leave_pass_then_share_through_pass()
+    {
+        var nc = Troy(Outer(), Inner());
+        var leaves = new List<int>();
+        var throughs = new List<int>();
+        var lines = Lines(nc);
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (lines[i].Contains("G1 Z0.5000", StringComparison.Ordinal))
+                leaves.Add(i);
+            if (lines[i].Contains("G1 Z-0.5500", StringComparison.Ordinal))
+                throughs.Add(i);
+        }
+        Assert.Equal(2, leaves.Count);
+        Assert.Equal(2, throughs.Count);
+        Assert.True(leaves[0] < leaves[1]);
+        Assert.True(leaves[1] < throughs[0], nc);
+        Assert.True(throughs[0] < throughs[1]);
+    }
+
+    [Fact]
+    public void Tool_change_does_not_home_xy()
+    {
+        var nc = Troy(Outer(), Drill(), Tongue());
+        var lines = Lines(nc);
+        var homes = lines
+            .Select((l, i) => (l, i))
+            .Where(t => t.l.Contains("G0 X0.0000 Y0.0000", StringComparison.Ordinal))
+            .Select(t => t.i)
+            .ToList();
+        Assert.Equal(2, homes.Count);
+        Assert.True(homes[0] < 20, nc);
+        Assert.True(homes[1] >= lines.Length - 6, nc);
+    }
+
+    [Fact]
+    public void Rebate_ring_one_plunge_stays_down_between_walls()
+    {
+        var panel = new CabinetNC.Domain.Parts.Panel
+        {
+            PanelId = "LID",
+            ThicknessMm = 18,
+            Outline = new CabinetNC.Domain.Geometry.Outline
+            {
+                Points = [new(0, 0), new(447, 0), new(447, 277), new(0, 277)],
+            },
+            Features =
+            [
+                new CabinetNC.Domain.Parts.PanelFeature
+                {
+                    FeatureId = "REBATE",
+                    Kind = "pocket",
+                    DepthMm = 9,
+                    Path = [new(0, 0), new(447, 0), new(447, 277), new(0, 277)],
+                    Holes =
+                    [
+                        [new(9, 9), new(438, 9), new(438, 268), new(9, 268)],
+                    ],
+                },
+            ],
+        };
+        var ops = CabinetNC.Domain.Manufacturing.OpsPlanner.AttachToNest(
+            CabinetNC.Domain.Manufacturing.OpsPlanner.FeaturesToOps([panel]),
+            [new CabinetNC.Domain.Nesting.NestPlacement { PanelId = "LID", SheetIndex = 0 }]);
+        var nc = Troy(ops.ToArray());
+        var beforeProfile = nc.Split("M6 T2")[0];
+        Assert.Equal(1, Lines(beforeProfile).Count(l => l.Contains("G1 Z9.0000", StringComparison.Ordinal)));
+        Assert.Equal(2, Lines(beforeProfile).Count(l => l.Contains("G0 Z30.0000", StringComparison.Ordinal)));
+        Assert.DoesNotContain("Z-0.5500", beforeProfile);
+    }
+
+    [Fact]
     public void Shop_feeds_and_board_bottom_z()
     {
         var nc = Troy(Outer(), Tongue(), Pocket(), Drill());
@@ -224,10 +296,64 @@ public class NcEmitterTroyTests
         var nc = NcEmitter.OpsToNc([Outer()], Machine(), recipe: recipe);
         Assert.Contains("Z-0.5500", nc);
         Assert.Contains("F20000.0", nc);
-        Assert.Equal(2, Lines(nc).Count(l =>
-            l.Contains("G1 Z1.4500 F1000.0", StringComparison.Ordinal)));
-        Assert.DoesNotContain("G0 X105.0000", nc);
-        Assert.Contains("G1 X105.0000", nc);
+        var last = nc[nc.IndexOf("Z-0.5500", StringComparison.Ordinal)..];
+        Assert.DoesNotContain("G0 X110.0000", last);
+        Assert.Contains("G1 X110.0000", last);
+        Assert.Contains("G1 Z0.5000 F1000.0", last);
+        Assert.DoesNotContain("G1 Z1.4500", last);
+    }
+
+    [Fact]
+    public void First_pass_cuts_through_bridges_at_leave_z()
+    {
+        var recipe = new PostRecipe
+        {
+            Bridges =
+            [
+                new ProfileBridge
+                {
+                    Id = "b1",
+                    PanelId = "P1",
+                    SheetIndex = 0,
+                    ArcLengthMm = 100,
+                    X = 100,
+                    Y = 0,
+                    WidthMm = 10,
+                },
+            ],
+        };
+        var nc = NcEmitter.OpsToNc([Outer()], Machine(), recipe: recipe);
+        var first = nc[..nc.IndexOf("Z-0.5500", StringComparison.Ordinal)];
+        Assert.Contains("G1 Z0.5000", first);
+        Assert.DoesNotContain("G1 Z1.4500", first);
+        Assert.Equal(2, Lines(first).Count(l => l.Contains("G0 Z30.0000", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void Bridge_web_adds_two_tool_radii_to_tool_centre_skip()
+    {
+        Assert.Equal(15, ProfileBridgePlanner.ToolCenterSpanMm(5, 10));
+        var recipe = new PostRecipe
+        {
+            Bridges =
+            [
+                new ProfileBridge
+                {
+                    Id = "b1",
+                    PanelId = "P1",
+                    SheetIndex = 0,
+                    ArcLengthMm = 100,
+                    X = 100,
+                    Y = 0,
+                    WidthMm = 5,
+                },
+            ],
+        };
+        var nc = NcEmitter.OpsToNc([Outer()], Machine(), recipe: recipe);
+        Assert.Contains("G1 X92.5000", nc);
+        Assert.Contains("G1 X107.5000", nc);
+        var last = nc[nc.IndexOf("Z-0.5500", StringComparison.Ordinal)..];
+        Assert.Contains("G1 Z0.5000 F1000.0", last);
     }
 
     [Fact]
@@ -269,11 +395,64 @@ public class NcEmitterTroyTests
 
         var nc = NcEmitter.OpsToNc([a, b], Machine(), recipe: recipe);
 
-        // Normal first-pass plunges stay at 0.5; both passes preserve each pair at 1.45.
-        Assert.Equal(4, Lines(nc).Count(l =>
+        // First pass: one plunge per panel. Last pass: leave each pair at 0.5.
+        Assert.Equal(2, Lines(nc[..nc.IndexOf("Z-0.5500", StringComparison.Ordinal)])
+            .Count(l => l.Contains("G1 Z0.5000 F1000.0", StringComparison.Ordinal)));
+        Assert.Equal(2, Lines(nc[nc.IndexOf("Z-0.5500", StringComparison.Ordinal)..])
+            .Count(l => l.Contains("G1 Z0.5000 F1000.0", StringComparison.Ordinal)));
+        Assert.DoesNotContain("G1 Z1.4500", nc);
+    }
+
+    [Fact]
+    public void Last_pass_adapts_unpaired_facing_bridge_onto_neighbor()
+    {
+        var a = Outer("A") with
+        {
+            Path = [(0, 0), (100, 0), (100, 50), (0, 50)],
+        };
+        var b = Outer("B") with
+        {
+            Path = [(112, 0), (212, 0), (212, 50), (112, 50)],
+        };
+        var recipe = new PostRecipe
+        {
+            Bridges =
+            [
+                new ProfileBridge
+                {
+                    Id = "a",
+                    PanelId = "A",
+                    SheetIndex = 0,
+                    ArcLengthMm = 125,
+                    X = 100,
+                    Y = 25,
+                    WidthMm = 5,
+                },
+            ],
+        };
+        var nc = NcEmitter.OpsToNc([a, b], Machine(), recipe: recipe);
+        var last = nc[nc.IndexOf("Z-0.5500", StringComparison.Ordinal)..];
+        Assert.Equal(2, Lines(last).Count(l =>
             l.Contains("G1 Z0.5000 F1000.0", StringComparison.Ordinal)));
-        Assert.Equal(4, Lines(nc).Count(l =>
-            l.Contains("G1 Z1.4500 F1000.0", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void First_pass_outers_nearest_neighbor_not_panel_id()
+    {
+        var far = Outer("A") with
+        {
+            Path = [(800, 0), (880, 0), (880, 60), (800, 60)],
+        };
+        var near = Outer("Z") with
+        {
+            Path = [(20, 0), (100, 0), (100, 60), (20, 60)],
+        };
+        var nc = NcEmitter.OpsToNc([far, near], Machine(), recipe: PostRecipe.TroyDefault());
+        var first = nc[..nc.IndexOf("Z-0.5500", StringComparison.Ordinal)];
+        var nearGo = first.IndexOf("G0 X20.0000", StringComparison.Ordinal);
+        var farGo = first.IndexOf("G0 X800.0000", StringComparison.Ordinal);
+        Assert.True(nearGo >= 0 && farGo >= 0, first);
+        Assert.True(nearGo < farGo, first);
     }
 
     [Fact]

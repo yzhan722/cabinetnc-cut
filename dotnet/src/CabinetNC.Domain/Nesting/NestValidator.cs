@@ -72,6 +72,46 @@ public static class NestValidator
         return hits;
     }
 
+    /// <summary>True-shape overlap of one moving pose against others on the same sheet.</summary>
+    public static bool HasPolygonConflict(
+        Panel moving,
+        string panelId,
+        double ox,
+        double oy,
+        double rotDeg,
+        int sheetIndex,
+        IReadOnlyDictionary<string, Panel> byId,
+        IEnumerable<(string PanelId, int SheetIndex, double Ox, double Oy, double Rot)> others,
+        double spacingMm,
+        IReadOnlySet<(string A, string B)>? ignorePairs = null)
+    {
+        var pathA = WorldPath(moving, new NestPlacement
+        {
+            PanelId = panelId,
+            SheetIndex = sheetIndex,
+            OffsetX = ox,
+            OffsetY = oy,
+            RotationDeg = rotDeg,
+        });
+        foreach (var op in others)
+        {
+            if (op.PanelId == panelId || op.SheetIndex != sheetIndex) continue;
+            if (ignorePairs is not null && ignorePairs.Contains((panelId, op.PanelId))) continue;
+            if (!byId.TryGetValue(op.PanelId, out var other)) continue;
+            var pathB = WorldPath(other, new NestPlacement
+            {
+                PanelId = op.PanelId,
+                SheetIndex = op.SheetIndex,
+                OffsetX = op.Ox,
+                OffsetY = op.Oy,
+                RotationDeg = op.Rot,
+            });
+            if (PolygonsConflict(pathA, pathB, spacingMm))
+                return true;
+        }
+        return false;
+    }
+
     public static (double minX, double minY, double maxX, double maxY) PlacementAabb(NestPart part, NestPlacement place)
     {
         var rot = place.RotationDeg % 180;

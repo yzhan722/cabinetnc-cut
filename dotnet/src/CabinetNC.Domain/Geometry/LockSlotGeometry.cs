@@ -144,4 +144,46 @@ public static class LockSlotGeometry
         }
         return points;
     }
+
+    /// <summary>Analytic stadium (two lines + two 180° caps) for G2/G3 emit.</summary>
+    public static IReadOnlyList<CadSegment> CapsuleSegments(
+        double minX, double maxX, double minY, double maxY)
+    {
+        if (maxX <= minX || maxY <= minY) return [];
+        var radius = Math.Min((maxX - minX) * 0.5, (maxY - minY) * 0.5);
+        if (radius <= 1e-9) return [];
+        var horizontal = (maxX - minX) >= (maxY - minY);
+        if (horizontal)
+        {
+            var cy = (minY + maxY) * 0.5;
+            var leftCx = minX + radius;
+            var rightCx = maxX - radius;
+            var topL = new Point2(leftCx, maxY);
+            var topR = new Point2(rightCx, maxY);
+            var botR = new Point2(rightCx, minY);
+            var botL = new Point2(leftCx, minY);
+            return
+            [
+                CadSegment.MakeLine(topL, topR),
+                CadSegment.MakeArc(topR, botR, new Point2(rightCx, cy), radius, cw: true),
+                CadSegment.MakeLine(botR, botL),
+                CadSegment.MakeArc(botL, topL, new Point2(leftCx, cy), radius, cw: true),
+            ];
+        }
+
+        var cx = (minX + maxX) * 0.5;
+        var bottomCy = minY + radius;
+        var topCy = maxY - radius;
+        var leftB = new Point2(minX, bottomCy);
+        var leftT = new Point2(minX, topCy);
+        var rightT = new Point2(maxX, topCy);
+        var rightB = new Point2(maxX, bottomCy);
+        return
+        [
+            CadSegment.MakeLine(leftB, leftT),
+            CadSegment.MakeArc(leftT, rightT, new Point2(cx, topCy), radius, cw: true),
+            CadSegment.MakeLine(rightT, rightB),
+            CadSegment.MakeArc(rightB, leftB, new Point2(cx, bottomCy), radius, cw: true),
+        ];
+    }
 }

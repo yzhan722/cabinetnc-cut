@@ -4,14 +4,15 @@ using CabinetNC.Domain.Parts;
 using Clipper2Lib;
 
 /// <summary>
-/// Approximate NFP nest engine using Clipper2 MinkowskiDiff.
-/// Outer contour only, 0/90° rotations, grouped by material+thickness.
+/// NFP nest engine: convex-decomp Minkowski NFP, edge slide, a few order trials.
+/// Outer contour only, 0/90/180/270° (see <see cref="NestSettings.CandidateRotations"/>), grouped by material+thickness.
 /// Falls back to AABB contact candidates when NFP yields no legal slot.
 /// </summary>
 public sealed class ClipperNfpNestingEngine : INestingEngine
 {
-    const int MaxCandidates = 160;
-    public string Name => "clipper_nfp_v0";
+    const int MaxCandidates = 220;
+    const int MaxValidFits = 10;
+    public string Name => "clipper_nfp_v1";
 
     public NestResult Pack(
         IReadOnlyList<Panel> panels,
@@ -27,6 +28,7 @@ public sealed class ClipperNfpNestingEngine : INestingEngine
         var reasons = new List<NestUnplacedReason>();
         var reports = new List<NestGroupReport>();
         var sheetsUsed = new List<NestSheetSpec>();
+        var cache = new NfpCache();
 
         var groups = panels
             .GroupBy(p => NestGroupKey.From(p.Material, p.ThicknessMm))
@@ -79,75 +81,41 @@ public sealed class ClipperNfpNestingEngine : INestingEngine
                 });
                 progress?.Report(new NestProgressReport
                 {
-                    Done = done, Total = total, Message = $"NFP · 无板材 {key}",
+                    Done = done, Total = total, Message = $"精排 · 无板材 {key}",
                 });
                 continue;
             }
 
             var groupSettings = NestStockOverrides.ForGroup(settings, matched[0]);
-            var ordered = usable
-                .OrderByDescending(PolygonArea)
-                .ThenBy(p => p.PanelId, StringComparer.Ordinal)
-                .ToList();
-
-            var sheets = new List<SheetState>();
-            var placed = new List<NestPlacement>();
-            var unplaced = new List<Panel>();
-
-            foreach (var panel in ordered)
+            var orders = BuildOrders(usable);
+            GroupTrial? bestTrial = null;
+            for (var oi = 0; oi < orders.Count; oi++)
             {
                 ct.ThrowIfCancellationRequested();
-                progress?.Report(new NestProgressReport
-                {
-                    Done = done,
-                    Total = total,
-                    Message = $"NFP · {key} · {done + 1}/{total}",
-                });
-
-                Candidate? best = null;
-                for (var si = 0; si < sheets.Count; si++)
-                {
-                    var c = BestOnSheet(panel, groupSettings, sheets[si], si, ct);
-                    if (c is not null && (best is null || c.Score < best.Score))
-                        best = c;
-                }
-
-                if (best is null)
-                {
-                    var spec = NextSheet(matched, sheets.Count, key);
-                    var state = new SheetState(spec);
-                    var c = BestOnSheet(panel, groupSettings, state, sheets.Count, ct);
-                    if (c is null)
-                    {
-                        unplaced.Add(panel);
-                        done++;
-                        continue;
-                    }
-                    sheets.Add(state);
-                    best = c;
-                }
-
-                var sheet = sheets[best.SheetIndex];
-                sheet.Placed.Add(new PlacedPart(panel, best.Local, best.World, best.Bounds, best.Rotation));
-                sheet.ConsumeFree(
-                    best.X,
-                    best.Y,
-                    best.Local.Bounds.MaxX + Math.Max(0, groupSettings.ClearanceMm),
-                    best.Local.Bounds.MaxY + Math.Max(0, groupSettings.ClearanceMm));
-                placed.Add(new NestPlacement
-                {
-                    PanelId = panel.PanelId,
-                    SheetIndex = best.SheetIndex,
-                    OffsetX = best.X,
-                    OffsetY = best.Y,
-                    RotationDeg = best.Rotation,
-                });
-                done++;
+                var trial = PackOrder(
+                    orders[oi],
+                    groupSettings,
+                    matched,
+                    key,
+                    cache,
+                    ct,
+                    progress,
+                    total,
+                    doneBase: done,
+                    orderLabel: orders.Count == 1
+                        ? $"精排 · {key}"
+                        : $"精排 · {key} · 试排 {oi + 1}/{orders.Count}");
+                if (bestTrial is null || trial.IsBetterThan(bestTrial))
+                    bestTrial = trial;
+                if (trial.Unplaced.Count == 0 && trial.Sheets.Count <= 1)
+                    break;
             }
 
-            foreach (var s in sheets)
+            var packed = bestTrial ?? new GroupTrial();
+            done += usable.Count;
+            foreach (var s in packed.Sheets)
                 sheetsUsed.Add(s.Spec);
-            foreach (var p in placed)
+            foreach (var p in packed.Placements)
             {
                 allPlacements.Add(new NestPlacement
                 {
@@ -158,7 +126,7 @@ public sealed class ClipperNfpNestingEngine : INestingEngine
                     RotationDeg = p.RotationDeg,
                 });
             }
-            foreach (var p in unplaced)
+            foreach (var p in packed.Unplaced)
             {
                 allUnplaced.Add(p.PanelId);
                 reasons.Add(new NestUnplacedReason
@@ -169,14 +137,14 @@ public sealed class ClipperNfpNestingEngine : INestingEngine
                 });
             }
 
-            var sheetArea = sheets.Sum(s => s.Spec.WidthMm * s.Spec.LengthMm);
-            var used = placed.Sum(p => PolygonArea(usable.First(u => u.PanelId == p.PanelId)));
+            var sheetArea = packed.Sheets.Sum(s => s.Spec.WidthMm * s.Spec.LengthMm);
+            var used = packed.Placements.Sum(p => PolygonArea(usable.First(u => u.PanelId == p.PanelId)));
             reports.Add(new NestGroupReport
             {
                 Key = key,
                 PartCount = group.Count(),
-                PlacedCount = placed.Count,
-                SheetCount = sheets.Count,
+                PlacedCount = packed.Placements.Count,
+                SheetCount = packed.Sheets.Count,
                 LocalSheetStart = start,
                 UtilizationPct = sheetArea > 0 ? used / sheetArea * 100 : 0,
             });
@@ -194,15 +162,115 @@ public sealed class ClipperNfpNestingEngine : INestingEngine
         };
     }
 
+    static IReadOnlyList<IReadOnlyList<Panel>> BuildOrders(IReadOnlyList<Panel> usable)
+    {
+        if (usable.Count == 0) return [];
+        var area = usable
+            .OrderByDescending(PolygonArea)
+            .ThenBy(p => p.PanelId, StringComparer.Ordinal)
+            .ToList();
+        var orders = new List<IReadOnlyList<Panel>> { area };
+        if (usable.Count <= 36)
+        {
+            orders.Add(usable
+                .OrderByDescending(p =>
+                {
+                    var b = NestTransform.BoundsOf(p);
+                    return Math.Max(b.MaxX - b.MinX, b.MaxY - b.MinY);
+                })
+                .ThenBy(p => p.PanelId, StringComparer.Ordinal)
+                .ToList());
+        }
+        if (usable.Count <= 20)
+        {
+            var swaps = Math.Min(3, area.Count - 1);
+            for (var i = 0; i < swaps; i++)
+            {
+                var mutated = area.ToList();
+                (mutated[i], mutated[i + 1]) = (mutated[i + 1], mutated[i]);
+                orders.Add(mutated);
+            }
+        }
+        return orders;
+    }
+
+    static GroupTrial PackOrder(
+        IReadOnlyList<Panel> ordered,
+        NestSettings groupSettings,
+        IReadOnlyList<NestSheetSpec> matched,
+        NestGroupKey key,
+        NfpCache cache,
+        CancellationToken ct,
+        IProgress<NestProgressReport>? progress,
+        int total,
+        int doneBase,
+        string orderLabel)
+    {
+        var trial = new GroupTrial();
+        var placedCount = 0;
+        foreach (var panel in ordered)
+        {
+            ct.ThrowIfCancellationRequested();
+            progress?.Report(new NestProgressReport
+            {
+                Done = doneBase + placedCount,
+                Total = total,
+                Message = $"{orderLabel} · {placedCount + 1}/{ordered.Count}",
+            });
+
+            Candidate? best = null;
+            for (var si = 0; si < trial.Sheets.Count; si++)
+            {
+                var c = BestOnSheet(panel, groupSettings, trial.Sheets[si], si, cache, ct);
+                if (c is not null && (best is null || c.Score < best.Score))
+                    best = c;
+            }
+
+            if (best is null)
+            {
+                var spec = NextSheet(matched, trial.Sheets.Count, key);
+                var state = new SheetState(spec);
+                var c = BestOnSheet(panel, groupSettings, state, trial.Sheets.Count, cache, ct);
+                if (c is null)
+                {
+                    trial.Unplaced.Add(panel);
+                    placedCount++;
+                    continue;
+                }
+                trial.Sheets.Add(state);
+                best = c;
+            }
+
+            var sheet = trial.Sheets[best.SheetIndex];
+            sheet.Placed.Add(new PlacedPart(panel, best.Local, best.World, best.Bounds, best.Rotation));
+            sheet.ConsumeFree(
+                best.X,
+                best.Y,
+                best.Local.Bounds.MaxX + Math.Max(0, groupSettings.ClearanceMm),
+                best.Local.Bounds.MaxY + Math.Max(0, groupSettings.ClearanceMm));
+            trial.Placements.Add(new NestPlacement
+            {
+                PanelId = panel.PanelId,
+                SheetIndex = best.SheetIndex,
+                OffsetX = best.X,
+                OffsetY = best.Y,
+                RotationDeg = best.Rotation,
+            });
+            placedCount++;
+        }
+        return trial;
+    }
+
     static Candidate? BestOnSheet(
         Panel panel,
         NestSettings settings,
         SheetState sheet,
         int sheetIndex,
+        NfpCache cache,
         CancellationToken ct)
     {
         Candidate? best = null;
-        var rotations = settings.PanelMayRotate90(panel) ? new[] { 0d, 90d } : new[] { 0d };
+        var rotations = settings.CandidateRotations(panel);
         foreach (var rot in rotations)
         {
             ct.ThrowIfCancellationRequested();
@@ -213,18 +281,16 @@ public sealed class ClipperNfpNestingEngine : INestingEngine
 
             var movingPath = NfpGeometry.ToPath(local.Points);
             var clearance = Math.Max(0, settings.ClearanceMm);
-            // NFP = hard-overlap map (no clearance inflate). Spacing enforced by Conflicts below.
-            // Inflating here + Conflicts(clearance) double-counts and either wastes sheets or leaks gaps.
             var nfps = new Paths64();
             foreach (var placed in sheet.Placed)
             {
-                foreach (var path in NfpGeometry.ComputeNfp(placed.WorldPath, movingPath))
+                foreach (var path in cache.Get(placed.WorldPath, movingPath))
                     nfps.Add(path);
             }
             foreach (var blocked in sheet.Spec.Blocked)
             {
                 var rect = RectPath(blocked.MinX, blocked.MinY, blocked.MaxX, blocked.MaxY);
-                foreach (var path in NfpGeometry.ComputeNfp(rect, movingPath))
+                foreach (var path in cache.Get(rect, movingPath))
                     nfps.Add(path);
             }
 
@@ -232,7 +298,6 @@ public sealed class ClipperNfpNestingEngine : INestingEngine
             var w = local.Bounds.MaxX;
             var h = local.Bounds.MaxY;
             var candidates = new List<(double X, double Y)>();
-            // Free-rect BL corners first (same density driver as grouped BLF).
             foreach (var fr in sheet.Free.OrderBy(r => r.Y).ThenBy(r => r.X))
             {
                 if (w <= fr.W + 1e-6 && h <= fr.H + 1e-6)
@@ -257,6 +322,7 @@ public sealed class ClipperNfpNestingEngine : INestingEngine
                 .ToList();
 
             var tested = 0;
+            var validFits = 0;
             foreach (var (x, y) in candidates)
             {
                 if (++tested > MaxCandidates) break;
@@ -271,7 +337,8 @@ public sealed class ClipperNfpNestingEngine : INestingEngine
                 var c = new Candidate(sheetIndex, x, y, rot, local, world, BoundsAt(local.Bounds, x, y), score);
                 if (best is null || c.Score < best.Score)
                     best = c;
-                break;
+                if (++validFits >= MaxValidFits)
+                    break;
             }
         }
         return best;
@@ -372,6 +439,7 @@ public sealed class ClipperNfpNestingEngine : INestingEngine
                 : src.Label,
             Material = key.Material,
             ThicknessMm = key.ThicknessMm,
+            SheetGrain = src.SheetGrain,
         };
     }
 
@@ -395,6 +463,51 @@ public sealed class ClipperNfpNestingEngine : INestingEngine
         int SheetIndex, double X, double Y, double Rotation,
         LocalShape Local, Path64 World, Bounds Bounds, double Score);
     readonly record struct FreeRect(double X, double Y, double W, double H);
+
+    sealed class GroupTrial
+    {
+        public List<NestPlacement> Placements { get; } = [];
+        public List<Panel> Unplaced { get; } = [];
+        public List<SheetState> Sheets { get; } = [];
+
+        public bool IsBetterThan(GroupTrial other)
+        {
+            if (Unplaced.Count != other.Unplaced.Count)
+                return Unplaced.Count < other.Unplaced.Count;
+            if (Sheets.Count != other.Sheets.Count)
+                return Sheets.Count < other.Sheets.Count;
+            return Extent() < other.Extent();
+        }
+
+        double Extent() =>
+            Sheets.Sum(s => s.Placed.Count == 0 ? 0 : s.Placed.Max(p => p.Bounds.MaxY));
+    }
+
+    sealed class NfpCache
+    {
+        readonly Dictionary<(long, long), Paths64> _map = [];
+
+        public Paths64 Get(Path64 fixedPath, Path64 moving)
+        {
+            var key = (Hash(fixedPath), Hash(moving));
+            if (_map.TryGetValue(key, out var hit))
+                return hit;
+            var nfp = NfpGeometry.ComputeNfp(fixedPath, moving);
+            _map[key] = nfp;
+            return nfp;
+        }
+
+        static long Hash(Path64 path)
+        {
+            unchecked
+            {
+                long h = path.Count * 397L;
+                foreach (var p in path)
+                    h = h * 31 + p.X * 17 + p.Y;
+                return h;
+            }
+        }
+    }
 
     sealed class SheetState
     {

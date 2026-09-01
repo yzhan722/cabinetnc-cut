@@ -7,11 +7,18 @@ namespace CabinetNC.Domain.Tests;
 
 public class PackageMergeTests
 {
-    static Panel Box(string id, string name, string? module = null, double x = 0) => new()
+    static Panel Box(
+        string id,
+        string name,
+        string? module = null,
+        double x = 0,
+        string? material = "carcass",
+        double thickness = 18) => new()
     {
         PanelId = id,
         Name = name,
-        ThicknessMm = 18,
+        Material = material,
+        ThicknessMm = thickness,
         Outline = new Outline
         {
             Points = [new Point2(x, 0), new Point2(x + 100, 0), new Point2(x + 100, 50), new Point2(x, 50)],
@@ -76,5 +83,56 @@ public class PackageMergeTests
         var b = Pkg("B", Box("B1", "B-Side"));
         var merged = PackageMerge.Merge(a, b, "B", "B");
         Assert.Single(merged.Sheets);
+    }
+
+    [Fact]
+    public void Remove_drops_only_named_package()
+    {
+        var a = PackageMerge.Stamp(Pkg("Kitchen", Box("Door.Left", "Kitchen-Left", "Carcass")), "Kitchen", "Kitchen");
+        var b = Pkg("Fridge", Box("Door.Left", "Fridge-Left", "Door"));
+        var merged = PackageMerge.Merge(a, b, "Fridge", "Fridge");
+        var next = PackageMerge.Remove(merged, "Fridge");
+        Assert.Single(next.Panels);
+        Assert.Equal("Kitchen", next.Panels[0].DisplayPackage);
+        Assert.Equal("Door.Left", next.Panels[0].PanelId);
+        Assert.Equal("Kitchen", next.JobId);
+    }
+
+    [Fact]
+    public void Remove_by_package_id_matches_left_rail_label()
+    {
+        var stamped = PackageMerge.Stamp(Pkg("Kitchen", Box("A1", "A-Side")), "Kitchen", "Kitchen");
+        var next = PackageMerge.Remove(stamped, "Kitchen");
+        Assert.Empty(next.Panels);
+    }
+
+    [Fact]
+    public void Remove_unknown_key_leaves_package_unchanged()
+    {
+        var stamped = PackageMerge.Stamp(Pkg("Kitchen", Box("A1", "A-Side")), "Kitchen", "Kitchen");
+        var next = PackageMerge.Remove(stamped, "Fridge");
+        Assert.Same(stamped, next);
+    }
+
+    [Fact]
+    public void Remove_prunes_sheet_only_used_by_removed_package()
+    {
+        var a = PackageMerge.Stamp(Pkg("Kitchen", Box("A1", "A-Side", material: "carcass")), "Kitchen", "Kitchen");
+        var b = new CutPackage
+        {
+            SchemaName = CutPackage.Schema,
+            JobId = "Fridge",
+            Sheets =
+            [
+                new SheetStock { SheetId = "S2", Material = "door", ThicknessMm = 22, WidthMm = 1220, LengthMm = 2440 },
+            ],
+            Panels = [Box("B1", "B-Side", material: "door", thickness: 22)],
+        };
+        var merged = PackageMerge.Merge(a, b, "Fridge", "Fridge");
+        Assert.Equal(2, merged.Sheets.Count);
+        var next = PackageMerge.Remove(merged, "Fridge");
+        Assert.Single(next.Panels);
+        Assert.Single(next.Sheets);
+        Assert.Equal("carcass", next.Sheets[0].Material);
     }
 }

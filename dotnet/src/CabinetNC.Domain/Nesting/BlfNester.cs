@@ -30,6 +30,7 @@ public sealed class NestSheetSpec
     public string? Label { get; init; }
     public string? Material { get; init; }
     public double ThicknessMm { get; init; }
+    public SheetGrainKind SheetGrain { get; init; } = SheetGrainKind.None;
 
     public SheetInsets Insets()
     {
@@ -92,6 +93,7 @@ public sealed class NestSheetSpec
             Label = $"leftover {leftoverW:0.#}×{leftoverH:0.#}",
             Material = style.Material,
             ThicknessMm = style.ThicknessMm,
+            SheetGrain = style.SheetGrain,
         };
     }
 }
@@ -300,6 +302,12 @@ public static class BlfNester
             InsetTopMm = s.InsetTopMm,
             Blocked = [], // ponytail: cloned sheets have no defects
             Label = s.Label,
+            Material = s.Material,
+            ThicknessMm = s.ThicknessMm,
+            SpacingMm = s.SpacingMm,
+            AllowRotation = s.AllowRotation,
+            AllowPartsInPart = s.AllowPartsInPart,
+            SheetGrain = s.SheetGrain,
         };
 
     static List<Rect> InitFree(NestSheetSpec spec)

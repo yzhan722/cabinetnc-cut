@@ -52,8 +52,12 @@ public static class LabelAnchorFinder
         var found = ComputeAuto(panel, rot);
         lock (CacheLock)
         {
-            if (Cache.Count > 400)
-                Cache.Clear();
+            if (Cache.Count >= 4000)
+            {
+                var drop = Cache.Count / 4;
+                foreach (var stale in Cache.Keys.Take(drop).ToList())
+                    Cache.Remove(stale);
+            }
             Cache[key] = found;
         }
         return found;

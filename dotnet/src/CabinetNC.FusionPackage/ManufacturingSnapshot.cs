@@ -50,6 +50,8 @@ public sealed class SnapshotWorkpiece
     public List<SnapshotFace> Faces { get; init; } = [];
     public List<SnapshotFeature> Features { get; init; } = [];
     public SnapshotManufacturing? Manufacturing { get; init; }
+    /// <summary>Optional part grain from Fusion: X / Y (panel-local).</summary>
+    public string? GrainDirection { get; init; }
     public JsonElement? Provenance { get; init; }
 }
 
@@ -69,6 +71,10 @@ public sealed class SnapshotMaterialRef
     public string? DisplayName { get; init; }
     public string? ColorName { get; init; }
     public string? SurfaceMode { get; init; }
+    /// <summary>Fusion: edge length the grain follows (mm).</summary>
+    public double? GrainAlongMm { get; init; }
+    /// <summary>Fusion flattened angle: 0 = along +X, 90 = along +Y.</summary>
+    public double? GrainAngleDeg { get; init; }
 }
 
 public sealed class SnapshotGeometry
@@ -84,6 +90,17 @@ public sealed class SnapshotProfile
 {
     public bool Closed { get; init; } = true;
     public List<List<double>> Points { get; init; } = [];
+    public List<SnapshotSegment> Segments { get; init; } = [];
+}
+
+public sealed class SnapshotSegment
+{
+    public string Type { get; init; } = "line";
+    public List<double> Start { get; init; } = [];
+    public List<double> End { get; init; } = [];
+    public List<double>? Center { get; init; }
+    public double? RadiusMm { get; init; }
+    public bool Cw { get; init; }
 }
 
 public sealed class SnapshotFace
@@ -121,6 +138,7 @@ public sealed class SnapshotFeatureGeometry
     public List<List<double>>? Centerline { get; init; }
     public double? WidthMm { get; init; }
     public SnapshotProfile? Profile { get; init; }
+    public List<SnapshotProfile>? Holes { get; init; }
 }
 
 public sealed class SnapshotFeatureIntent
@@ -134,6 +152,7 @@ public sealed class SnapshotManufacturing
 {
     public string Mode { get; init; } = "singleSide";
     public string? MachiningFace { get; init; }
+    public string? GrainDirection { get; init; }
 }
 
 public sealed class SnapshotDiagnostic

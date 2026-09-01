@@ -109,6 +109,7 @@ public sealed class StockKindDto
     public double SpacingMm { get; set; }
     public double BorderMm { get; set; }
     public bool AllowRotate90 { get; set; } = true;
+    public string SheetGrainKey { get; set; } = "none";
     public bool AllowPartsInPart { get; set; } = true;
     public bool UseLeftoverPieces { get; set; }
     public double LeftoverXMm { get; set; }
@@ -142,6 +143,29 @@ public sealed class GuillotineDto
     public double RemnantAreaMm2 { get; set; }
     public double RemnantMinEdgeMm { get; set; }
     public List<XyDto> Polyline { get; set; } = [];
+    public List<GuillotineCutDto> Cuts { get; set; } = [];
+    public List<GuillotinePieceDto> Pieces { get; set; } = [];
+}
+
+public sealed class GuillotineCutDto
+{
+    public string Kind { get; set; } = "";
+    public string? Label { get; set; }
+    public double RemnantAreaMm2 { get; set; }
+    public double RemnantMinEdgeMm { get; set; }
+    public List<XyDto> Polyline { get; set; } = [];
+}
+
+public sealed class GuillotinePieceDto
+{
+    public string Shape { get; set; } = "RECT";
+    public double W { get; set; }
+    public double H { get; set; }
+    public double AreaMm2 { get; set; }
+    public double MinEdgeMm { get; set; }
+    public double LabelX { get; set; }
+    public double LabelY { get; set; }
+    public string? Label { get; set; }
 }
 
 public sealed class BridgeDto

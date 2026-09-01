@@ -58,6 +58,70 @@ public class PocketSafetyGateTests
     }
 
     [Fact]
+    public void World_coord_pocket_and_cutout_are_skipped()
+    {
+        var panel = new Panel
+        {
+            PanelId = "P1",
+            ThicknessMm = 15,
+            Outline = new Outline
+            {
+                Points = [new(0, 0), new(595, 0), new(595, 200), new(0, 200)],
+            },
+            Features =
+            [
+                new PanelFeature
+                {
+                    FeatureId = "FEAT-02",
+                    Kind = "throughCutout",
+                    DepthMm = 15,
+                    Through = true,
+                    Path = [new(387, 50), new(403, 50), new(403, 150), new(387, 150)],
+                },
+                new PanelFeature
+                {
+                    FeatureId = "FEAT-04",
+                    Kind = "throughCutout",
+                    DepthMm = 15,
+                    Through = true,
+                    Path = [new(-19509, 9762), new(-19493, 9762), new(-19493, 9862), new(-19509, 9862)],
+                },
+                new PanelFeature
+                {
+                    FeatureId = "FEAT-07",
+                    Kind = "pocket",
+                    DepthMm = 8,
+                    Path = [new(-16600, 8008), new(-16565, 8008), new(-16565, 8043), new(-16600, 8043)],
+                },
+            ],
+        };
+
+        var ops = OpsPlanner.FeaturesToOps([panel]);
+        Assert.Contains(ops, o => o.FeatureId == "FEAT-02" && o.Op == "contour");
+        Assert.DoesNotContain(ops, o => o.FeatureId == "FEAT-04");
+        Assert.DoesNotContain(ops, o => o.FeatureId == "FEAT-07");
+    }
+
+    [Fact]
+    public void Export_sliver_pocket_is_skipped_and_does_not_block_preflight()
+    {
+        // Bedroom Style 3 BLVRC1 FEAT-01/05: 29.8 × 0.104 mm edge ribbon
+        var panel = PanelWithPocket(pocketDepth: 8.337, pocketW: 29.818, pocketH: 0.104);
+        var ops = OpsPlanner.FeaturesToOps([panel])
+            .Select(o => o with { Placed = true, SheetIndex = 0 })
+            .ToList();
+        Assert.DoesNotContain(ops, o => o.Op == "pocket");
+
+        var report = NcPreflight.Check(
+            ops,
+            MachineCatalog.Get("nesting_router_6"),
+            1220, 2440,
+            new Dictionary<string, Panel> { ["P1"] = panel });
+        Assert.DoesNotContain(report.Issues, i => i.Code == "pocket_too_small_for_tool");
+        Assert.True(report.Ok, NcPreflight.Format(report));
+    }
+
+    [Fact]
     public void Pocket_too_small_for_tool_fails_preflight_and_is_not_silent_skip()
     {
         // Tiny pocket: after toolR+onion inset Clipper yields empty / center-only

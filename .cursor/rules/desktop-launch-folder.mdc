@@ -7,7 +7,7 @@ alwaysApply: true
 
 The only user-facing build is:
 
-`E:\Work\cabinetnc-cut\dist\CabinetNC-Cut\CabinetNC.Desktop.exe`
+`E:\Work\OmniCam\dist\CabinetNC-Cut\CabinetNC.Desktop.exe`
 
 Desktop icon `OmniCam` and `OmniCam.cmd` start that folder.
 

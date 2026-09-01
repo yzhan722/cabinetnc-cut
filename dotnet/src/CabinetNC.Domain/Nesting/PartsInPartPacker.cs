@@ -42,7 +42,8 @@ public static class PartsInPartPacker
         var slots = new List<PartInPartSlot>();
         var nestedChildren = new HashSet<string>(StringComparer.Ordinal);
 
-        var voids = BuildVoids(placements, byId, pipKeys, settings.ClearanceMm);
+        var voids = DedupeOverlappingVoids(
+            BuildVoids(placements, byId, pipKeys, settings.ClearanceMm));
         if (voids.Count == 0) return WithSlots(primary, slots);
 
         // Prefer emptying high sheet indices and consuming unplaced first.
@@ -51,7 +52,7 @@ public static class PartsInPartPacker
         candidateIds.AddRange(
             placements
                 .OrderByDescending(p => p.SheetIndex)
-                .ThenBy(p => AreaOf(p.PanelId, byId, sizeOf))
+                .ThenByDescending(p => AreaOf(p.PanelId, byId, sizeOf))
                 .Select(p => p.PanelId));
 
         foreach (var voidSlot in voids.OrderByDescending(v => v.UsableW * v.UsableH))
@@ -63,6 +64,7 @@ public static class PartsInPartPacker
             {
                 new(voidSlot.UsableMinX, voidSlot.UsableMinY, voidSlot.UsableW, voidSlot.UsableH),
             };
+            var occupied = new List<Rect>();
             var gap = Math.Max(0, settings.ClearanceMm);
 
             foreach (var childId in candidateIds)
@@ -83,19 +85,20 @@ public static class PartsInPartPacker
                 if (mayRotate && Math.Abs(bw - bh) > 1e-6)
                     orients.Add((bh, bw, 90));
 
-                (Rect fr, double w, double h, double rot)? best = null;
+                (double x, double y, double w, double h, double rot)? best = null;
                 foreach (var o in orients)
                 {
                     foreach (var fr in free.OrderBy(r => r.Y).ThenBy(r => r.X))
                     {
-                        if (o.w <= fr.W + 1e-9 && o.h <= fr.H + 1e-9)
-                        {
-                            if (best is null
-                                || fr.Y < best.Value.fr.Y
-                                || (Math.Abs(fr.Y - best.Value.fr.Y) < 1e-9 && fr.X < best.Value.fr.X))
-                                best = (fr, o.w, o.h, o.rot);
-                            break;
-                        }
+                        if (o.w > fr.W + 1e-9 || o.h > fr.H + 1e-9) continue;
+                        var px = fr.X;
+                        var py = fr.Y;
+                        if (OverlapsOccupied(occupied, px, py, o.w, o.h, gap))
+                            continue;
+                        if (best is null
+                            || py < best.Value.y
+                            || (Math.Abs(py - best.Value.y) < 1e-9 && px < best.Value.x))
+                            best = (px, py, o.w, o.h, o.rot);
                     }
                 }
 
@@ -105,8 +108,8 @@ public static class PartsInPartPacker
                 {
                     PanelId = childId,
                     SheetIndex = voidSlot.SheetIndex,
-                    OffsetX = b.fr.X,
-                    OffsetY = b.fr.Y,
+                    OffsetX = b.x,
+                    OffsetY = b.y,
                     RotationDeg = b.rot,
                 };
 
@@ -132,7 +135,8 @@ public static class PartsInPartPacker
                     SheetIndex = voidSlot.SheetIndex,
                     Enabled = true,
                 });
-                free = SplitFree(free, b.fr.X, b.fr.Y, b.w + gap, b.h + gap);
+                occupied.Add(new Rect(b.x, b.y, b.w, b.h));
+                free = SplitFree(free, b.x, b.y, b.w + gap, b.h + gap);
             }
         }
 
@@ -395,6 +399,58 @@ public static class PartsInPartPacker
             }
         }
         return voids;
+    }
+
+    static List<VoidRegion> DedupeOverlappingVoids(List<VoidRegion> voids)
+    {
+        if (voids.Count <= 1) return voids;
+        var ordered = voids
+            .OrderByDescending(v => v.UsableW * v.UsableH)
+            .ToList();
+        var kept = new List<VoidRegion>();
+        foreach (var next in ordered)
+        {
+            var dup = kept.Any(prev =>
+                prev.SheetIndex == next.SheetIndex
+                && string.Equals(prev.HostPanelId, next.HostPanelId, StringComparison.Ordinal)
+                && OverlapRatio(prev, next) >= 0.55);
+            if (!dup)
+                kept.Add(next);
+        }
+        return kept;
+    }
+
+    static double OverlapRatio(VoidRegion a, VoidRegion b)
+    {
+        var x0 = Math.Max(a.UsableMinX, b.UsableMinX);
+        var y0 = Math.Max(a.UsableMinY, b.UsableMinY);
+        var x1 = Math.Min(a.UsableMinX + a.UsableW, b.UsableMinX + b.UsableW);
+        var y1 = Math.Min(a.UsableMinY + a.UsableH, b.UsableMinY + b.UsableH);
+        var ow = x1 - x0;
+        var oh = y1 - y0;
+        if (ow <= 0 || oh <= 0) return 0;
+        var overlap = ow * oh;
+        var smaller = Math.Min(a.UsableW * a.UsableH, b.UsableW * b.UsableH);
+        return smaller <= 1e-9 ? 0 : overlap / smaller;
+    }
+
+    static bool OverlapsOccupied(
+        IReadOnlyList<Rect> occupied,
+        double x,
+        double y,
+        double w,
+        double h,
+        double gap)
+    {
+        foreach (var o in occupied)
+        {
+            if (x < o.X + o.W + gap - 1e-9
+                && x + w + gap > o.X + 1e-9
+                && y < o.Y + o.H + gap - 1e-9
+                && y + h + gap > o.Y + 1e-9)
+                return true;
+        }
+        return false;
     }
 
     static bool PipAllowedFor(Panel panel, HashSet<NestGroupKey> pipKeys)

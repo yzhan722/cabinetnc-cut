@@ -60,14 +60,21 @@ public static class ClearanceToolPick
         return pts;
     }
 
-    public static double ShortSideMm(PanelFeature f)
+    public static double ShortSideMm(
+        PanelFeature f,
+        IReadOnlyList<IReadOnlyList<Point2>>? islandHoles = null)
     {
         if (PanelEdit.IsPocket(f) || (f.Kind.Contains("pocket", StringComparison.OrdinalIgnoreCase)
                 && (f.Path is { Count: >= 3 } || f.Profile is { Count: >= 3 })))
         {
             var ring = f.Path is { Count: >= 3 } ? f.Path : f.Profile;
             if (ring is { Count: >= 3 })
+            {
+                var band = RebateBandMm(ring, islandHoles ?? f.Holes);
+                if (band > 1e-9)
+                    return band;
                 return ShortSpan(ring);
+            }
         }
 
         if (f.WidthMm is > 1e-9)
@@ -85,12 +92,13 @@ public static class ClearanceToolPick
     public static string Pick(
         PanelFeature f,
         double largeMinShortMm = LargeMinShortMm,
-        double smallToolDiaMm = TroyRecipe.TongueDiameterMm)
+        double smallToolDiaMm = TroyRecipe.TongueDiameterMm,
+        IReadOnlyList<IReadOnlyList<Point2>>? islandHoles = null)
     {
         largeMinShortMm = NormalizeLargeMinShortMm(largeMinShortMm);
         if (IsHingeFeature(f))
             return LargeToolId;
-        var shortMm = ShortSideMm(f);
+        var shortMm = ShortSideMm(f, islandHoles);
         if (shortMm >= largeMinShortMm)
             return LargeToolId;
         if (shortMm > smallToolDiaMm)
@@ -103,6 +111,17 @@ public static class ClearanceToolPick
             ? def.DiameterMm
             : TroyRecipe.WorkDiameterMm;
 
+    static double RebateBandMm(IReadOnlyList<Point2> outer, IReadOnlyList<IReadOnlyList<Point2>>? holes)
+    {
+        if (holes is not { Count: > 0 }) return 0;
+        var hole = holes.FirstOrDefault(h => h.Count >= 3);
+        if (hole is null) return 0;
+        var dw = LongSpan(outer) - LongSpan(hole);
+        var dh = ShortSpan(outer) - ShortSpan(hole);
+        var band = Math.Min(dw, dh) / 2;
+        return band > 0.5 ? band : 0;
+    }
+
     static double ShortSpan(IReadOnlyList<Point2> ring)
     {
         var minX = ring.Min(p => p.X);
@@ -110,5 +129,14 @@ public static class ClearanceToolPick
         var minY = ring.Min(p => p.Y);
         var maxY = ring.Max(p => p.Y);
         return Math.Min(maxX - minX, maxY - minY);
+    }
+
+    static double LongSpan(IReadOnlyList<Point2> ring)
+    {
+        var minX = ring.Min(p => p.X);
+        var maxX = ring.Max(p => p.X);
+        var minY = ring.Min(p => p.Y);
+        var maxY = ring.Max(p => p.Y);
+        return Math.Max(maxX - minX, maxY - minY);
     }
 }

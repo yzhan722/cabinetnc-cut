@@ -1,4 +1,5 @@
 using CabinetNC.Domain.Geometry;
+using CabinetNC.Domain.Machines;
 using CabinetNC.Domain.Manufacturing;
 
 namespace CabinetNC.Domain.Tests;
@@ -80,6 +81,24 @@ public class LockSlotGeometryTests
         Assert.True(
             PolylineArcFit.Fit(offset, closed: true).Count(s => s.Arc) >= 2,
             "lock ends must stay arcs, not be flattened to chords");
+        var withCad = new CutOp
+        {
+            Op = "contour",
+            PanelId = "P",
+            FeatureId = "LOCK",
+            ToolId = "T2",
+            Placed = true,
+            ClosePath = true,
+            Through = true,
+            Path = stadium.Select(p => (p.X, p.Y)).ToList(),
+            CadPath = LockSlotGeometry.CapsuleSegments(0, 55, 0, 16),
+        };
+        var nc = NcEmitter.OpsToNc(
+            ContourToolOffset.Apply([withCad], 5),
+            MachineCatalog.Get("nesting_router_6"),
+            recipe: PostRecipe.TroyDefault());
+        Assert.Contains("R3.0000", nc);
+        Assert.DoesNotContain("R13.", nc);
     }
 
     /// <summary>

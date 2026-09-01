@@ -21,6 +21,12 @@ public sealed class PanelFeature
     public IReadOnlyList<Point2>? Path { get; init; }
     /// <summary>Optional closed CAD opening polygon for groove display.</summary>
     public IReadOnlyList<Point2>? Profile { get; init; }
+    /// <summary>Closed holes inside a pocket (rebate ring).</summary>
+    public IReadOnlyList<IReadOnlyList<Point2>>? Holes { get; init; }
+    /// <summary>Exact CAD entities for <see cref="Profile"/> / cutout path.</summary>
+    public IReadOnlyList<CadSegment>? ProfileSegments { get; init; }
+    /// <summary>Exact CAD entities for each rebate hole ring.</summary>
+    public IReadOnlyList<IReadOnlyList<CadSegment>>? HoleSegments { get; init; }
 }
 
 public sealed class WorkpieceFace
@@ -101,6 +107,43 @@ public sealed class Panel
             Side = Side,
         };
 
+    public Panel WithGrain(string? grain)
+    {
+        var g = Nesting.GrainAlign.NormalizePart(grain);
+        var prev = Orientation;
+        var orient = new WorkpieceOrientation
+        {
+            PrimaryFace = prev?.PrimaryFace,
+            MillingFace = prev?.MillingFace,
+            GrainDirection = g,
+            AllowedRotations = prev?.AllowedRotations,
+            AllowMirror = prev?.AllowMirror ?? false,
+            FlipStrategy = prev?.FlipStrategy,
+        };
+        return new()
+        {
+            PanelId = PanelId,
+            Name = Name,
+            Material = Material,
+            ThicknessMm = ThicknessMm,
+            DecorId = DecorId,
+            SubstrateId = SubstrateId,
+            ColorName = ColorName,
+            SurfaceMode = SurfaceMode,
+            Quantity = Quantity,
+            AllowedRotations = AllowedRotations,
+            GrainDirection = g,
+            Outline = Outline,
+            Features = Features,
+            Faces = Faces,
+            Identity = Identity,
+            Orientation = orient,
+            EdgeBanding = EdgeBanding,
+            Notes = Notes,
+            Side = Side,
+        };
+    }
+
     public IReadOnlyList<WorkpieceFace> Faces { get; init; } = [];
 
     /// <summary>Project/Module/Workpiece identity (optional; soft hierarchy).</summary>
@@ -171,6 +214,12 @@ public sealed class Panel
             return ThicknessMm > 0 ? $"{baseLabel} · {Fmt(ThicknessMm)}mm" : baseLabel;
         }
     }
+
+    /// <summary>Export color token — decor / ColorName (e.g. White Stipple).</summary>
+    public string DisplayColor => ResolveDecorTitle();
+
+    /// <summary>Export kind token — Carcass / Door / Partition.</summary>
+    public string DisplayKind => ResolveRoleTitle();
 
     /// <summary>Size / qty / feature summary for list rows.</summary>
     public string DisplayDetail

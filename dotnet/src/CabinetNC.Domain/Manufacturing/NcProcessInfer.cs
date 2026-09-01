@@ -63,8 +63,14 @@ public static class NcProcessInfer
                 if (Dist(last, (s.X0, s.Y0)) > 0.25)
                     cur.Path.Add((s.X0, s.Y0));
             }
-            cur.Path.Add((s.X1, s.Y1));
-            if (s.XyLen > PointTolMm)
+            if (s.Arc && s.R is double r && r > 1e-6)
+            {
+                foreach (var pt in OsaiTroyParser.TessellateArc(s.X0, s.Y0, s.X1, s.Y1, r, s.Cw))
+                    cur.Path.Add(pt);
+            }
+            else
+                cur.Path.Add((s.X1, s.Y1));
+            if (NcCutSim.ArcLengthXy(s) > PointTolMm)
                 cur.HasXy = true;
         }
         return runs;

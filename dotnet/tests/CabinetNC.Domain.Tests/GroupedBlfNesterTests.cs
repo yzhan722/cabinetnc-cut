@@ -109,5 +109,15 @@ public class GroupedBlfNesterTests
         };
         Assert.False(settings.PanelMayRotate90(panel));
         Assert.Empty(settings.ValidateConsistency());
+        Assert.Equal(new[] { 0d, 180d }, settings.CandidateRotations(panel));
+    }
+
+    [Fact]
+    public void CandidateRotations_include_180_when_rotation_allowed()
+    {
+        var settings = new NestSettings { AllowRotation = true, GrainLock = false };
+        var panel = Rect("R", "oak", 18, 600, 400);
+        Assert.Equal(new[] { 0d, 90d, 180d, 270d }, settings.CandidateRotations(panel));
+        Assert.Equal(new[] { 0d }, new NestSettings { AllowRotation = false }.CandidateRotations(panel));
     }
 }

@@ -1,4 +1,4 @@
-﻿<Window x:Class="CabinetNC.Desktop.MainWindow"
+<Window x:Class="CabinetNC.Desktop.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:skia="clr-namespace:SkiaSharp.Views.WPF;assembly=SkiaSharp.Views.WPF"
@@ -119,17 +119,41 @@
       <Setter Property="Foreground" Value="#DDDDDD" />
       <Setter Property="FontSize" Value="12" />
     </Style>
+    <ContextMenu x:Key="NestPartContextMenu">
+      <MenuItem Header="改变材料" Click="OnNestChangeMaterialClick" />
+      <MenuItem Header="改变纹路朝向 90°" Click="OnNestRotateGrainClick" />
+    </ContextMenu>
+    <ContextMenu x:Key="NestHoldContextMenu">
+      <MenuItem Header="改变纹路朝向 90°" Click="OnNestRotateGrainClick" />
+      <MenuItem Header="复制" Click="OnNestHoldCopyClick" />
+      <MenuItem Header="删除" Click="OnNestHoldDeleteClick" />
+    </ContextMenu>
   </Window.Resources>
 
   <DockPanel>
     <!-- Top chrome -->
     <Border DockPanel.Dock="Top" Padding="12,8" BorderBrush="#B8B8B8" BorderThickness="0,0,0,1" Background="#FAFAFA">
       <Grid>
-        <StackPanel VerticalAlignment="Center">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" MinWidth="160" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
           <TextBlock Text="OmniCam" FontSize="15" FontWeight="Bold" />
           <TextBlock Text="切割站 · 生产加工" FontSize="11" Foreground="#666" />
         </StackPanel>
-        <WrapPanel HorizontalAlignment="Right" VerticalAlignment="Center">
+        <DockPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0" LastChildFill="True">
+          <TextBlock DockPanel.Dock="Left" Text="工程" FontSize="12" Foreground="#555"
+                     VerticalAlignment="Center" Margin="0,0,8,0" />
+          <TextBox x:Name="ProjectNameBox" MinWidth="240" MaxWidth="320" Width="280"
+                   HorizontalAlignment="Left" Padding="8,4" FontSize="13"
+                   VerticalContentAlignment="Center"
+                   ToolTip="工程名：保存工程默认用这个名字，导出 NC 也会带上"
+                   TextChanged="OnProjectNameChanged"
+                   LostFocus="OnProjectNameChanged" />
+        </DockPanel>
+        <WrapPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
           <Button Content="打开方案…" Click="OnOpenClick" />
           <Button Content="加入方案…" Click="OnAddPackageClick"
                   ToolTip="再打开一份或多份 .cnjob，和当前板件并列密排" />
@@ -149,13 +173,18 @@
           <ColumnDefinition Width="*" />
           <ColumnDefinition Width="Auto" />
           <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <TextBlock x:Name="StatusText" Grid.Column="0" Text="Ready" VerticalAlignment="Center"
                    TextTrimming="CharacterEllipsis" FontSize="12" Margin="0,0,12,0" />
         <ProgressBar x:Name="NestProgress" Grid.Column="1" Width="140" Height="10"
                      Margin="0,0,12,0" Minimum="0" Maximum="100" Value="0"
                      Visibility="Collapsed" VerticalAlignment="Center" />
-        <TextBlock x:Name="WorkerBadge" Grid.Column="2" Text="Worker: —"
+        <TextBlock x:Name="ProjectNameBadge" Grid.Column="2" Text=""
+                   VerticalAlignment="Center" FontSize="12" Foreground="#1A3A5C"
+                   FontWeight="SemiBold" Margin="0,0,14,0" TextTrimming="CharacterEllipsis"
+                   MaxWidth="280" />
+        <TextBlock x:Name="WorkerBadge" Grid.Column="3" Text="Worker: —"
                    VerticalAlignment="Center" FontWeight="SemiBold" FontSize="12" />
       </Grid>
     </Border>
@@ -267,9 +296,18 @@
                 <StackPanel x:Name="LeftRailContent">
                   <TextBlock Text="工程" Style="{StaticResource RailH2}" Margin="0,0,0,4" />
                   <TextBlock x:Name="PackageMeta" Text="尚未加载" TextWrapping="Wrap" FontSize="12" Foreground="#888" Margin="0,0,0,8" />
-                  <TextBlock Text="板件" Style="{StaticResource RailH2}" />
+                  <DockPanel Margin="0,10,0,4" LastChildFill="True">
+                    <Button x:Name="CreatePanelBtn" DockPanel.Dock="Right"
+                            Content="创建板件" Click="OnCreatePanelClick"
+                            Padding="8,2" Margin="0" FontSize="11"
+                            Visibility="Collapsed"
+                            ToolTip="打开画布。已选板则载入该板，未选则新建。Profile=外框，Feature=孔/槽/口袋。" />
+                    <TextBlock Text="板件" Style="{StaticResource RailH2}"
+                               Margin="0" VerticalAlignment="Center" />
+                  </DockPanel>
                   <ListBox x:Name="PartList" BorderThickness="0" Background="Transparent" SelectionChanged="OnPartSelected" FontSize="12"
-                           ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                           ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                           MouseDoubleClick="OnPartListDoubleClick">
                     <ListBox.GroupStyle>
                       <GroupStyle>
                         <GroupStyle.ContainerStyle>
@@ -278,7 +316,13 @@
                               <Setter.Value>
                                 <ControlTemplate TargetType="{x:Type GroupItem}">
                                   <Expander IsExpanded="True" Margin="0,6,0,2"
-                                            Foreground="#12314F" FontSize="12" FontWeight="Bold">
+                                            Foreground="#12314F" FontSize="12" FontWeight="Bold"
+                                            PreviewMouseRightButtonUp="OnPackageGroupRightUp">
+                                    <Expander.ContextMenu>
+                                      <ContextMenu Opened="OnPackageGroupMenuOpened">
+                                        <MenuItem Header="移出这份方案…" Click="OnRemovePackageClick" />
+                                      </ContextMenu>
+                                    </Expander.ContextMenu>
                                     <Expander.Header>
                                       <DockPanel>
                                         <CheckBox DockPanel.Dock="Left"
@@ -288,14 +332,29 @@
                                                   Focusable="False"
                                                   Visibility="{Binding StockKindPickerVisible, RelativeSource={RelativeSource AncestorType=Window}}"
                                                   PreviewMouseLeftButtonDown="OnStockKindPickDown" />
-                                        <TextBlock>
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="#12314F" FontSize="12" FontWeight="Bold">
                                           <TextBlock.Text>
-                                            <MultiBinding StringFormat="{}{0} ({1})">
-                                              <Binding Path="Name" Mode="OneWay" />
-                                              <Binding Path="ItemCount" Mode="OneWay" />
-                                            </MultiBinding>
+                                            <Binding Path="ItemCount" StringFormat=" ({0})" />
                                           </TextBlock.Text>
                                         </TextBlock>
+                                        <Grid>
+                                          <TextBlock Tag="KindName"
+                                                     Text="{Binding Name}"
+                                                     TextWrapping="Wrap"
+                                                     VerticalAlignment="Center"
+                                                     ToolTip="双击改名"
+                                                     PreviewMouseLeftButtonDown="OnStockKindNameDown" />
+                                          <TextBox Tag="KindRename"
+                                                   Visibility="Collapsed"
+                                                   Padding="2,1"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   PreviewMouseLeftButtonDown="OnStockKindRenameBoxDown"
+                                                   LostFocus="OnStockKindRenameLostFocus"
+                                                   KeyDown="OnStockKindRenameKey" />
+                                        </Grid>
                                       </DockPanel>
                                     </Expander.Header>
                                     <ItemsPresenter Margin="0,2,0,0" />
@@ -346,6 +405,7 @@
                         <MenuItem Header="复制 (Ctrl+C)" Click="OnGeomDuplicateClick" />
                         <MenuItem Header="粘贴 (Ctrl+V)" Click="OnPastePanelClick" />
                         <MenuItem Header="剪切 (Ctrl+X)" Click="OnCutPanelClick" />
+                        <MenuItem Header="创建板件" Click="OnCreatePanelClick" />
                         <MenuItem Header="删除整板 (Del)" Click="OnDeletePanelClick" />
                         <Separator />
                         <MenuItem Header="镜像 X" Click="OnGeomMirrorXClick" />
@@ -378,6 +438,9 @@
                     PreviewMouseLeftButtonUp="OnCanvasUp"
                     PreviewMouseRightButtonDown="OnCanvasRightDown"
                     PreviewMouseRightButtonUp="OnCanvasRightUp"
+                    PreviewMouseDown="OnCanvasPreviewDown"
+                    PreviewMouseUp="OnCanvasPreviewUp"
+                    PreviewMouseWheel="OnCanvasWheel"
                     LostMouseCapture="OnCanvasLostCapture">
               <Grid>
                 <skia:SKElement x:Name="CanvasHost" PaintSurface="OnPaintSurface" />
@@ -393,6 +456,11 @@
                                  FontSize="11" Foreground="#666" Text="" />
                     </Grid>
                   </Border>
+                  <Button x:Name="NestCreatePanelBtn" Content="创建板件"
+                          Click="OnNestCreatePanelClick"
+                          HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                          Margin="12,0,0,36" Padding="12,6" FontWeight="SemiBold"
+                          ToolTip="按当前大板材料创建，完成后进入右侧待用区" />
                   <Border VerticalAlignment="Bottom" Background="#F7F7F7" BorderBrush="#DDDDDD" BorderThickness="0,1,0,0" Padding="8,4">
                     <WrapPanel>
                       <TextBlock Text="选中" Foreground="#0066CC" FontSize="11" Margin="0,0,10,0" />
@@ -402,6 +470,40 @@
                       <TextBlock Text="右侧=待用区" Foreground="#666" FontSize="11" Margin="0,0,10,0" />
                       <TextBlock Text="间距按板材种类" Foreground="#666" FontSize="11" />
                     </WrapPanel>
+                  </Border>
+                </Grid>
+                <Grid x:Name="OutSimChrome" Visibility="Collapsed">
+                  <Border VerticalAlignment="Top" Background="#F7F7F7" BorderBrush="#DDDDDD" BorderThickness="0,0,0,1" Padding="8,5">
+                    <Grid>
+                      <TextBlock x:Name="OutSimTitle" Text="G-code 切割仿真" VerticalAlignment="Center"
+                                 FontSize="12" FontWeight="SemiBold" />
+                      <TextBlock x:Name="OutSimMeta" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                 FontSize="11" Foreground="#666"
+                                 Text="虚线空程 · 线宽=刀径 · 橙=留 0.5 · 蓝=通切" />
+                    </Grid>
+                  </Border>
+                  <Border VerticalAlignment="Bottom" Background="#F7F7F7" BorderBrush="#DDDDDD" BorderThickness="0,1,0,0" Padding="8,6">
+                    <DockPanel>
+                      <Button x:Name="OutSimPlayBtn" Content="▶" Click="OnOutSimPlayClick"
+                              Padding="12,2" DockPanel.Dock="Left" Margin="0,0,8,0"
+                              ToolTip="播放 / 暂停" />
+                      <Button Content="复位" Click="OnOutSimResetViewClick"
+                              Padding="8,2" DockPanel.Dock="Left" Margin="0,0,8,0"
+                              ToolTip="双击中键同样复位 · 滚轮对准指针缩放 · 中键平移" />
+                      <ComboBox x:Name="OutSimSpeed" Width="68" DockPanel.Dock="Right"
+                                Margin="8,0,0,0" VerticalAlignment="Center"
+                                SelectedIndex="1" SelectionChanged="OnOutSimSpeedChanged">
+                        <ComboBoxItem Content="1×" Tag="1" />
+                        <ComboBoxItem Content="4×" Tag="4" />
+                        <ComboBoxItem Content="16×" Tag="16" />
+                      </ComboBox>
+                      <TextBlock x:Name="OutSimTime" DockPanel.Dock="Right" VerticalAlignment="Center"
+                                 FontSize="11" Foreground="#555" Margin="10,0,0,0" MinWidth="88"
+                                 Text="0.0 / 0.0 s" />
+                      <Slider x:Name="OutSimSlider" Minimum="0" Maximum="1000" Value="0"
+                              VerticalAlignment="Center" Margin="0,2"
+                              ValueChanged="OnOutSimSliderChanged" />
+                    </DockPanel>
                   </Border>
                 </Grid>
                 <TextBlock x:Name="OutPreviewCaption" Visibility="Collapsed" IsHitTestVisible="False"
@@ -528,9 +630,12 @@
                         <Border Margin="0,0,0,8" Padding="10,8" Background="#FFFFFF"
                                 BorderBrush="#C8C8C8" BorderThickness="1">
                           <StackPanel>
-                            <TextBlock Text="{Binding Label}" FontWeight="SemiBold" FontSize="12"
-                                       TextWrapping="Wrap" Foreground="#1A3A5C" />
-                            <TextBlock Margin="0,2,0,6" FontSize="11" Foreground="#666">
+                            <TextBlock Text="种类名" FontSize="10" Foreground="#666" />
+                            <TextBox Text="{Binding Label, UpdateSourceTrigger=LostFocus}"
+                                     LostFocus="OnStockKindLabelChanged"
+                                     ToolTip="{Binding AutoLabel}"
+                                     Margin="0,0,0,4" FontWeight="SemiBold" />
+                            <TextBlock Margin="0,0,0,6" FontSize="11" Foreground="#666">
                               <TextBlock.Text>
                                 <MultiBinding StringFormat="{}{0} · {1} 件">
                                   <Binding Path="MaterialId" />
@@ -566,6 +671,38 @@
                             </Grid>
                             <CheckBox Content="允许90度旋转" IsChecked="{Binding AllowRotate90}"
                                       Margin="0,8,0,2" FontSize="12" />
+                            <TextBlock Text="大板木纹" FontSize="10" Foreground="#666" Margin="0,6,0,0" />
+                            <ComboBox ItemsSource="{Binding SheetGrainChoices}"
+                                      DisplayMemberPath="Label"
+                                      SelectedValuePath="Key"
+                                      SelectedValue="{Binding SheetGrainKey, UpdateSourceTrigger=PropertyChanged}"
+                                      Margin="0,0,0,6"
+                                      SelectionChanged="OnStockSheetGrainChanged"
+                                      ToolTip="Fusion 设定板件木纹；这里设大板纹理方向。无纹理则不强制对齐。" />
+                            <Expander Header="{Binding PanelGrainHeader}"
+                                      IsExpanded="{Binding PanelGrainsExpanded, Mode=TwoWay}"
+                                      Margin="0,2,0,6"
+                                      FontSize="12"
+                                      ToolTip="默认收起。点开后可改单块板的木纹。">
+                              <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                                <ItemsControl ItemsSource="{Binding PanelGrains}">
+                                  <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                      <DockPanel Margin="0,0,0,3" LastChildFill="True">
+                                        <ComboBox DockPanel.Dock="Right" Width="64" Margin="8,0,0,0"
+                                                  ItemsSource="{Binding GrainChoices}"
+                                                  DisplayMemberPath="Label"
+                                                  SelectedValuePath="Key"
+                                                  SelectedValue="{Binding GrainKey, UpdateSourceTrigger=PropertyChanged}"
+                                                  SelectionChanged="OnStockPanelGrainChanged" />
+                                        <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center" FontSize="12" />
+                                      </DockPanel>
+                                    </DataTemplate>
+                                  </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                              </ScrollViewer>
+                            </Expander>
                             <CheckBox Content="允许 parts in part" IsChecked="{Binding AllowPartsInPart}"
                                       Margin="0,0,0,2" FontSize="12"
                                       ToolTip="零件嵌套进另一零件的空洞（引擎预留；勾选后写入本材料密排参数）" />
@@ -618,9 +755,25 @@
                   <Button x:Name="NestStabilizeBtn" Content="本张密排优化" Click="OnNestStabilizeClick"
                           HorizontalAlignment="Stretch" Padding="8,6" Margin="0,0,0,4"
                           ToolTip="二次整理当前大板：只把特别窄的条子（短边小于约 100mm）从宽度边缘整列调到中间。150mm 宽的竖条贴边没问题，不动。" />
+                  <Grid Margin="0,0,0,4">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" /><ColumnDefinition Width="6" /><ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                      <TextBlock Text="余料间隙 mm" FontSize="10" Foreground="#666" />
+                      <TextBox x:Name="GuillotineClearanceBox" Text="20" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                      <TextBlock Text="最短边 mm" FontSize="10" Foreground="#666" />
+                      <TextBox x:Name="GuillotineMinEdgeBox" Text="400" />
+                    </StackPanel>
+                  </Grid>
                   <Button x:Name="NestGuillotineBtn" Content="本张余料线" Click="OnNestGuillotineClick"
                           HorizontalAlignment="Stretch" Padding="8,6" Margin="0,0,0,4"
-                          ToolTip="按当前大板排版轮廓外 20mm 生成横/竖/L 余料分割线（预览）；余料边 &lt; 400mm 则跳过" />
+                          ToolTip="按当前大板排版 AABB 外间隙生成余料：优先方料，拆开会短于最短边则保留 L" />
+                  <Button x:Name="NestGuillotineAllBtn" Content="全部余料线" Click="OnNestGuillotineAllClick"
+                          HorizontalAlignment="Stretch" Padding="8,6" Margin="0,0,0,4"
+                          ToolTip="按同样规则给每张已排大板生成余料线" />
                   <Expander Header="高级" FontSize="12" Margin="0,4,0,0">
                     <StackPanel Margin="0,6,0,0">
                       <Button x:Name="NestVerifyPolyBtn" Content="多边形间距校验" Click="OnNestVerifyPolyClick"
@@ -633,11 +786,11 @@
                         </Grid.ColumnDefinitions>
                         <StackPanel>
                           <TextBlock Text="默认板宽" FontSize="10" Foreground="#666" />
-                          <TextBox x:Name="StockWidthBox" Text="1220" />
+                          <TextBox x:Name="StockWidthBox" Text="1200" />
                         </StackPanel>
                         <StackPanel Grid.Column="2">
                           <TextBlock Text="默认板长" FontSize="10" Foreground="#666" />
-                          <TextBox x:Name="StockLengthBox" Text="2440" />
+                          <TextBox x:Name="StockLengthBox" Text="2400" />
                         </StackPanel>
                       </Grid>
                       <Grid Margin="0,0,0,4">
@@ -819,7 +972,7 @@
                         <TextBlock Text="桥" FontSize="12" FontWeight="SemiBold" Foreground="#1A3A5C" Margin="0,0,0,6" />
                         <TextBlock Text="桥的宽度 (mm)" FontSize="10" Foreground="#666" />
                         <TextBox x:Name="ProfBridgeWidth" Text="5" Margin="0,0,0,8" LostFocus="OnProfileFieldChanged"
-                                 ToolTip="沿刀路跳过的长度，默认 5mm" />
+                                 ToolTip="留下的桥心宽度。刀心再加两个刀半径，默认 5mm" />
                         <TextBlock Text="三桥面积上限 (m²)" FontSize="10" Foreground="#666" />
                         <TextBox x:Name="ProfBridgeTinyArea" Text="0.1" Margin="0,0,0,6" LostFocus="OnProfileFieldChanged"
                                  ToolTip="小于此面积的小板放 3 座桥，且在不同边" />
@@ -930,10 +1083,21 @@
                   </StackPanel>
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Bottom" Margin="12,8,12,12">
-                  <Button x:Name="OutExportSelectedBtn" Content="导出当前选中" Click="OnExportSelectedClick"
+                  <Button x:Name="OutExportSelectedBtn" Content="导出当前大板" Click="OnExportSelectedClick"
                           Padding="8,6" Margin="0,0,0,6" IsEnabled="False" />
+                  <Button x:Name="OutExportKindBtn" Content="导出当前板材种类" Click="OnExportKindClick"
+                          Padding="8,6" Margin="0,0,0,6" IsEnabled="False"
+                          ToolTip="导出选中文件同一板材种类的全部大板，例如全部 15mm 匣体" />
                   <Button x:Name="OutExportAllBtn" Content="导出全部" Click="OnExportAllClick"
-                          Padding="8,6" IsEnabled="False" />
+                          Padding="8,6" Margin="0,0,0,10" IsEnabled="False" />
+                  <Button x:Name="OutExportDxfSheetBtn" Content="单独导出这张大板 DXF"
+                          Click="OnExportDxfSheetClick"
+                          Padding="8,6" Margin="0,0,0,6" IsEnabled="False"
+                          ToolTip="把当前选中的大板排版写成一份 DXF，给 Carveco 演算" />
+                  <Button x:Name="OutExportDxfKindBtn" Content="按照种类导出 DXF"
+                          Click="OnExportDxfKindClick"
+                          Padding="8,6" IsEnabled="False"
+                          ToolTip="同一板材种类的每张大板各一份 DXF" />
                 </StackPanel>
                 <ListBox x:Name="OutFileList" BorderThickness="0" Background="Transparent"
                          Padding="6,0,6,8" FontSize="12"

@@ -39,7 +39,7 @@ public class PocketNcSegmentAuditTests
     }
 
     [Fact]
-    public void NcEmitter_pocket_uses_G0_between_segments_and_does_not_close_zigzag()
+    public void NcEmitter_pocket_stays_down_between_segments_and_does_not_close_zigzag()
     {
         var segments = new IReadOnlyList<(double X, double Y)>[]
         {
@@ -61,14 +61,11 @@ public class PocketNcSegmentAuditTests
             Path = segments.SelectMany(s => s).Concat(finish).ToList(),
         };
         var nc = NcEmitter.OpsToNc([op], MachineCatalog.Get("nesting_router_6"));
-        // Must rapid between end of first scan and start of second (not cutting G1 across)
-        Assert.DoesNotContain("G1 X50 Y10\nG1 X50 Y20", nc.Replace("\r\n", "\n"));
-        Assert.Contains("G0 X50 Y20", nc.Replace("\r\n", "\n"));
-        // Zigzag must not close back to first scan start with a finishing G1 after last zigzag point
-        // before finish loop — finish loop is explicit and closed once
         var normalized = nc.Replace("\r\n", "\n");
+        // Same pocket: feed at cut Z between walls (Carveco). Do not SafeZ.
+        Assert.Contains("G1 X50 Y20", normalized);
+        Assert.DoesNotContain("G0 X50 Y20", normalized);
         Assert.Contains("(pocket", normalized);
-        // Contour-style close of flattened zigzag to first scan start must not appear before finish
         var beforeFinish = normalized.Contains("(finish")
             ? normalized.Split("(finish")[0]
             : normalized;
