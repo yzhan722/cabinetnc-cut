@@ -51,6 +51,20 @@ public class NcReverseTests
         Path = [(0, 0), (200, 0), (200, 100), (0, 100)],
     };
 
+    static CutOp InnerCutout() => new()
+    {
+        Op = "contour",
+        PanelId = "P1",
+        FeatureId = "CUT-1",
+        ToolId = "T2",
+        Placed = true,
+        ClosePath = true,
+        Through = true,
+        ThicknessMm = 18,
+        DepthMm = 18.5,
+        Path = [(40, 20), (80, 20), (80, 70), (40, 70)],
+    };
+
     static string EmitOffset(params CutOp[] ops)
     {
         var offset = ContourToolOffset.Apply(ops, 5);
@@ -138,6 +152,127 @@ public class NcReverseTests
         Assert.Equal(2, result.Panels.Count);
     }
 
+    /// <summary>A 40×50 window has sides inside the ramp-strip range; it must stay a closed contour.</summary>
+    [Fact]
+    public void Infer_keeps_small_closed_window_as_contour()
+    {
+        var nc = EmitOffset(Outer(), InnerCutout());
+        var result = NcReverse.FromText(nc);
+        Assert.Equal(2, result.Ops.Count(o => o.Op == "contour"));
+    }
+
+    [Fact]
+    public void Reverse_recovers_inner_cutout_not_cutter_center()
+    {
+        var nc = EmitOffset(Outer(), InnerCutout());
+        var result = NcReverse.FromText(nc);
+        Assert.Single(result.Panels);
+        var cut = result.Panels[0].Features.Single(f => f.Kind == "cutout");
+        Assert.NotNull(cut.Path);
+        var w = cut.Path!.Max(p => p.X) - cut.Path.Min(p => p.X);
+        var h = cut.Path.Max(p => p.Y) - cut.Path.Min(p => p.Y);
+        Assert.InRange(w, 36, 44);
+        Assert.InRange(h, 46, 54);
+        Assert.InRange(cut.Path.Min(p => p.X), 36, 44);
+        Assert.InRange(cut.Path.Min(p => p.Y), 16, 24);
+    }
+
+    /// <summary>
+    /// Travel-optimised posts enter the through pass at a different corner than the leave
+    /// pass and may run it the other way round; both still describe one panel.
+    /// </summary>
+    [Fact]
+    public void Reverse_merges_passes_with_different_entry_vertex_and_direction()
+    {
+        var nc = """
+            N1 G90
+            N2 G40
+            N3 (UAO,1)
+            N4 M6 T2
+            N5 M3 S14500
+            N6 G0 X-5.0000 Y-5.0000 Z30.0000
+            N7 G1 Z0.5000 F1000.0
+            N8 G1 Y105.0000 F12000.0
+            N9 G1 X205.0000
+            N10 G1 Y-5.0000
+            N11 G1 X-5.0000
+            N12 G0 Z30.0000
+            N13 G0 X205.0000 Y105.0000
+            N14 G1 Z-0.5500 F1000.0
+            N15 G1 X-5.0000 F20000.0
+            N16 G1 Y-5.0000
+            N17 G1 X205.0000
+            N18 G1 Y105.0000
+            N19 G0 Z30.0000
+            N20 M5
+            N21 M30
+            """;
+        var result = NcReverse.FromText(nc);
+        Assert.Equal(1, result.Ops.Count(o => o.Op == "contour"));
+        var panel = Assert.Single(result.Panels);
+        var w = panel.Outline.Points.Max(p => p.X) - panel.Outline.Points.Min(p => p.X);
+        var h = panel.Outline.Points.Max(p => p.Y) - panel.Outline.Points.Min(p => p.Y);
+        Assert.InRange(w, 196, 204);
+        Assert.InRange(h, 96, 104);
+    }
+
+    /// <summary>Leave pass, through pass and a spring (repeat through) pass are one loop.</summary>
+    [Fact]
+    public void Reverse_merges_three_passes_into_one_panel()
+    {
+        var nc = """
+            N1 G90
+            N2 G40
+            N3 (UAO,1)
+            N4 M6 T2
+            N5 M3 S14500
+            N6 G0 X-5.0000 Y-5.0000 Z30.0000
+            N7 G1 Z0.5000 F1000.0
+            N8 G1 Y105.0000 F12000.0
+            N9 G1 X205.0000
+            N10 G1 Y-5.0000
+            N11 G1 X-5.0000
+            N12 G0 Z30.0000
+            N13 G0 X205.0000 Y105.0000
+            N14 G1 Z-0.5500 F1000.0
+            N15 G1 X-5.0000 F20000.0
+            N16 G1 Y-5.0000
+            N17 G1 X205.0000
+            N18 G1 Y105.0000
+            N19 G0 Z30.0000
+            N20 G0 X205.0000 Y-5.0000
+            N21 G1 Z-0.5500 F1000.0
+            N22 G1 Y105.0000 F20000.0
+            N23 G1 X-5.0000
+            N24 G1 Y-5.0000
+            N25 G1 X205.0000
+            N26 G0 Z30.0000
+            N27 M5
+            N28 M30
+            """;
+        var result = NcReverse.FromText(nc);
+        var contour = Assert.Single(result.Ops, o => o.Op == "contour");
+        Assert.True(contour.Through);
+        Assert.Single(result.Panels);
+    }
+
+    [Fact]
+    public void SameLoop_ignores_start_vertex_direction_and_tessellation()
+    {
+        (double, double)[] rect = [(0, 0), (200, 0), (200, 100), (0, 100), (0, 0)];
+        (double, double)[] rotated = [(200, 100), (0, 100), (0, 0), (200, 0), (200, 100)];
+        (double, double)[] reversed = [(0, 0), (0, 100), (200, 100), (200, 0), (0, 0)];
+        (double, double)[] dense = [(0, 0), (100, 0), (200, 0), (200, 50), (200, 100), (100, 100), (0, 100), (0, 50), (0, 0)];
+        (double, double)[] neighbour = [(300, 0), (400, 0), (400, 80), (300, 80), (300, 0)];
+        (double, double)[] shifted = [(4, 0), (204, 0), (204, 100), (4, 100), (4, 0)];
+
+        Assert.True(NcProcessInfer.SameLoop(rect, rotated));
+        Assert.True(NcProcessInfer.SameLoop(rect, reversed));
+        Assert.True(NcProcessInfer.SameLoop(rect, dense));
+        Assert.False(NcProcessInfer.SameLoop(rect, neighbour));
+        Assert.False(NcProcessInfer.SameLoop(rect, shifted));
+    }
+
     [Fact]
     public void Recut_keeps_only_selected_panel_at_qty_one()
     {
@@ -168,15 +303,4 @@ public class NcReverseTests
         Assert.Single(pkg.Sheets);
     }
 
-    [Fact]
-    public void Panel_sample_shop_file_replays_when_present()
-    {
-        var path = @"E:\Work\CNC software\G\user\PROGRAMS\Panel Sample.anc";
-        if (!File.Exists(path))
-            return;
-        var nc = File.ReadAllText(path);
-        var result = NcReverse.FromText(nc);
-        Assert.True(result.Strokes.Count > 10);
-        Assert.DoesNotContain("no_motion", result.Warnings);
-    }
 }

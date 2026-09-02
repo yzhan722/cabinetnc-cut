@@ -33,7 +33,7 @@ public static class NcToPanels
         {
             i++;
             var radius = RadiusOf(outer.ToolId, catalog);
-            var partPath = Inset(outer, radius);
+            var partPath = OffsetClosed(outer, -radius);
             if (partPath.Count < 3)
                 partPath = outer.Path!.ToList();
 
@@ -48,7 +48,13 @@ public static class NcToPanels
             {
                 if (!CentroidInside(inner.Path!, outer.Path!)) continue;
                 fid++;
-                var pts = inner.Path!.Select(p => new Point2(p.X - minX, p.Y - minY)).ToList();
+                // The NC loop is the cutter centre running inside the window; the
+                // finished window is one tool radius larger on every side.
+                var holeRadius = RadiusOf(inner.ToolId, catalog);
+                var holePath = OffsetClosed(inner, holeRadius);
+                if (holePath.Count < 3)
+                    holePath = inner.Path!;
+                var pts = holePath.Select(p => new Point2(p.X - minX, p.Y - minY)).ToList();
                 owned.Add(new PanelFeature
                 {
                     FeatureId = "CUT-" + fid,
@@ -79,11 +85,17 @@ public static class NcToPanels
         return panels;
     }
 
-    static IReadOnlyList<(double X, double Y)> Inset(CutOp contour, double radiusMm)
+    /// <summary>
+    /// Signed Clipper offset in sheet space. Positive expands, negative shrinks.
+    /// FeatureId is cleared so the inner/outer sign flip in CAM does not invert the delta.
+    /// </summary>
+    static IReadOnlyList<(double X, double Y)> OffsetClosed(CutOp contour, double signedMm)
     {
-        if (radiusMm < 1e-6) return contour.Path!;
-        var offset = ContourToolOffset.Apply([contour], -radiusMm);
-        return offset[0].Path is { Count: >= 3 } p ? p : contour.Path!;
+        if (contour.Path is not { Count: >= 3 }) return contour.Path ?? [];
+        if (Math.Abs(signedMm) < 1e-6) return contour.Path;
+        var op = contour with { FeatureId = null, Op = "contour" };
+        var offset = ContourToolOffset.Apply([op], signedMm);
+        return offset[0].Path is { Count: >= 3 } p ? p : contour.Path;
     }
 
     static double RadiusOf(string? toolId, IReadOnlyDictionary<string, ToolDefinition> catalog)

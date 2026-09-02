@@ -12,7 +12,18 @@ public sealed class WorkshopLibrary
     public List<LibTool> Tools { get; set; } = [];
     public List<LibRemnant> Remnants { get; set; } = [];
     public NestDefaults Nest { get; set; } = new();
+    public LabelerDefaults Labeler { get; set; } = new();
     public string? SavedAt { get; set; }
+}
+
+/// <summary>Shop labeler (Excitech Label Printing) settings that the NC export must agree with.</summary>
+public sealed class LabelerDefaults
+{
+    /// <summary>
+    /// "Print picture path" configured in the label software on the machine PC. Bitmaps must
+    /// sit directly in this folder (no sub-folder); the 2026-08-19 incident was a mismatch here.
+    /// </summary>
+    public string MachinePictureDir { get; set; } = @"D:\CNC";
 }
 
 public sealed class LibMaterial

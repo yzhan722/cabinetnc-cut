@@ -1,0 +1,49 @@
+name: Windows Desktop
+
+# regression.yml runs the Domain/Package/Infrastructure suites on Linux and is the
+# release gate. It cannot compile CabinetNC.Desktop (net10.0-windows), so a broken
+# Desktop build used to go unnoticed until someone ran it on a shop PC. This job
+# closes that hole and also runs the suites on Windows, where CRLF checkouts and
+# path handling differ from the Linux runner.
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: windows-desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    name: build Desktop + Worker, test on Windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: dotnet
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build Desktop (Release)
+        run: dotnet build src/CabinetNC.Desktop/CabinetNC.Desktop.csproj -c Release --verbosity minimal
+
+      - name: Build ComputeWorker (Release)
+        run: dotnet build src/CabinetNC.ComputeWorker/CabinetNC.ComputeWorker.csproj -c Release --verbosity minimal
+
+      - name: Domain tests
+        run: dotnet test tests/CabinetNC.Domain.Tests/CabinetNC.Domain.Tests.csproj -c Release --verbosity minimal
+
+      # Keep going after a Domain failure so Package/Infrastructure results are
+      # visible in the same run instead of being skipped.
+      - name: Package tests
+        if: always()
+        run: dotnet test tests/CabinetNC.Package.Tests/CabinetNC.Package.Tests.csproj -c Release --verbosity minimal
+
+      - name: Infrastructure tests
+        if: always()
+        run: dotnet test tests/CabinetNC.Infrastructure.Tests/CabinetNC.Infrastructure.Tests.csproj -c Release --verbosity minimal

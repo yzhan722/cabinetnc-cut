@@ -21,6 +21,32 @@ public class LabelExportTests
         };
 
     [Fact]
+    public void Ls11Stems_reads_every_label_request_in_program_order()
+    {
+        var pastes = new[]
+        {
+            new LabelPaste { PanelId = "A", Stem = "OHC_OH_D0_2", SheetX = 226.266, SheetY = 218.491 },
+            new LabelPaste { PanelId = "B", Stem = "OHC_OH_D1_2", SheetX = 500, SheetY = 300 },
+        };
+        var anc = LabelExport.WrapCutWithLabelProcess("N1 G90\r\nN2 M30\r\n", LabelExport.EmitPro2(pastes));
+        Assert.Equal(["OHC_OH_D0_2", "OHC_OH_D1_2"], LabelExport.Ls11Stems(anc));
+    }
+
+    [Fact]
+    public void MissingBitmaps_names_stems_without_a_picture_case_insensitively()
+    {
+        var pastes = new[]
+        {
+            new LabelPaste { PanelId = "A", Stem = "OHC_OH_D0_2" },
+            new LabelPaste { PanelId = "B", Stem = "OHC_OH_D1_2" },
+        };
+        var anc = LabelExport.EmitPro2(pastes);
+        Assert.Empty(LabelExport.MissingBitmaps(anc, ["ohc_oh_d0_2", "OHC_OH_D1_2"]));
+        Assert.Equal(["OHC_OH_D1_2"], LabelExport.MissingBitmaps(anc, ["OHC_OH_D0_2"]));
+        Assert.Empty(LabelExport.MissingBitmaps("N1 G90\r\nN2 M30\r\n", []));
+    }
+
+    [Fact]
     public void SafeStem_strips_apostrophe_and_spaces()
     {
         Assert.Equal("226_Club_Kitchen_V3", LabelExport.SafeStem("22'6 Club · Kitchen-V3"));

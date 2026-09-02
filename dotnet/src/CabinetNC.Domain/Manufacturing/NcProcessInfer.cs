@@ -218,6 +218,12 @@ public static class NcProcessInfer
         };
     }
 
+    /// <summary>
+    /// The Troy post cuts every closed profile in several passes (leave skin, then through),
+    /// and since the passes are re-ordered for travel each pass may enter the loop at a
+    /// different vertex or run the other way round. All passes over one loop collapse into
+    /// the single deepest op so a panel is recovered once, not once per pass.
+    /// </summary>
     static List<CutOp> MergeTwoPassContours(List<CutOp> ops)
     {
         var contours = ops.Where(o => o.Op == "contour").ToList();
@@ -227,50 +233,100 @@ public static class NcProcessInfer
         for (var i = 0; i < contours.Count; i++)
         {
             if (used[i]) continue;
-            var a = contours[i];
-            var partner = -1;
+            used[i] = true;
+            var best = contours[i];
+            var passes = 1;
             for (var j = i + 1; j < contours.Count; j++)
             {
                 if (used[j]) continue;
-                if (SameLoop(a.Path, contours[j].Path))
-                {
-                    partner = j;
-                    break;
-                }
+                if (!SameLoop(best.Path, contours[j].Path)) continue;
+                used[j] = true;
+                passes++;
+                var other = contours[j];
+                if (Deeper(other, best))
+                    best = other;
             }
-            if (partner >= 0)
-            {
-                used[partner] = true;
-                var last = a.Through || (a.DepthMm ?? 0) >= (contours[partner].DepthMm ?? 0)
-                    ? a : contours[partner];
-                merged.Add(last with { Through = true });
-            }
-            else
-                merged.Add(a);
-            used[i] = true;
+            merged.Add(passes > 1 ? best with { Through = true } : best);
         }
         others.AddRange(merged);
         return others;
     }
 
-    static bool SameLoop(
+    static bool Deeper(CutOp candidate, CutOp current)
+    {
+        if (candidate.Through != current.Through)
+            return candidate.Through;
+        return (candidate.DepthMm ?? 0) > (current.DepthMm ?? 0);
+    }
+
+    const double LoopCentroidTolMm = 3;
+    const double LoopAreaTolRatio = 0.06;
+    const double LoopLengthTolRatio = 0.08;
+
+    /// <summary>
+    /// Start-vertex, direction and tessellation independent loop identity: compares the
+    /// area centroid, the enclosed area and the perimeter instead of the raw vertex list.
+    /// </summary>
+    public static bool SameLoop(
         IReadOnlyList<(double X, double Y)>? a,
         IReadOnlyList<(double X, double Y)>? b)
     {
         if (a is not { Count: >= 3 } || b is not { Count: >= 3 }) return false;
-        var ca = Centroid(a);
-        var cb = Centroid(b);
-        if (Dist(ca, cb) > 3) return false;
-        return Math.Abs(PathLength(a) - PathLength(b)) < Math.Max(8, PathLength(a) * 0.08);
+        var la = LoopOf(a);
+        var lb = LoopOf(b);
+        var (ca, areaA) = AreaCentroid(la);
+        var (cb, areaB) = AreaCentroid(lb);
+        if (Dist(ca, cb) > LoopCentroidTolMm) return false;
+        var areaTol = Math.Max(25, Math.Max(areaA, areaB) * LoopAreaTolRatio);
+        if (Math.Abs(areaA - areaB) > areaTol) return false;
+        var lenA = PathLength(la) + Dist(la[^1], la[0]);
+        var lenB = PathLength(lb) + Dist(lb[^1], lb[0]);
+        return Math.Abs(lenA - lenB) < Math.Max(8, Math.Max(lenA, lenB) * LoopLengthTolRatio);
+    }
+
+    /// <summary>Drop the explicit closing vertex so the loop is one point per corner.</summary>
+    static IReadOnlyList<(double X, double Y)> LoopOf(IReadOnlyList<(double X, double Y)> path)
+    {
+        if (path.Count >= 4 && Dist(path[0], path[^1]) <= ClosedTolMm)
+            return path.Take(path.Count - 1).ToList();
+        return path;
+    }
+
+    /// <summary>Shoelace centroid and absolute area; falls back to the vertex mean for slivers.</summary>
+    static ((double X, double Y) Centroid, double Area) AreaCentroid(IReadOnlyList<(double X, double Y)> loop)
+    {
+        var twiceArea = 0d;
+        var cx = 0d;
+        var cy = 0d;
+        for (var i = 0; i < loop.Count; i++)
+        {
+            var p = loop[i];
+            var q = loop[(i + 1) % loop.Count];
+            var cross = p.X * q.Y - q.X * p.Y;
+            twiceArea += cross;
+            cx += (p.X + q.X) * cross;
+            cy += (p.Y + q.Y) * cross;
+        }
+        if (Math.Abs(twiceArea) < 1e-6)
+            return (Centroid(loop), 0);
+        var k = 1 / (3 * twiceArea);
+        return ((cx * k, cy * k), Math.Abs(twiceArea) * 0.5);
     }
 
     static List<(double X, double Y)> StripRamp(List<(double X, double Y)> path, double cutZ)
     {
         if (path.Count < 4) return path;
         // First chord is often the 45° ramp (long XY while arriving at cut Z).
+        // Never peel a real side off a closed loop: small windows and travel-optimised
+        // entry corners have sides in the ramp range, and an opened loop is no longer a
+        // contour, so the hole (or the whole panel) would be classified as a groove.
         var d0 = Dist(path[0], path[1]);
         if (d0 > 8 && d0 < 80)
-            return path.Skip(1).ToList();
+        {
+            var skipped = path.Skip(1).ToList();
+            if (!IsClosed(path) || IsClosed(skipped))
+                return skipped;
+        }
         _ = cutZ;
         return path;
     }

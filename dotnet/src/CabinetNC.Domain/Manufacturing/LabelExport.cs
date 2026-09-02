@@ -134,6 +134,44 @@ public static class LabelExport
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Every <c>LS11='stem'</c> the labeler will request, in program order, duplicates kept.
+    /// The shop label software resolves the stem to <c>&lt;picture dir&gt;\stem.bmp</c>.
+    /// </summary>
+    public static IReadOnlyList<string> Ls11Stems(string? anc)
+    {
+        var stems = new List<string>();
+        if (string.IsNullOrEmpty(anc)) return stems;
+        foreach (var raw in anc.Split('\n'))
+        {
+            var line = raw.Trim();
+            var i = line.IndexOf("LS11=", StringComparison.OrdinalIgnoreCase);
+            if (i < 0) continue;
+            var rest = line[(i + 5)..].Trim();
+            if (rest.Length >= 2 && rest[0] == '\'')
+            {
+                var end = rest.IndexOf('\'', 1);
+                if (end > 1)
+                    stems.Add(rest[1..end]);
+            }
+        }
+        return stems;
+    }
+
+    /// <summary>
+    /// Stems the program asks for that have no bitmap among <paramref name="availableStems"/>
+    /// (file names without <c>.bmp</c>, case-insensitive). Non-empty means the machine would
+    /// block inside <c>M701</c> waiting for a picture that does not exist — the 2026-08-19 incident.
+    /// </summary>
+    public static IReadOnlyList<string> MissingBitmaps(string? anc, IEnumerable<string> availableStems)
+    {
+        var have = new HashSet<string>(availableStems, StringComparer.OrdinalIgnoreCase);
+        return Ls11Stems(anc)
+            .Where(s => !have.Contains(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     public static string WrapCutWithLabelProcess(string cutNc, string pro2)
     {
         var cut = (cutNc ?? "").TrimStart('\uFEFF', '\r', '\n');

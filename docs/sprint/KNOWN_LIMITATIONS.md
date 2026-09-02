@@ -33,18 +33,53 @@ Honest limits — do **not** treat these as done.
 - DXF importer: rectangles / LWPOLYLINE points. **No** full arc tessellation / CAD editor.
 - Cross-project import: Domain `WorkpieceImporter` only (no polished Desktop UI wizard yet).
 
-## Post / tools
+## Post / tools — two posts coexist (audited 2026-09-02)
+
+There are **two** post-processors and they make different promises. Check which one a file
+came from before applying the rules below; the NC header tells you.
+
+### A. Sheet × Tool (generic, `SheetBundleBuilder` → `NcEmitter.OpsToNc` without recipe)
 
 - **Output policy:** one NC file per **Sheet × Tool** (`{job}_S{n}_{Tn}.nc`). Manifest lists programs. DXF remains per sheet.
+- Z0 = **sheet top**; safe Z = `MachineProfile.SafeZMm` (8 mm on `osai_e4_1325`); through = thickness + 0.5.
 - Each single-tool NC header includes ToolId, DiameterMm, FeedXY, FeedZ, RPM, origin note.
 - Real `S`/`F` come from `ToolCatalog` (machine profile is fallback only).
-- **No** automatic `M6` — `IToolChangePost` reserved; default `NullToolChangePost` returns null until shop confirms controller syntax.
+- **No** automatic `M6` — `IToolChangePost` reserved; default `NullToolChangePost` returns null. Operator loads one tool program at a time.
 - Tool IDs ASSUMED T1/T2/T3 presets — shop must confirm magazine numbers.
+
+### B. Troy single-file OSAI (`PostRecipe.TroyDefault()`, `.anc`)
+
+- **One program for the whole sheet**, tools in order drill → tongue → clearance → inner/outer profiles.
+- **Emits `M6 T<n>` + `M3 S<rpm>` + `(DLY,3)` per tool** — this post *does* change tools automatically on the OSAI ATC. The "no M6" statement above does not apply to it.
+- Z0 = **board bottom / spoilboard top** (`Z0IsBoardBottom`); safe Z = 30; profile leave pass at Z 0.5 then through at Z −0.55; bridges leave Z 1.45.
+- Feeds/RPM come from `TroyRecipe` constants via `PostRecipe`, **not** from `ToolCatalog` (plunge 1000, first pass 12000, last pass 20000, tongue 9000, S14500).
+- Since `7f486c3` the leave pass runs over **all** profiles before the through pass, profile order is travel-optimised and the entry corner is chosen per pass; tool changes no longer home XY first. `G0 X0 Y0` remains at program end (`HomeXyAtEnd`).
+- The first rapid after a tool change may move XY and Z together (`G0 X.. Y.. Z30`). The file relies on the OSAI `M6` macro leaving Z at tool-change height; this assumption is written down in `POST_CHANGE_CHECKLIST.md` and must be re-verified if the macro changes.
+- Optional Process 2 (`LS11` / `M701` / `M702`) label pasting is appended by `LabelExport.WrapCutWithLabelProcess`; see `LABELING_REQUIREMENTS.md` for its open items (`E41/E42` retry limit is **not** implemented).
+
+### Both
+
+- `Regression/NcSafetyInvariantTests` enforce for both posts: no rapid XY below safe Z, no rapid ending in the material zone, no cut below the spoilboard allowance (1.0 mm), feeds/RPM only from the recipe or ToolCatalog, vertical plunges at plunge feed, spindle on before cutting, retracted at program end, every cut on a placed panel.
+- `Regression/ReleaseGoldenRegressionTests` lock the normalised NC of three synthetic jobs. Real shop programs go to `dotnet/tests/testdata/regression/shop-anc/` and are replayed by `ShopAncFixtureTests`.
+
+## Reverse / recut (`.anc` → panels)
+
+- `NcReverse` recovers rectangles and polylines from OSAI-Troy programs; arcs are tessellated for inference only.
+- Two-pass (and repeat-pass) profiles are merged by loop geometry (area centroid, area, perimeter), so pass order, entry corner and direction do not matter (fixed 2026-09-02; previously a different entry corner produced a phantom panel).
+- Inner windows are recovered at the finished size (cutter-centre loop expanded by the tool radius). Outer profiles are inset by the radius.
+- A first chord of 8–80 mm is treated as a ramp **only** when removing it does not open a closed loop.
+- Not recovered: pockets as pockets when Z is a blind depth (classified `pocket` only when closed and blind), guillotine cuts as panels, B-side ops.
+
+## Desktop
+
+- `CabinetNC.Desktop` (13k lines, `MainWindow.xaml.cs` ≈ 7.4k) has **no automated tests**. The Windows CI job compiles it; behaviour is verified manually. Plan: `DESKTOP_TESTABILITY_PLAN.md`.
+- Label bitmaps are written flat next to the NC and checked against every `LS11` in the program; the machine picture folder is a library setting (`Labeler.MachinePictureDir`, default `D:\CNC`).
 
 ## UIA / smoke
 
 - Automated UIA smoke can hang in non-interactive agent shells; **do not mark UIA PASS**.
 - `smoke_desktop.py` still targets pre-OmniCam control names; it is **not** an RC gate after the OmniCam UI change. Re-record before treating UIA as coverage.
+- `dotnet/artifacts/smoke-latest.json` and `evaluation-latest.md` date from 2026-07-22 and predate the OmniCam UI; they are not current evidence.
 - Release goldens lock normalized NC only (`Category=GoldenRegression`). Labels, U/V, and UIA are **not** in that pack.
 - Manual path: `docs/sprint/MANUAL_SMOKE_10MIN.md` — items start as `MANUAL PENDING`.
 

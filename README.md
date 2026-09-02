@@ -1,53 +1,70 @@
-# CabinetNC Cut (standalone)
+# CabinetNC Cut / OmniCam
 
-Independent cutting-station product. Repo root: **`d:\project\cabinetnc-cut`**  
-(Not inside `troysfirstfusionproject-main`.)
+Standalone nesting + toolpath cutting station for panel furniture. Consumes Fusion exports
+(`.cnjob` manufacturing snapshot, `cabinetnc.woodjob`, legacy cut-package JSON), nests, plans CAM,
+posts NC for the shop's OSAI router (with Process 2 label pasting), and can reverse a machine
+`.anc` back into panels for recuts.
 
-Consumes **`cabinetnc.woodjob`** (folder / `.zip`, primary) or legacy `cabinetnc.cut-package` JSON from Fusion.
+Runtime: **.NET 10 · WPF · SkiaSharp · Clipper2 · SQLite** under `dotnet/`. Product direction and
+the open decision about scope: [docs/VISION.md](./docs/VISION.md). Working agreement between the
+two repositories (upstream gate / shop fork): [OWNERS.md](./OWNERS.md).
 
-## Run
-
-```bash
-cd d:\project\cabinetnc-cut
-npm install
-npm run dev
-```
-
-Open http://localhost:5177 — **加载示例** or import a woodjob folder (manifest.json + parts.json + …) / legacy `cut_package_*.json`.
-
-Desktop:
+## Run the desktop
 
 ```powershell
-$env:Path="C:\Program Files\dotnet;"+$env:Path
-cd d:\project\cabinetnc-cut\dotnet
+$env:Path = "C:\Program Files\dotnet;" + $env:Path
+cd dotnet
 dotnet run --project src\CabinetNC.Desktop
 ```
 
-## Quality gate / manual testing
+Pack a runnable folder + zip: `powershell -ExecutionPolicy Bypass -File dotnet/scripts/pack.ps1` (see `dotnet/README.md`).
+
+## Quality gates (what "green" means)
 
 ```powershell
-cd d:\project\cabinetnc-cut\dotnet
-python -m pip install -r tests\manual\requirements.txt
-.\scripts\evaluate-product.ps1 -TargetScore 85 -KeepOpen
+cd dotnet
+dotnet test tests/CabinetNC.Domain.Tests         -c Release
+dotnet test tests/CabinetNC.Package.Tests        -c Release
+dotnet test tests/CabinetNC.Infrastructure.Tests -c Release
+dotnet build src/CabinetNC.Desktop               -c Release   # Windows only
 ```
 
-- Evaluation rules: [docs/testing/PRODUCT_EVALUATION_RULES.md](./docs/testing/PRODUCT_EVALUATION_RULES.md)
-- Manual smoke cases: [docs/testing/SMOKE_CASE_LIBRARY.md](./docs/testing/SMOKE_CASE_LIBRARY.md)
-- Latest reports: `dotnet/artifacts/evaluation-latest.md` and `smoke-latest.json`
+| Gate | Where | Catches |
+|------|-------|---------|
+| Unit + behaviour tests | `tests/CabinetNC.*.Tests` | Geometry, CAM safety order, preflight codes, importers, SQLite round-trip |
+| Golden regression | `tests/CabinetNC.Domain.Tests/Regression/ReleaseGoldenRegressionTests` + `tests/testdata/regression/goldens/` | "The NC for this job changed" — diff, then regenerate with `CABINETNC_UPDATE_GOLDENS=1` only if intended |
+| Safety invariants | `Regression/NcSafetyInvariantTests` | Rapid below safe Z, cut past spoilboard allowance, feed/RPM not from recipe or ToolCatalog, spindle off while cutting, tool left low, cut outside a placed panel, `M6` in a Sheet×Tool file |
+| Reverse round-trip | `NcReverseRoundTripTests` | Post output that `NcReverse` can no longer turn back into the same panels |
+| Real shop programs | `ShopAncFixtureTests` over `tests/testdata/regression/shop-anc/*.anc` | Programs the machine actually ran must keep replaying |
 
-## Native kernel (optional)
+CI: `.github/workflows/regression.yml` (Linux, the three suites) and `.github/workflows/windows-desktop.yml`
+(Windows: Desktop + Worker build, suites again). Both must be green before a fork PR merges upstream.
 
-```powershell
-cd native\cabinetnc_core
-.\build.ps1
-npm run check:native
-```
+Before and after any change to machine motion: [docs/sprint/POST_CHANGE_CHECKLIST.md](./docs/sprint/POST_CHANGE_CHECKLIST.md).
+Before cutting: [docs/sprint/MACHINE_DRYRUN_CHECKLIST.md](./docs/sprint/MACHINE_DRYRUN_CHECKLIST.md); log the result in
+[docs/sprint/SHOP_LOG.md](./docs/sprint/SHOP_LOG.md).
 
-## Scope
+## Honest limits
 
-**深度对标 MakerHub 切割站** — 见 [docs/VISION.md](./docs/VISION.md)。
+[docs/sprint/KNOWN_LIMITATIONS.md](./docs/sprint/KNOWN_LIMITATIONS.md) — two post-processors with different Z frames and
+tool-change behaviour, single-face only, grouped-BLF nesting (not NFP), Desktop has no automated tests
+([plan](./docs/sprint/DESKTOP_TESTABILITY_PLAN.md)). Open shop questions: [dual-face questionnaire](./docs/sprint/DUAL_FACE_QUESTIONNAIRE.md),
+[labeling requirements](./docs/sprint/LABELING_REQUIREMENTS.md).
 
-当前 Desktop 已有七模块/五步生产、woodjob 导入、BLF+Clipper2 校验、刀补、
-CAM playhead、NC/DXF/工单/JSON 导出、SQLite 工程与车间库。
+## Layout
 
-残差与诚实完成度见 [docs/MAKERHUB_PARITY_PLAN.md](./docs/MAKERHUB_PARITY_PLAN.md)。
+| Path | Role |
+|------|------|
+| `dotnet/src/CabinetNC.Domain` | Geometry, nesting, CAM, posts (`NcEmitter`, `NcEmitter.Troy`), labels, reverse |
+| `dotnet/src/CabinetNC.FusionPackage` | `.cnjob` / woodjob / cut-package importers |
+| `dotnet/src/CabinetNC.Application` | `ProjectSession` |
+| `dotnet/src/CabinetNC.Infrastructure` | SQLite project store, workshop library (`%LocalAppData%\CabinetNC\library.json`), usage log |
+| `dotnet/src/CabinetNC.Desktop` | WPF shell (see testability plan) |
+| `dotnet/src/CabinetNC.ComputeWorker` | gRPC named-pipe worker (mostly unused today; see VISION decision) |
+| `docs/` | Vision, architecture, sprint acceptance plan, limitations, checklists |
+
+## Archived: Vite prototype
+
+`src/`, `scripts/`, `native/`, `desktop/` and `index.html` are the 2026-07 browser prototype that the .NET
+product was ported from. They have not changed since the 2026-08-04 import. `npm install && npm run check`
+still passes (17 content checks) and is kept only as a reference; do not add product work there.

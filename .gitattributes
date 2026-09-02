@@ -1,0 +1,9 @@
+# Regression goldens are compared byte-for-byte by the golden test runner.
+# Keep them LF on every OS so a Windows checkout with core.autocrlf=true
+# does not turn a passing golden into a spurious CRLF/LF diff.
+dotnet/tests/testdata/** text=auto eol=lf
+docs/sprint/golden/**    text=auto eol=lf
+*.norm                   text eol=lf
+
+# Programs the machine actually ran are evidence: keep every byte, CRLF included.
+dotnet/tests/testdata/regression/shop-anc/*.anc -text

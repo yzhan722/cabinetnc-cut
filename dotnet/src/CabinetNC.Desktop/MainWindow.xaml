@@ -6,21 +6,12 @@
         Icon="pack://application:,,,/Assets/app.ico"
         Width="1360" Height="860"
         MinWidth="1024" MinHeight="680"
-        Background="#F0F0F0"
-        FontFamily="Segoe UI">
+        Background="{StaticResource WindowBrush}"
+        FontFamily="Segoe UI"
+        FontSize="13"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
   <Window.Resources>
-    <Style TargetType="Button">
-      <Setter Property="Padding" Value="10,5" />
-      <Setter Property="Margin" Value="0,0,6,0" />
-      <Setter Property="Background" Value="#FFFFFF" />
-      <Setter Property="BorderBrush" Value="#AAAAAA" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="Cursor" Value="Hand" />
-    </Style>
-    <Style TargetType="TextBox">
-      <Setter Property="Padding" Value="4,3" />
-      <Setter Property="BorderBrush" Value="#AAAAAA" />
-    </Style>
     <Style x:Key="ColSplitter" TargetType="GridSplitter">
       <Setter Property="Width" Value="6" />
       <Setter Property="Background" Value="#C8C8C8" />
@@ -63,35 +54,24 @@
         </Trigger>
       </Style.Triggers>
     </Style>
-    <Style x:Key="OpsRailCalcBtn" TargetType="Button">
+    <Style x:Key="OpsRailCalcBtn" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
       <Setter Property="Margin" Value="0,0,0,6" />
       <Setter Property="Padding" Value="4,8" />
       <Setter Property="FontSize" Value="11" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="HorizontalAlignment" Value="Stretch" />
     </Style>
-    <Style x:Key="ProfModeBtn" TargetType="Button">
+    <Style x:Key="OpsRailCalcPrimaryBtn" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+      <Setter Property="Margin" Value="0,0,0,6" />
+      <Setter Property="Padding" Value="4,8" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+    </Style>
+    <Style x:Key="ProfModeBtn" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
       <Setter Property="Padding" Value="8,7" />
       <Setter Property="Margin" Value="0,0,0,6" />
-      <Setter Property="Background" Value="#FFFFFF" />
-      <Setter Property="BorderBrush" Value="#AAAAAA" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="Cursor" Value="Hand" />
       <Setter Property="FontSize" Value="12" />
       <Setter Property="HorizontalAlignment" Value="Stretch" />
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="Button">
-            <Border Background="{TemplateBinding Background}"
-                    BorderBrush="{TemplateBinding BorderBrush}"
-                    BorderThickness="{TemplateBinding BorderThickness}"
-                    Padding="{TemplateBinding Padding}"
-                    CornerRadius="2">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-            </Border>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
     </Style>
     <Style x:Key="StockChipBtn" TargetType="ToggleButton">
       <Setter Property="Padding" Value="8,3" />
@@ -110,14 +90,39 @@
         </Trigger>
       </Style.Triggers>
     </Style>
+    <!-- Module rail button: HighlightModule() sets Background + a 3px left BorderThickness when active -->
     <Style x:Key="ModuleBtn" TargetType="Button">
-      <Setter Property="Padding" Value="8,12" />
-      <Setter Property="Margin" Value="0,0,0,4" />
+      <Setter Property="Padding" Value="10,11" />
+      <Setter Property="Margin" Value="0,0,0,2" />
       <Setter Property="HorizontalContentAlignment" Value="Left" />
       <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="#5EA1E6" />
       <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="Foreground" Value="#DDDDDD" />
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{StaticResource TextOnDarkBrush}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="0,4,4,0" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="#25385A" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="ModuleIcon" TargetType="TextBlock" BasedOn="{StaticResource IconText}">
+      <Setter Property="FontSize" Value="15" />
+      <Setter Property="Margin" Value="0,0,8,0" />
+      <Setter Property="Foreground" Value="{StaticResource TextOnDarkMutedBrush}" />
     </Style>
     <ContextMenu x:Key="NestPartContextMenu">
       <MenuItem Header="改变材料" Click="OnNestChangeMaterialClick" />
@@ -132,80 +137,146 @@
 
   <DockPanel>
     <!-- Top chrome -->
-    <Border DockPanel.Dock="Top" Padding="12,8" BorderBrush="#B8B8B8" BorderThickness="0,0,0,1" Background="#FAFAFA">
+    <Border DockPanel.Dock="Top" Padding="14,8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Background="{StaticResource ChromeBrush}">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto" />
           <ColumnDefinition Width="*" MinWidth="160" />
           <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
-        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
-          <TextBlock Text="OmniCam" FontSize="15" FontWeight="Bold" />
-          <TextBlock Text="切割站 · 生产加工" FontSize="11" Foreground="#666" />
+        <StackPanel VerticalAlignment="Center" Margin="0,0,20,0">
+          <TextBlock Text="OmniCam" FontSize="16" FontWeight="Bold" Foreground="{StaticResource NavyBrush}" />
+          <TextBlock x:Name="ModuleSubtitle" Text="切割站 · 生产加工" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" />
         </StackPanel>
         <DockPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0" LastChildFill="True">
-          <TextBlock DockPanel.Dock="Left" Text="工程" FontSize="12" Foreground="#555"
+          <TextBlock DockPanel.Dock="Left" Text="工程" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"
                      VerticalAlignment="Center" Margin="0,0,8,0" />
-          <TextBox x:Name="ProjectNameBox" MinWidth="240" MaxWidth="320" Width="280"
+          <TextBox x:Name="ProjectNameBox" MinWidth="240" MaxWidth="360" Width="300"
                    HorizontalAlignment="Left" Padding="8,4" FontSize="13"
                    VerticalContentAlignment="Center"
                    ToolTip="工程名：保存工程默认用这个名字，导出 NC 也会带上"
                    TextChanged="OnProjectNameChanged"
                    LostFocus="OnProjectNameChanged" />
         </DockPanel>
-        <WrapPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
-          <Button Content="打开方案…" Click="OnOpenClick" />
+        <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+          <Button Content="打开方案…" Click="OnOpenClick" Style="{StaticResource PrimaryButton}"
+                  ToolTip="打开 Fusion 导出的 .cnjob / woodjob / cut-package　(Ctrl+O)" />
           <Button Content="加入方案…" Click="OnAddPackageClick"
                   ToolTip="再打开一份或多份 .cnjob，和当前板件并列密排" />
           <Button Content="从 .anc 反推…" Click="OnImportAncClick"
                   ToolTip="从机台 OSAI .anc / .nc 还原板件，供补板重切" />
-          <Button Content="打开工程…" Click="OnOpenProjectClick" />
-          <Button Content="保存工程" Click="OnSaveProjectClick" />
-          <Button Content="使用日志" Click="OnOpenUsageLogsClick" ToolTip="打开 app_usage.jsonl / latest（问题排查）" />
-          <Button Content="Ping" Click="OnPingClick" />
-        </WrapPanel>
+          <Rectangle Width="1" Height="22" Fill="{StaticResource BorderBrush}" Margin="4,0,10,0" />
+          <Button Content="打开工程…" Click="OnOpenProjectClick" ToolTip="打开保存过的工程 (.db)　(Ctrl+Shift+O)" />
+          <Button Content="保存工程" Click="OnSaveProjectClick" ToolTip="保存当前工程　(Ctrl+S)" />
+          <Button x:Name="MoreMenuBtn" AutomationProperties.Name="更多" Click="OnMoreMenuClick" Style="{StaticResource GhostButton}" Margin="2,0,0,0"
+                  ToolTip="诊断与帮助">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="更多" VerticalAlignment="Center" />
+              <TextBlock Text="&#xE70D;" Style="{StaticResource IconText}" FontSize="10" Margin="6,1,0,0" />
+            </StackPanel>
+            <Button.ContextMenu>
+              <ContextMenu Placement="Bottom">
+                <MenuItem Header="使用日志…" Click="OnOpenUsageLogsClick" ToolTip="打开 app_usage.jsonl / latest（问题排查）" />
+                <MenuItem Header="计算引擎自检 (Ping)" Click="OnPingClick" />
+                <Separator />
+                <MenuItem Header="快捷键" Click="OnShortcutsClick" />
+              </ContextMenu>
+            </Button.ContextMenu>
+          </Button>
+        </StackPanel>
       </Grid>
     </Border>
 
-    <Border DockPanel.Dock="Bottom" Padding="12,7" Background="#E8E8E8" BorderBrush="#C8C8C8" BorderThickness="0,1,0,0">
+    <Border x:Name="StatusBar" DockPanel.Dock="Bottom" Padding="12,6" Background="#E9ECF1"
+            BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
       <Grid>
         <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
           <ColumnDefinition Width="*" />
           <ColumnDefinition Width="Auto" />
           <ColumnDefinition Width="Auto" />
           <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
-        <TextBlock x:Name="StatusText" Grid.Column="0" Text="Ready" VerticalAlignment="Center"
-                   TextTrimming="CharacterEllipsis" FontSize="12" Margin="0,0,12,0" />
-        <ProgressBar x:Name="NestProgress" Grid.Column="1" Width="140" Height="10"
-                     Margin="0,0,12,0" Minimum="0" Maximum="100" Value="0"
+        <TextBlock x:Name="StatusGlyph" Grid.Column="0" Text="&#xE946;" Style="{StaticResource IconText}"
+                   FontSize="13" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,8,0" />
+        <TextBlock x:Name="StatusText" Grid.Column="1" Text="就绪" VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis" FontSize="12" Margin="0,0,12,0"
+                   Foreground="{StaticResource TextBrush}" />
+        <TextBlock x:Name="StatusTime" Grid.Column="2" Text="" VerticalAlignment="Center"
+                   FontSize="11" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,14,0" />
+        <ProgressBar x:Name="NestProgress" Grid.Column="3" Width="140" Height="6"
+                     Margin="0,0,14,0" Minimum="0" Maximum="100" Value="0"
                      Visibility="Collapsed" VerticalAlignment="Center" />
-        <TextBlock x:Name="ProjectNameBadge" Grid.Column="2" Text=""
-                   VerticalAlignment="Center" FontSize="12" Foreground="#1A3A5C"
+        <TextBlock x:Name="ProjectNameBadge" Grid.Column="4" Text=""
+                   VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource NavyBrush}"
                    FontWeight="SemiBold" Margin="0,0,14,0" TextTrimming="CharacterEllipsis"
                    MaxWidth="280" />
-        <TextBlock x:Name="WorkerBadge" Grid.Column="3" Text="Worker: —"
-                   VerticalAlignment="Center" FontWeight="SemiBold" FontSize="12" />
+        <TextBlock x:Name="WorkerBadge" Grid.Column="5" Text="计算引擎 · 本地"
+                   VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource TextMutedBrush}"
+                   ToolTip="排版与刀路在本机计算。「更多 → 计算引擎自检」可检查独立 Worker 进程。" />
       </Grid>
     </Border>
 
     <Grid>
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="112" />
+        <ColumnDefinition Width="132" />
         <ColumnDefinition Width="*" />
       </Grid.ColumnDefinitions>
 
       <!-- Left module rail (MakerHub) -->
-      <Border Grid.Column="0" Background="#1B2A41" Padding="6,10">
+      <Border Grid.Column="0" Background="{StaticResource RailBrush}" Padding="0,10,6,10">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel>
-            <Button x:Name="ModProductionBtn" Style="{StaticResource ModuleBtn}" Content="生产加工" Tag="production" Click="OnModuleClick" />
-            <Button x:Name="ModRemnantsBtn" Style="{StaticResource ModuleBtn}" Content="补板库" Tag="remnants" Click="OnModuleClick" />
-            <Button x:Name="ModEquipmentBtn" Style="{StaticResource ModuleBtn}" Content="设备管理" Tag="equipment" Click="OnModuleClick" />
-            <Button x:Name="ModRoutesBtn" Style="{StaticResource ModuleBtn}" Content="路线管理" Tag="routes" Click="OnModuleClick" />
-            <Button x:Name="ModMaterialsBtn" Style="{StaticResource ModuleBtn}" Content="原料管理" Tag="materials" Click="OnModuleClick" />
-            <Button x:Name="ModProcessBtn" Style="{StaticResource ModuleBtn}" Content="工艺模版" Tag="process" Click="OnModuleClick" />
-            <Button x:Name="ModSettingsBtn" Style="{StaticResource ModuleBtn}" Content="参数设置" Tag="settings" Click="OnModuleClick" />
+            <Button x:Name="ModProductionBtn" AutomationProperties.Name="生产加工" Style="{StaticResource ModuleBtn}" Tag="production" Click="OnModuleClick"
+                    ToolTip="载入 → 板材 → 密排 → 刀路 → 导出">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE7F8;" Style="{StaticResource ModuleIcon}" />
+                <TextBlock Text="生产加工" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="ModRemnantsBtn" AutomationProperties.Name="补板库" Style="{StaticResource ModuleBtn}" Tag="remnants" Click="OnModuleClick"
+                    ToolTip="余料登记、从 .anc 反推重切">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE8B7;" Style="{StaticResource ModuleIcon}" />
+                <TextBlock Text="补板库" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="ModEquipmentBtn" AutomationProperties.Name="设备管理" Style="{StaticResource ModuleBtn}" Tag="equipment" Click="OnModuleClick"
+                    ToolTip="机型目录与后置">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE770;" Style="{StaticResource ModuleIcon}" />
+                <TextBlock Text="设备管理" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="ModRoutesBtn" AutomationProperties.Name="路线管理" Style="{StaticResource ModuleBtn}" Tag="routes" Click="OnModuleClick"
+                    ToolTip="工序开关与作业进度">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE9D5;" Style="{StaticResource ModuleIcon}" />
+                <TextBlock Text="路线管理" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="ModMaterialsBtn" AutomationProperties.Name="原料管理" Style="{StaticResource ModuleBtn}" Tag="materials" Click="OnModuleClick"
+                    ToolTip="车间材料库">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE8F1;" Style="{StaticResource ModuleIcon}" />
+                <TextBlock Text="原料管理" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="ModProcessBtn" AutomationProperties.Name="工艺模版" Style="{StaticResource ModuleBtn}" Tag="process" Click="OnModuleClick"
+                    ToolTip="刀具库与进给模板">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE90F;" Style="{StaticResource ModuleIcon}" />
+                <TextBlock Text="工艺模版" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="ModSettingsBtn" AutomationProperties.Name="参数设置" Style="{StaticResource ModuleBtn}" Tag="settings" Click="OnModuleClick"
+                    ToolTip="排版默认值、机床标签目录">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE713;" Style="{StaticResource ModuleIcon}" />
+                <TextBlock Text="参数设置" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
           </StackPanel>
         </ScrollViewer>
       </Border>
@@ -260,20 +331,40 @@
               <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
                 <StackPanel x:Name="WfDots" Orientation="Horizontal" Margin="0,0,10,0" VerticalAlignment="Center" />
                 <Button x:Name="OneClickExportBtn" Content="一键导出" Click="OnOneClickExportClick" IsEnabled="False"
-                        Padding="12,6" Visibility="Collapsed" />
+                        Style="{StaticResource PrimaryButton}" Padding="12,5" MinHeight="28" Visibility="Collapsed"
+                        ToolTip="按 Sheet×Tool 导出 NC + 每张大板 DXF/manifest + BOM/标签　(Ctrl+E)" />
               </StackPanel>
             </Grid>
           </Border>
 
-          <Border DockPanel.Dock="Top" Background="#FAFAFA" Padding="10,6" BorderBrush="#CCCCCC" BorderThickness="0,0,0,1">
+          <Border DockPanel.Dock="Top" Background="{StaticResource ChromeBrush}" Padding="12,7" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
             <Grid>
-              <TextBlock x:Name="StageHint" Text="先载入 woodjob / cut-package 方案" Foreground="#666" FontSize="12" VerticalAlignment="Center" />
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="&#xE946;" Style="{StaticResource IconText}" FontSize="13"
+                           Foreground="{StaticResource AccentBrush}" Margin="0,0,8,0" />
+                <TextBlock x:Name="StageHint" Text="先载入 woodjob / cut-package 方案"
+                           Foreground="{StaticResource TextBrush}" FontSize="13" VerticalAlignment="Center" />
+              </StackPanel>
               <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <CheckBox x:Name="AllowOverlapChk" Content="允许重叠" VerticalAlignment="Center" Margin="0,0,12,0"
                           Visibility="Collapsed" FontSize="12" />
-                <Button x:Name="LockPlaceBtn" Content="锁定摆位" Click="OnLockPlaceClick" Visibility="Collapsed" Padding="8,3" />
+                <Button x:Name="LockPlaceBtn" Content="锁定摆位" Click="OnLockPlaceClick" Visibility="Collapsed" Padding="10,3" MinHeight="26" />
               </StackPanel>
             </Grid>
+          </Border>
+
+          <!-- Stale banner: geometry changed after nest/CAM -->
+          <Border x:Name="StaleBanner" DockPanel.Dock="Top" Style="{StaticResource InfoBar}" Visibility="Collapsed">
+            <DockPanel>
+              <Button DockPanel.Dock="Right" Content="重新密排" Click="OnStaleRenestClick"
+                      Style="{StaticResource PrimaryButton}" Padding="12,4" MinHeight="26" Margin="12,0,0,0" />
+              <Button x:Name="StaleGotoNestBtn" DockPanel.Dock="Right" Content="去密排页" Click="OnStaleGotoNestClick" Padding="10,4" MinHeight="26" Margin="8,0,0,0" />
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="&#xE7BA;" Style="{StaticResource IconText}" Foreground="{StaticResource WarningBrush}" Margin="0,0,8,0" />
+                <TextBlock x:Name="StaleBannerText" Text="板件已修改，之前的密排与刀路已作废；导出前需要重新密排并生成刀路。"
+                           Foreground="#7C3A00" FontSize="13" VerticalAlignment="Center" TextWrapping="Wrap" />
+              </StackPanel>
+            </DockPanel>
           </Border>
 
           <Grid>
@@ -475,9 +566,13 @@
                 <Grid x:Name="OutSimChrome" Visibility="Collapsed">
                   <Border VerticalAlignment="Top" Background="#F7F7F7" BorderBrush="#DDDDDD" BorderThickness="0,0,0,1" Padding="8,5">
                     <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
                       <TextBlock x:Name="OutSimTitle" Text="G-code 切割仿真" VerticalAlignment="Center"
-                                 FontSize="12" FontWeight="SemiBold" />
-                      <TextBlock x:Name="OutSimMeta" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                 FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,0,12,0" />
+                      <TextBlock x:Name="OutSimMeta" Grid.Column="1" VerticalAlignment="Center"
                                  FontSize="11" Foreground="#666"
                                  Text="虚线空程 · 线宽=刀径 · 橙=留 0.5 · 蓝=通切" />
                     </Grid>
@@ -514,27 +609,60 @@
                            FontSize="14" Foreground="#888" />
                 <!-- Nest awaiting initial nest -->
                 <Border x:Name="NestAwaitingState" Background="#FFFFFF" Visibility="Collapsed">
-                  <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="420">
-                    <TextBlock Text="尚未生成密排" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,8" />
-                    <TextBlock Text="请先到「板材与设备」确认各材料尺寸与间距，再点「初始密排」。"
-                               TextWrapping="Wrap" TextAlignment="Center" Foreground="#666" Margin="0,0,0,16" FontSize="12" />
-                    <Button Content="前往板材与设备" Click="OnGoStockForNestClick"
-                            Padding="14,8" HorizontalAlignment="Center" FontWeight="SemiBold" />
+                  <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="440">
+                    <TextBlock Text="&#xE8A9;" Style="{StaticResource IconText}" FontSize="36" Foreground="{StaticResource TextMutedBrush}"
+                               HorizontalAlignment="Center" Margin="0,0,0,12" />
+                    <TextBlock Text="尚未生成密排" Style="{StaticResource H1Text}" HorizontalAlignment="Center" Margin="0,0,0,8" />
+                    <TextBlock Text="先到「2 板材与设备」确认每种板材的大板尺寸与间距，再点「初始密排」。"
+                               Style="{StaticResource SecondaryText}" TextAlignment="Center" Margin="0,0,0,18" FontSize="13" />
+                    <Button Content="前往板材与设备" Click="OnGoStockForNestClick" Style="{StaticResource PrimaryButton}"
+                            Padding="16,9" HorizontalAlignment="Center" />
+                  </StackPanel>
+                </Border>
+                <!-- Ops awaiting nest -->
+                <Border x:Name="OpsAwaitingState" Background="#FFFFFF" Visibility="Collapsed">
+                  <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="440">
+                    <TextBlock Text="&#xE9F5;" Style="{StaticResource IconText}" FontSize="36" Foreground="{StaticResource TextMutedBrush}"
+                               HorizontalAlignment="Center" Margin="0,0,0,12" />
+                    <TextBlock Text="刀路需要先有密排" Style="{StaticResource H1Text}" HorizontalAlignment="Center" Margin="0,0,0,8" />
+                    <TextBlock Text="刀路按大板上每块板的实际位置计算。请先完成「3 密排」，再回到这里选机型并计算。"
+                               Style="{StaticResource SecondaryText}" TextAlignment="Center" Margin="0,0,0,18" FontSize="13" />
+                    <Button Content="前往密排" Click="OnStaleGotoNestClick" Style="{StaticResource PrimaryButton}"
+                            Padding="16,9" HorizontalAlignment="Center" />
+                  </StackPanel>
+                </Border>
+                <!-- Out awaiting ops -->
+                <Border x:Name="OutAwaitingState" Background="#FFFFFF" Visibility="Collapsed">
+                  <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="440">
+                    <TextBlock Text="&#xE896;" Style="{StaticResource IconText}" FontSize="36" Foreground="{StaticResource TextMutedBrush}"
+                               HorizontalAlignment="Center" Margin="0,0,0,12" />
+                    <TextBlock Text="还没有可导出的刀路" Style="{StaticResource H1Text}" HorizontalAlignment="Center" Margin="0,0,0,8" />
+                    <TextBlock x:Name="OutAwaitingText" Text="到「4 刀路与加工档」点「计算全部」生成刀路后，这里会按大板列出可导出的程序文件。"
+                               Style="{StaticResource SecondaryText}" TextAlignment="Center" Margin="0,0,0,18" FontSize="13" />
+                    <Button x:Name="OutAwaitingBtn" Content="前往刀路" Click="OnGotoOpsClick" Style="{StaticResource PrimaryButton}"
+                            Padding="16,9" HorizontalAlignment="Center" />
                   </StackPanel>
                 </Border>
                 <!-- Empty state (no package) -->
                 <Border x:Name="EmptyState" Background="#FFFFFF" Visibility="Visible">
-                  <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="420">
-                    <TextBlock Text="尚未载入方案" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,8" />
-                    <TextBlock Text="打开 Fusion 导出的 .cnjob（manufacturing-snapshot），再进入板材 / 密排 / 加工档。也支持 woodjob / cut-package，或从机台 .anc 反推补板。"
-                               TextWrapping="Wrap" TextAlignment="Center" Foreground="#666" Margin="0,0,0,16" FontSize="12" />
+                  <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="480">
+                    <TextBlock Text="&#xE8B7;" Style="{StaticResource IconText}" FontSize="36" Foreground="{StaticResource TextMutedBrush}"
+                               HorizontalAlignment="Center" Margin="0,0,0,12" />
+                    <TextBlock Text="从一份方案开始" Style="{StaticResource H1Text}" HorizontalAlignment="Center" Margin="0,0,0,8" />
+                    <TextBlock Text="打开 Fusion 导出的 .cnjob，OmniCam 会带你走完板材 → 密排 → 刀路 → 导出五步。也支持 woodjob / cut-package，或直接从机台 .anc 反推补板重切。"
+                               Style="{StaticResource SecondaryText}" TextAlignment="Center" Margin="0,0,0,18" FontSize="13" />
                     <WrapPanel HorizontalAlignment="Center">
-                      <Button x:Name="EmptyLoadBtn" Content="载入方案…" Click="OnOpenClick" Padding="14,8" Margin="0,0,8,0" />
-                      <Button x:Name="EmptyAncBtn" Content="从 .anc 反推…" Click="OnImportAncClick" Padding="14,8" Margin="0,0,8,0" />
-                      <Button x:Name="EmptyDemoBtn" Content="打开示例" Click="OnLoadDemoClick" Padding="14,8" />
+                      <Button x:Name="EmptyLoadBtn" Content="打开方案…" Click="OnOpenClick" Style="{StaticResource PrimaryButton}" Padding="16,9" Margin="0,0,8,0" />
+                      <Button x:Name="EmptyAncBtn" Content="从 .anc 反推…" Click="OnImportAncClick" Padding="14,9" Margin="0,0,8,0" />
+                      <Button x:Name="EmptyDemoBtn" Content="打开示例" Click="OnLoadDemoClick" Style="{StaticResource GhostButton}" Padding="14,9" />
                     </WrapPanel>
+                    <TextBlock Text="快捷键：Ctrl+O 打开方案 · Ctrl+S 保存工程 · Ctrl+1…5 切换步骤" Style="{StaticResource CaptionText}"
+                               TextAlignment="Center" Margin="0,18,0,0" />
                   </StackPanel>
                 </Border>
+                <!-- Non-blocking notifications -->
+                <StackPanel x:Name="ToastHost" HorizontalAlignment="Right" VerticalAlignment="Top"
+                            Margin="0,12,14,0" Width="360" Panel.ZIndex="50" IsHitTestVisible="True" />
               </Grid>
             </Border>
 
@@ -619,10 +747,11 @@
                            Text="载入方案后，这里会按板材种类列出参数框。"
                            TextWrapping="Wrap" Foreground="#888" FontSize="12" Margin="0,8,0,0" />
                 <Button x:Name="StockInitialNestBtn" DockPanel.Dock="Bottom"
-                        Content="初始密排" Click="OnStockInitialNestClick"
-                        Margin="0,10,0,0" Padding="12,8" FontWeight="SemiBold"
+                        Content="初始密排 →" Click="OnStockInitialNestClick"
+                        Style="{StaticResource PrimaryButton}"
+                        Margin="0,10,0,0" Padding="12,9"
                         HorizontalAlignment="Stretch"
-                        ToolTip="按当前各板材尺寸生成第一版密排，再进入密排页微调" />
+                        ToolTip="按当前各板材尺寸生成第一版密排，然后自动进入「3 密排」微调" />
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                   <ItemsControl x:Name="StockMaterialCards">
                     <ItemsControl.ItemTemplate>
@@ -751,7 +880,9 @@
               <DockPanel>
                 <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
                   <Button x:Name="NestApplyBtn" Content="重新密排" Click="OnApplyNestSettingsClick"
-                          HorizontalAlignment="Stretch" Padding="10,8" FontWeight="SemiBold" Margin="0,0,0,6" />
+                          Style="{StaticResource PrimaryButton}"
+                          HorizontalAlignment="Stretch" Padding="10,9" Margin="0,0,0,6"
+                          ToolTip="用右侧参数对全部大板重新排版；已锁定的摆位保留" />
                   <Button x:Name="NestStabilizeBtn" Content="本张密排优化" Click="OnNestStabilizeClick"
                           HorizontalAlignment="Stretch" Padding="8,6" Margin="0,0,0,4"
                           ToolTip="二次整理当前大板：只把特别窄的条子（短边小于约 100mm）从宽度边缘整列调到中间。150mm 宽的竖条贴边没问题，不动。" />
@@ -918,8 +1049,8 @@
                               ToolTip="只算当前大板，不重新密排">
                         <TextBlock Text="计算当前板材" TextWrapping="Wrap" TextAlignment="Center" FontSize="11" />
                       </Button>
-                      <Button Style="{StaticResource OpsRailCalcBtn}" Click="OnOpsCalculateAllClick"
-                              ToolTip="算全部大板，不重新密排">
+                      <Button Style="{StaticResource OpsRailCalcPrimaryBtn}" Click="OnOpsCalculateAllClick"
+                              ToolTip="算全部大板，不重新密排；完成后可进入「5 导出」">
                         <TextBlock Text="计算全部" TextWrapping="Wrap" TextAlignment="Center" FontSize="11" />
                       </Button>
                     </StackPanel>
@@ -1089,7 +1220,9 @@
                           Padding="8,6" Margin="0,0,0,6" IsEnabled="False"
                           ToolTip="导出选中文件同一板材种类的全部大板，例如全部 15mm 匣体" />
                   <Button x:Name="OutExportAllBtn" Content="导出全部" Click="OnExportAllClick"
-                          Padding="8,6" Margin="0,0,0,10" IsEnabled="False" />
+                          Style="{StaticResource PrimaryButton}"
+                          Padding="8,8" Margin="0,0,0,10" IsEnabled="False"
+                          ToolTip="导出所有大板的程序文件与标签 BMP 到一个目录" />
                   <Button x:Name="OutExportDxfSheetBtn" Content="单独导出这张大板 DXF"
                           Click="OnExportDxfSheetClick"
                           Padding="8,6" Margin="0,0,0,6" IsEnabled="False"
@@ -1120,12 +1253,12 @@
         </DockPanel>
 
         <!-- ===== 补板库 ===== -->
-        <Border x:Name="RemnantsHost" Background="#F7F7F7" Visibility="Collapsed" Padding="16">
+        <Border x:Name="RemnantsHost" Background="{StaticResource PanelBrush}" Visibility="Collapsed" Padding="20,16">
           <DockPanel>
             <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
-              <TextBlock Text="补板库" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4" />
+              <TextBlock Text="补板库" Style="{StaticResource H1Text}" Margin="0,0,0,4" />
               <TextBlock Text="从机台 .anc 反推出板件后，勾选要重切的块（数量改为 1），再回生产加工密排导出。"
-                         TextWrapping="Wrap" Foreground="#666" FontSize="12" />
+                         Style="{StaticResource SecondaryText}" />
               <TextBlock x:Name="RemnantsMeta" Margin="0,8,0,0" FontFamily="Consolas" FontSize="12" />
               <TextBlock Text="重切板件" FontWeight="SemiBold" Margin="0,12,0,4" />
               <ListBox x:Name="RecutPanelList" MinHeight="80" MaxHeight="180" FontSize="12" Margin="0,0,0,6">
@@ -1167,12 +1300,12 @@
         </Border>
 
         <!-- ===== 设备管理 ===== -->
-        <Border x:Name="EquipmentHost" Background="#F7F7F7" Visibility="Collapsed" Padding="16">
+        <Border x:Name="EquipmentHost" Background="{StaticResource PanelBrush}" Visibility="Collapsed" Padding="20,16">
           <DockPanel>
             <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
-              <TextBlock Text="设备管理" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4" />
+              <TextBlock Text="设备管理" Style="{StaticResource H1Text}" Margin="0,0,0,4" />
               <TextBlock Text="后置机型目录。选中后用于 Nest / NC 输出。"
-                         TextWrapping="Wrap" Foreground="#666" FontSize="12" />
+                         Style="{StaticResource SecondaryText}" />
             </StackPanel>
             <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
               <TextBlock Text="当前机型" FontSize="11" Foreground="#555" />
@@ -1194,12 +1327,12 @@
         </Border>
 
         <!-- ===== 路线管理 ===== -->
-        <Border x:Name="RoutesHost" Background="#F7F7F7" Visibility="Collapsed" Padding="16">
+        <Border x:Name="RoutesHost" Background="{StaticResource PanelBrush}" Visibility="Collapsed" Padding="20,16">
           <ScrollViewer>
             <StackPanel>
-              <TextBlock Text="路线管理" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4" />
+              <TextBlock Text="路线管理" Style="{StaticResource H1Text}" Margin="0,0,0,4" />
               <TextBlock Text="生产路线 = 载入→板材设备→密排→刀路加工档→导出。下列为当前作业进度与机型工序开关。"
-                         TextWrapping="Wrap" Foreground="#666" FontSize="12" Margin="0,0,0,12" />
+                         Style="{StaticResource SecondaryText}" Margin="0,0,0,12" />
               <TextBlock x:Name="RoutesMeta" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,12" />
               <TextBlock Text="工序开关（当前机型）" FontWeight="SemiBold" Margin="0,0,0,6" />
               <CheckBox x:Name="RouteTongueChk" Content="半槽 T1（插 tongue）" Margin="0,0,0,4" Click="OnCamStrategyEnableClick" />
@@ -1214,12 +1347,12 @@
         </Border>
 
         <!-- ===== 原料管理 ===== -->
-        <Border x:Name="MaterialsHost" Background="#F7F7F7" Visibility="Collapsed" Padding="16">
+        <Border x:Name="MaterialsHost" Background="{StaticResource PanelBrush}" Visibility="Collapsed" Padding="20,16">
           <DockPanel>
             <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-              <TextBlock Text="原料管理" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4" />
+              <TextBlock Text="原料管理" Style="{StaticResource H1Text}" Margin="0,0,0,4" />
               <TextBlock Text="车间材料库 + 当前方案板材。库持久化到 %LocalAppData%/CabinetNC/library.json。"
-                         TextWrapping="Wrap" Foreground="#666" FontSize="12" />
+                         Style="{StaticResource SecondaryText}" />
               <TextBlock x:Name="MaterialsMeta" Margin="0,8,0,0" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" />
             </StackPanel>
             <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
@@ -1246,12 +1379,12 @@
         </Border>
 
         <!-- ===== 工艺模版 ===== -->
-        <Border x:Name="ProcessHost" Background="#F7F7F7" Visibility="Collapsed" Padding="16">
+        <Border x:Name="ProcessHost" Background="{StaticResource PanelBrush}" Visibility="Collapsed" Padding="20,16">
           <DockPanel>
             <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-              <TextBlock Text="工艺模版" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4" />
+              <TextBlock Text="工艺模版" Style="{StaticResource H1Text}" Margin="0,0,0,4" />
               <TextBlock Text="刀具库与进给模板。可按机型生成默认刀，并查看当前作业工序。"
-                         TextWrapping="Wrap" Foreground="#666" FontSize="12" />
+                         Style="{StaticResource SecondaryText}" />
               <TextBlock x:Name="ProcessMeta" Margin="0,8,0,0" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" />
             </StackPanel>
             <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
@@ -1294,26 +1427,55 @@
         </Border>
 
         <!-- ===== 参数设置 ===== -->
-        <Border x:Name="SettingsHost" Background="#F7F7F7" Visibility="Collapsed" Padding="16">
+        <Border x:Name="SettingsHost" Background="{StaticResource PanelBrush}" Visibility="Collapsed" Padding="20,16">
           <ScrollViewer>
-            <StackPanel MaxWidth="520" HorizontalAlignment="Left">
-              <TextBlock Text="参数设置" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4" />
+            <StackPanel MaxWidth="640" HorizontalAlignment="Left">
+              <TextBlock Text="参数设置" Style="{StaticResource H1Text}" Margin="0,0,0,4" />
               <TextBlock Text="排版默认值与车间偏好。保存后写入 library.json；可一键应用到当前生产加工。"
-                         TextWrapping="Wrap" Foreground="#666" FontSize="12" Margin="0,0,0,12" />
-              <TextBlock Text="默认板宽 mm" FontSize="11" Foreground="#555" />
-              <TextBox x:Name="SetSheetWBox" Margin="0,0,0,8" />
-              <TextBlock Text="默认板长 mm" FontSize="11" Foreground="#555" />
-              <TextBox x:Name="SetSheetLBox" Margin="0,0,0,8" />
-              <TextBlock Text="默认间距 mm" FontSize="11" Foreground="#555" />
-              <TextBox x:Name="SetSpacingBox" Margin="0,0,0,8" />
-              <TextBlock Text="默认边距 mm" FontSize="11" Foreground="#555" />
-              <TextBox x:Name="SetBorderBox" Margin="0,0,0,8" />
-              <CheckBox x:Name="SetAllowRotChk" Content="默认允许旋转排版" Margin="0,0,0,12" />
-              <TextBlock x:Name="SettingsMeta" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,12" />
+                         Style="{StaticResource SecondaryText}" Margin="0,0,0,14" />
+
+              <Border Style="{StaticResource Card}">
+                <StackPanel>
+                  <TextBlock Text="排版默认值" Style="{StaticResource H2Text}" Margin="0,0,0,8" />
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                      <TextBlock Text="默认板宽 mm" Style="{StaticResource FieldLabel}" />
+                      <TextBox x:Name="SetSheetWBox" Margin="0,0,0,8" />
+                      <TextBlock Text="默认间距 mm" Style="{StaticResource FieldLabel}" />
+                      <TextBox x:Name="SetSpacingBox" Margin="0,0,0,8" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                      <TextBlock Text="默认板长 mm" Style="{StaticResource FieldLabel}" />
+                      <TextBox x:Name="SetSheetLBox" Margin="0,0,0,8" />
+                      <TextBlock Text="默认边距 mm" Style="{StaticResource FieldLabel}" />
+                      <TextBox x:Name="SetBorderBox" Margin="0,0,0,8" />
+                    </StackPanel>
+                  </Grid>
+                  <CheckBox x:Name="SetAllowRotChk" Content="默认允许旋转排版" Margin="0,2,0,0" />
+                </StackPanel>
+              </Border>
+
+              <Border Style="{StaticResource Card}">
+                <StackPanel>
+                  <TextBlock Text="机床与贴标" Style="{StaticResource H2Text}" Margin="0,0,0,4" />
+                  <TextBlock Text="导出的标签 BMP 必须直接放在贴标软件的「Print picture path」目录里（不能有子目录）。这里填机床电脑上的那个目录，导出提示会照此显示。"
+                             Style="{StaticResource SecondaryText}" Margin="0,0,0,8" />
+                  <TextBlock Text="机床标签图片目录" Style="{StaticResource FieldLabel}" />
+                  <TextBox x:Name="SetLabelDirBox" Margin="0,0,0,4" ToolTip="现场默认 D:\CNC（2026-08-19 事故复盘确认）" />
+                  <TextBlock Text="OSAI 单文件后置：Z0 = 板底 / 垫板上表面，安全高 30，留皮 0.5，穿透 −0.55，每把刀 M6 自动换刀。这些数值在「4 刀路与加工档」右侧可按作业调整。"
+                             Style="{StaticResource CaptionText}" Margin="0,4,0,0" />
+                </StackPanel>
+              </Border>
+
+              <TextBlock x:Name="SettingsMeta" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
+                         Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4,0,12" />
               <WrapPanel>
-                <Button Content="保存参数" Click="OnSettingsSaveClick" />
+                <Button Content="保存参数" Click="OnSettingsSaveClick" Style="{StaticResource PrimaryButton}" />
                 <Button Content="应用到生产加工" Click="OnSettingsApplyClick" />
-                <Button Content="恢复默认" Click="OnSettingsResetClick" />
+                <Button Content="恢复默认" Click="OnSettingsResetClick" Style="{StaticResource GhostButton}" />
               </WrapPanel>
             </StackPanel>
           </ScrollViewer>
