@@ -131,7 +131,7 @@ public static class TroyPass
         TroyPassKind.UnclassifiedGroove => "未标 tongue，按槽宽选刀。点开可改成半槽",
         TroyPassKind.Clearance => "口袋 / 铰杯 / 其它槽 · 按短边选刀 · F12000",
         TroyPassKind.ProfileFirst => "留皮 0.5mm · F12000",
-        TroyPassKind.ProfileLast => "切穿 −0.55 · F20000 · 过桥",
+        TroyPassKind.ProfileLast => "切穿 −0.55 · F20000 · 过桥留 0.5",
         TroyPassKind.Drilling => "孔",
         _ => "",
     };

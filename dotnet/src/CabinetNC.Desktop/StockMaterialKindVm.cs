@@ -1,8 +1,42 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using CabinetNC.Domain.Nesting;
 
 namespace CabinetNC.Desktop;
+
+public sealed record GrainChoice(string Key, string Label);
+
+public sealed class StockPanelGrainRow : INotifyPropertyChanged
+{
+    string _grainKey = "none";
+
+    public required string PanelId { get; init; }
+    public required string DisplayName { get; init; }
+    public IReadOnlyList<GrainChoice> GrainChoices { get; } =
+    [
+        new("none", "无"),
+        new("X", "X"),
+        new("Y", "Y"),
+    ];
+
+    public string GrainKey
+    {
+        get => _grainKey;
+        set
+        {
+            var next = string.IsNullOrWhiteSpace(value) ? "none" : value;
+            if (_grainKey == next) return;
+            _grainKey = next;
+            OnPropertyChanged();
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    void OnPropertyChanged([CallerMemberName] string? name = null) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}
 
 /// <summary>Editable stock parameters for one cnjob material kind (stock-stage card).</summary>
 public sealed class StockMaterialKindVm : INotifyPropertyChanged
@@ -12,6 +46,7 @@ public sealed class StockMaterialKindVm : INotifyPropertyChanged
     string _spacingMmText = "12";
     string _borderMmText = "15";
     bool _allowRotate90 = true;
+    string _sheetGrainKey = "none";
     bool _allowPartsInPart;
     bool _useLeftoverPieces;
     string _leftoverXMmText = "";
@@ -94,6 +129,65 @@ public sealed class StockMaterialKindVm : INotifyPropertyChanged
             OnPropertyChanged();
         }
     }
+
+    public IReadOnlyList<GrainChoice> SheetGrainChoices { get; } =
+    [
+        new("none", "无纹理"),
+        new("length", "沿长度"),
+        new("width", "沿宽度"),
+    ];
+
+    public string SheetGrainKey
+    {
+        get => _sheetGrainKey;
+        set
+        {
+            var next = string.IsNullOrWhiteSpace(value) ? "none" : value;
+            if (_sheetGrainKey == next) return;
+            _sheetGrainKey = next;
+            OnPropertyChanged();
+        }
+    }
+
+    public SheetGrainKind SheetGrain => GrainAlign.ParseSheet(_sheetGrainKey);
+
+    public List<StockPanelGrainRow> PanelGrains { get; set; } = [];
+
+    bool _panelGrainsExpanded;
+
+    public bool PanelGrainsExpanded
+    {
+        get => _panelGrainsExpanded;
+        set
+        {
+            if (_panelGrainsExpanded == value) return;
+            _panelGrainsExpanded = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string PanelGrainHeader
+    {
+        get
+        {
+            if (PanelGrains.Count == 0) return "板件木纹";
+            var x = 0;
+            var y = 0;
+            var none = 0;
+            foreach (var row in PanelGrains)
+            {
+                if (row.GrainKey == "X") x++;
+                else if (row.GrainKey == "Y") y++;
+                else none++;
+            }
+            if (x == PanelGrains.Count) return $"板件木纹（{x} 块 X）";
+            if (y == PanelGrains.Count) return $"板件木纹（{y} 块 Y）";
+            if (none == PanelGrains.Count) return $"板件木纹（{none} 无）";
+            return $"板件木纹（{PanelGrains.Count}）";
+        }
+    }
+
+    public void NotifyPanelGrainHeader() => OnPropertyChanged(nameof(PanelGrainHeader));
 
     public bool AllowPartsInPart
     {

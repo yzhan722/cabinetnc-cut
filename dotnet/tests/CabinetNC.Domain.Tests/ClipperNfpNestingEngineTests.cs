@@ -33,7 +33,7 @@ public class ClipperNfpNestingEngineTests
             [new NestSheetSpec { WidthMm = 1220, LengthMm = 2440, BorderMm = 10, Material = "oak", ThicknessMm = 18 }],
             GroupedBlfNester.SizeOfOutline);
 
-        Assert.Equal("clipper_nfp_v0", result.Engine);
+        Assert.Equal("clipper_nfp_v1", result.Engine);
         Assert.Equal(panels.Count, result.Placements.Count);
         Assert.Empty(result.Unplaced);
         Assert.Empty(NestValidator.FindPolygonCollisions(panels, result.Placements, 8));
@@ -98,9 +98,29 @@ public class ClipperNfpNestingEngineTests
             AdvancedTimeout = TimeSpan.FromSeconds(10),
         });
 
-        Assert.Equal("clipper_nfp_v0", result.Engine);
-        Assert.Equal("clipper_nfp_v0", log.SelectedEngine);
+        Assert.Equal("clipper_nfp_v1", result.Engine);
+        Assert.Equal("clipper_nfp_v1", log.SelectedEngine);
         Assert.Equal(2, result.Placements.Count);
+    }
+
+    [Fact]
+    public void Engine_fits_two_L_on_sheet_too_small_for_two_aabbs()
+    {
+        // 280×280 usable 264×264; two 180×180 AABBs cannot sit side-by-side or stacked.
+        var panels = new[] { L("L1"), L("L2") };
+        var stock = new NestSheetSpec
+        {
+            WidthMm = 280, LengthMm = 280, BorderMm = 8,
+            Material = "oak", ThicknessMm = 18,
+        };
+        var settings = new NestSettings { MarginMm = 8, ClearanceMm = 4, AllowRotation = true };
+
+        var nfp = new ClipperNfpNestingEngine().Pack(panels, settings, [stock], GroupedBlfNester.SizeOfOutline);
+        var blf = new BlfNestingEngine().Pack(panels, settings, [stock], GroupedBlfNester.SizeOfOutline);
+
+        Assert.Empty(NestValidator.FindPolygonCollisions(panels, nfp.Placements, 4));
+        Assert.True(nfp.Placements.Count >= blf.Placements.Count);
+        Assert.True(nfp.SheetCount <= blf.SheetCount);
     }
 
     static Panel Rect(string id, double w, double h) => new()

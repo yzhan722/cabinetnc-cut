@@ -1,6 +1,7 @@
 namespace CabinetNC.Domain.Manufacturing;
 
 using CabinetNC.Domain.Geometry;
+using CabinetNC.Domain.Nesting;
 using CabinetNC.Domain.Parts;
 
 /// <summary>
@@ -32,7 +33,10 @@ public static class GrooveClear
         return [];
     }
 
-    public static PocketClearer.PocketClearResult? TryClear(PanelFeature f, double toolDiameterMm)
+    public static PocketClearer.PocketClearResult? TryClear(
+        PanelFeature f,
+        double toolDiameterMm,
+        LocalBounds? panelBounds = null)
     {
         var width = ResolveWidthMm(f);
         if (!NeedsClear(width, toolDiameterMm))
@@ -52,6 +56,7 @@ public static class GrooveClear
             Outline = outline,
             ToolDiameterMm = toolDiameterMm,
             OnionSkinMm = OnionSkinMm,
+            PanelBounds = panelBounds,
         });
     }
 }

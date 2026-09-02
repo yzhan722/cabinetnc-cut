@@ -218,6 +218,7 @@ public static class GroupedBlfNester
                 : $"{s.Label}|{key.Material}_{key.ThicknessMm:0.##}",
             Material = key.Material,
             ThicknessMm = key.ThicknessMm,
+            SheetGrain = s.SheetGrain,
         };
 
     static NestSheetSpec CloneTemplate(NestSheetSpec s, NestGroupKey key) =>
@@ -237,6 +238,7 @@ public static class GroupedBlfNester
             Label = s.Label,
             Material = key.Material,
             ThicknessMm = key.ThicknessMm,
+            SheetGrain = s.SheetGrain,
         }, key);
 
     public static (double w, double h) SizeOfOutline(Panel panel)

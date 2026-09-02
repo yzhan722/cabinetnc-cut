@@ -60,7 +60,9 @@ public static class ClearanceToolPick
         return pts;
     }
 
-    public static double ShortSideMm(PanelFeature f)
+    public static double ShortSideMm(
+        PanelFeature f,
+        IReadOnlyList<IReadOnlyList<Point2>>? islandHoles = null)
     {
         if (PanelEdit.IsPocket(f) || (f.Kind.Contains("pocket", StringComparison.OrdinalIgnoreCase)
                 && (f.Path is { Count: >= 3 } || f.Profile is { Count: >= 3 })))
@@ -68,7 +70,7 @@ public static class ClearanceToolPick
             var ring = f.Path is { Count: >= 3 } ? f.Path : f.Profile;
             if (ring is { Count: >= 3 })
             {
-                var band = RebateBandMm(ring, f.Holes);
+                var band = RebateBandMm(ring, islandHoles ?? f.Holes);
                 if (band > 1e-9)
                     return band;
                 return ShortSpan(ring);
@@ -90,12 +92,13 @@ public static class ClearanceToolPick
     public static string Pick(
         PanelFeature f,
         double largeMinShortMm = LargeMinShortMm,
-        double smallToolDiaMm = TroyRecipe.TongueDiameterMm)
+        double smallToolDiaMm = TroyRecipe.TongueDiameterMm,
+        IReadOnlyList<IReadOnlyList<Point2>>? islandHoles = null)
     {
         largeMinShortMm = NormalizeLargeMinShortMm(largeMinShortMm);
         if (IsHingeFeature(f))
             return LargeToolId;
-        var shortMm = ShortSideMm(f);
+        var shortMm = ShortSideMm(f, islandHoles);
         if (shortMm >= largeMinShortMm)
             return LargeToolId;
         if (shortMm > smallToolDiaMm)

@@ -128,6 +128,76 @@ public class GuillotineCutPlannerTests
     }
 
     [Fact]
+    public void PlanSheet_splits_corner_into_two_rects_when_both_meet_min_edge()
+    {
+        // Used ~ (0,0)-(500,500) on 1220×2440 after clearance — both split pieces ≥ 400.
+        var panel = Rect("A", 460, 460);
+        var places = new[]
+        {
+            new NestPlacement
+            {
+                PanelId = "A", SheetIndex = 0,
+                OffsetX = 20, OffsetY = 20, RotationDeg = 0,
+            },
+        };
+        var plan = GuillotineCutPlanner.PlanSheet(
+            [panel], places, 0, 1220, 2440, clearanceMm: 20, minRemnantEdgeMm: 400);
+
+        Assert.NotNull(plan);
+        Assert.Equal(2, plan!.Pieces.Count);
+        Assert.All(plan.Pieces, p => Assert.Equal("RECT", p.Shape));
+        Assert.All(plan.Pieces, p => Assert.True(p.MinEdgeMm >= 400 - 1e-6));
+        Assert.True(plan.Cuts.Count >= 2);
+        Assert.DoesNotContain(plan.Pieces, p => p.Shape == "L");
+    }
+
+    [Fact]
+    public void PlanSheet_keeps_L_when_split_would_make_a_piece_under_400()
+    {
+        // Used ~ (0,0)-(240,240): remaining after a split is only 240 mm wide.
+        var panel = Rect("A", 200, 200);
+        var places = new[]
+        {
+            new NestPlacement
+            {
+                PanelId = "A", SheetIndex = 0,
+                OffsetX = 20, OffsetY = 20, RotationDeg = 0,
+            },
+        };
+        var plan = GuillotineCutPlanner.PlanSheet(
+            [panel], places, 0, 1220, 2440, clearanceMm: 20, minRemnantEdgeMm: 400);
+
+        Assert.NotNull(plan);
+        Assert.Contains(plan!.Pieces, p => p.Shape == "L");
+        Assert.All(plan.Pieces, p => Assert.True(p.MinEdgeMm >= 400 - 1e-6));
+        Assert.True(plan.Pieces.Count(p => p.Shape == "L") == 1);
+    }
+
+    [Fact]
+    public void PlanSheet_can_return_four_rects_around_a_center_cluster()
+    {
+        // Used after +20 must leave four strips and a mid band all ≥ 400.
+        var panel = Rect("A", 370, 500);
+        var places = new[]
+        {
+            new NestPlacement
+            {
+                PanelId = "A", SheetIndex = 0,
+                OffsetX = 430, OffsetY = 800, RotationDeg = 0,
+            },
+        };
+        // used: (410,780)-(820,1320) on 1220×2440
+        // left 410, right 400, midW 410, bot 780, top 1120, midH 540
+        var plan = GuillotineCutPlanner.PlanSheet(
+            [panel], places, 0, 1220, 2440, clearanceMm: 20, minRemnantEdgeMm: 400);
+
+        Assert.NotNull(plan);
+        Assert.Equal(4, plan!.Pieces.Count);
+        Assert.All(plan.Pieces, p => Assert.Equal("RECT", p.Shape));
+        Assert.Equal(4, GuillotineCutPlanner.ToCutOps(plan, 0, 1220, 2440, 18, 10).Count);
+    }
+
+    [Fact]
     public void ToCutOp_is_open_through_remnant_with_edge_overshoot()
     {
         var plan = new GuillotineCutPlanner.Result

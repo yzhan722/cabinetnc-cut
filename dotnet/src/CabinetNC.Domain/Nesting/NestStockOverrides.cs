@@ -12,6 +12,7 @@ public static class NestStockOverrides
             AllowedRotations = global.AllowedRotations,
             RotationStepDeg = global.RotationStepDeg,
             GrainLock = global.GrainLock,
+            SheetGrain = stock.SheetGrain,
             MirrorPermission = global.MirrorPermission,
             PreferLockedPlacements = global.PreferLockedPlacements,
         };

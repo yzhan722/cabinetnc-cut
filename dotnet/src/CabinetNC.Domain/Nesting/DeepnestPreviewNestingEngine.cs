@@ -486,6 +486,7 @@ public sealed class DeepnestPreviewNestingEngine : INestingEngine
                 : src.Label,
             Material = key.Material,
             ThicknessMm = key.ThicknessMm,
+            SheetGrain = src.SheetGrain,
         };
     }
 

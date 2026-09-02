@@ -12,10 +12,10 @@ public class ExportNamingTests
     }
 
     [Fact]
-    public void AncFileName_is_project_kind_ordinal()
+    public void AncFileName_is_ordinal_thickness_color_kind_project()
     {
         Assert.Equal(
-            "ClubLounge_Carcass_WhiteStipple_DS_15mm_01.anc",
-            ExportNaming.AncFileName("Club Lounge", "Carcass_White Stipple_DS · 15mm", 1));
+            "01_15mm_WhiteStipple_Carcass_ClubLounge.anc",
+            ExportNaming.AncFileName(1, 15, "White Stipple", "Carcass", "Club Lounge"));
     }
 }

@@ -14,7 +14,7 @@ Open http://localhost:5177/
 Requires .NET 10 SDK (already installed).
 Desktop shortcut **CabinetNC Cut** opens `dist\CabinetNC-Cut\` (the only runnable copy).
 ```powershell
-cd E:\Work\cabinetnc-cut\dotnet
+cd E:\Work\OmniCam\dotnet
 dotnet build src\CabinetNC.Desktop -c Release
 ```
 Then start from the desktop icon, or `dist\CabinetNC-Cut\Start-CabinetNC-Cut.cmd`.

@@ -1,4 +1,5 @@
 using CabinetNC.Application.Projects;
+using CabinetNC.Domain;
 using CabinetNC.Domain.Geometry;
 using CabinetNC.Domain.Parts;
 using CabinetNC.FusionPackage;
@@ -66,5 +67,49 @@ public class ProjectSessionEditTests
         Assert.Equal(40, s.Package!.Panels[0].Features.First(f => f.FeatureId == "H1").X);
         s.MarkManufacturingClean();
         Assert.False(s.ManufacturingDirty);
+    }
+
+    [Fact]
+    public void TryRemovePackage_drops_one_cnjob_and_clears_when_last()
+    {
+        var s = new ProjectSession();
+        var kitchen = """
+            {"schema":"cabinetnc.cut-package","schemaVersion":1,"jobId":"Kitchen","panels":[{"panelId":"K1","name":"Kitchen-Left","thicknessMm":18,"material":"carcass","outline":{"points":[[0,0],[100,0],[100,50],[0,50]],"closed":true},"moduleId":"Carcass"}]}
+            """;
+        var fridge = """
+            {"schema":"cabinetnc.cut-package","schemaVersion":1,"jobId":"Fridge","panels":[{"panelId":"F1","name":"Fridge-Left","thicknessMm":18,"material":"carcass","outline":{"points":[[0,0],[80,0],[80,40],[0,40]],"closed":true},"moduleId":"Door"}]}
+            """;
+        Assert.True(s.OpenPackageJson(kitchen, "Kitchen.cnjob").Ok);
+        var added = CutPackageImporter.FromJson(fridge);
+        Assert.True(added.Ok && added.Package is not null);
+        s.AcceptPackage(PackageMerge.Merge(s.Package!, added.Package, "Fridge", "Fridge"), s.SourcePath);
+        Assert.Equal(2, s.Package!.Panels.Count);
+        Assert.True(s.TryRemovePackage("Fridge"));
+        Assert.Single(s.Package!.Panels);
+        Assert.Equal("Kitchen", s.Package.Panels[0].DisplayPackage);
+        Assert.True(s.TryRemovePackage("Kitchen"));
+        Assert.Null(s.Package);
+    }
+
+    [Fact]
+    public void ReplacePanel_adds_drafted_panel_with_new_id()
+    {
+        var s = SessionWithPanel();
+        var id = s.NextDraftPanelId();
+        Assert.Equal("DRAFT-1", id);
+        var built = PanelDraftCompile.TryBuild(
+            [new DraftFigure
+            {
+                Layer = DraftLayer.Profile,
+                Closed = true,
+                Points = [new(0, 0), new(120, 0), new(120, 80), new(0, 80)],
+            }],
+            new DraftPanelRequest { PanelId = id, Name = "补板", Material = "oak", ThicknessMm = 18 });
+        Assert.True(built.Ok && built.Panel is not null);
+        s.ReplacePanel(built.Panel);
+        Assert.Equal(2, s.Package!.Panels.Count);
+        Assert.Contains(s.Package.Panels, p => p.PanelId == "DRAFT-1");
+        Assert.Equal("DRAFT-2", s.NextDraftPanelId());
+        Assert.True(s.ManufacturingDirty);
     }
 }
