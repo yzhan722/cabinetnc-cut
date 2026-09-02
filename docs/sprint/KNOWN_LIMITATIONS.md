@@ -26,6 +26,7 @@ Honest limits — do **not** treat these as done.
 - Engine is **grouped BLF (AABB)**, not NFP. Advanced stub always falls back (`blf_fallback`).
 - Part-in-part model exists but is **disabled**.
 - Desktop nests via Domain locally; Worker uses the same Domain router when called (not every Desktop nest RPC-roundtrips).
+- **Worker gRPC still sends rectangle width/height and forces BLF.** Automated tests lock this contract (`WorkerNestContractTests`). Do not claim Desktop NFP/PIP Worker parity.
 
 ## Import / CAD
 
@@ -43,6 +44,8 @@ Honest limits — do **not** treat these as done.
 ## UIA / smoke
 
 - Automated UIA smoke can hang in non-interactive agent shells; **do not mark UIA PASS**.
+- `smoke_desktop.py` still targets pre-OmniCam control names; it is **not** an RC gate after the OmniCam UI change. Re-record before treating UIA as coverage.
+- Release goldens lock normalized NC only (`Category=GoldenRegression`). Labels, U/V, and UIA are **not** in that pack.
 - Manual path: `docs/sprint/MANUAL_SMOKE_10MIN.md` — items start as `MANUAL PENDING`.
 
 ## Not in RC (Campaign 2+)

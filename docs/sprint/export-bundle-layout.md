@@ -1,6 +1,6 @@
 # Export bundle layout (Day 10)
 
-See `SheetBundleBuilder` and `day-10-report.md`.
+See `SheetBundleBuilder` and module 12 in `14-DAY-ACCEPTANCE-PLAN.md`.
 
 Per job export directory:
 

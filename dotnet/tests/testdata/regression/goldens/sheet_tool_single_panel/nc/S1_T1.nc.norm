@@ -1,0 +1,14 @@
+(sheet S1 · ToolId=T1 · DiameterMm=6.35 · FeedXY=4500 · FeedZ=800 · RPM=18000)
+G21
+G90
+S18000 M3
+G0 Z8
+(tool T1)
+S18000 M3
+(groove P)
+G0 X25 Y25
+G1 Z-6 F800
+G1 X205 Y25 F4500
+G0 Z8
+M5
+M2

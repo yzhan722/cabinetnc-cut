@@ -78,7 +78,7 @@ public static class PartsInPartPacker
 
                 var (bw, bh) = sizeOf(child);
                 if (bw <= 0 || bh <= 0) continue;
-                if (bw * bh >= voidSlot.UsableW * voidSlot.UsableH) continue;
+                if (bw * bh > voidSlot.UsableW * voidSlot.UsableH + 1e-9) continue;
 
                 var mayRotate = settings.PanelMayRotate90(child);
                 var orients = new List<(double w, double h, double rot)> { (bw, bh, 0) };
@@ -363,6 +363,7 @@ public static class PartsInPartPacker
             foreach (var f in host.Features)
             {
                 if (!PanelEdit.IsCutout(f)) continue;
+                if (!f.Through) continue;
                 var ring = f.Path ?? f.Profile;
                 if (ring is not { Count: >= 3 }) continue;
 

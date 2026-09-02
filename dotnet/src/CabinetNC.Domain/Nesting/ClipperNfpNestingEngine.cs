@@ -309,6 +309,11 @@ public sealed class ClipperNfpNestingEngine : INestingEngine
                 candidates.Add((placed.Bounds.MaxX + clearance, placed.Bounds.MinY));
                 candidates.Add((placed.Bounds.MinX, placed.Bounds.MaxY + clearance));
             }
+            foreach (var blocked in sheet.Spec.Blocked)
+            {
+                candidates.Add((blocked.MaxX + clearance, blocked.MinY));
+                candidates.Add((blocked.MinX, blocked.MaxY + clearance));
+            }
             candidates = candidates
                 .OrderBy(p => p.Y)
                 .ThenBy(p => p.X)
