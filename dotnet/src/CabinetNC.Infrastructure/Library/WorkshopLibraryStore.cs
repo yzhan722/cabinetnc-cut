@@ -96,6 +96,7 @@ public static class WorkshopLibraryStore
         if (string.IsNullOrWhiteSpace(lib.Labeler.MachinePictureDir))
             lib.Labeler.MachinePictureDir = new LabelerDefaults().MachinePictureDir;
         lib.RecentFiles ??= [];
+        lib.Display ??= new DisplayLayers();
         // Shop stock is 1200×2400; migrate the previous factory default so tab 2 cards update.
         if (Math.Abs(lib.Nest.DefaultSheetWidthMm - 1220) < 1e-6
             && Math.Abs(lib.Nest.DefaultSheetLengthMm - 2440) < 1e-6)

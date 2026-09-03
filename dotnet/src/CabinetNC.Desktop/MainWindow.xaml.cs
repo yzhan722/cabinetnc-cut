@@ -226,6 +226,7 @@ public partial class MainWindow : Window
             RefreshWorkflowDots();
             RefreshEmptyState();
             RefreshRecentUi();
+            LoadDisplayLayers();
             SyncProjectNameBox();
             SetStatus("就绪 · 打开方案或示例开始（Ctrl+O）");
             // Double-click / "open with" / shop script: the first openable path on the command line.
@@ -1603,6 +1604,32 @@ public partial class MainWindow : Window
     // ----- display layers ---------------------------------------------------------------
     bool _showGrain = true, _showFeatures = true, _showLabels = true, _showDims = true, _showRapids = true;
 
+    /// <summary>Display layers are remembered in the workshop library like any CAD viewer setting.</summary>
+    void LoadDisplayLayers()
+    {
+        var d = _library.Display;
+        _showGrain = d.Grain;
+        _showFeatures = d.Features;
+        _showLabels = d.Labels;
+        _showDims = d.Dims;
+        _showRapids = d.Rapids;
+        if (TryFindResource("DisplayMenu") is ContextMenu menu)
+        {
+            foreach (var item in menu.Items.OfType<MenuItem>())
+            {
+                item.IsChecked = item.Tag switch
+                {
+                    "grain" => d.Grain,
+                    "features" => d.Features,
+                    "labels" => d.Labels,
+                    "dims" => d.Dims,
+                    "rapids" => d.Rapids,
+                    _ => item.IsChecked,
+                };
+            }
+        }
+    }
+
     void OnDisplayMenuClick(object sender, RoutedEventArgs e) => OnMoreMenuClick(sender, e);
 
     void OnDisplayToggleClick(object sender, RoutedEventArgs e)
@@ -1611,12 +1638,13 @@ public partial class MainWindow : Window
         var on = item.IsChecked;
         switch (layer)
         {
-            case "grain": _showGrain = on; break;
-            case "features": _showFeatures = on; break;
-            case "labels": _showLabels = on; break;
-            case "dims": _showDims = on; break;
-            case "rapids": _showRapids = on; break;
+            case "grain": _showGrain = _library.Display.Grain = on; break;
+            case "features": _showFeatures = _library.Display.Features = on; break;
+            case "labels": _showLabels = _library.Display.Labels = on; break;
+            case "dims": _showDims = _library.Display.Dims = on; break;
+            case "rapids": _showRapids = _library.Display.Rapids = on; break;
         }
+        PersistLibrary();
         CanvasHost.InvalidateVisual();
         SetStatus($"{(on ? "显示" : "隐藏")}{item.Header}", StatusKind.Info);
     }
@@ -1683,22 +1711,8 @@ public partial class MainWindow : Window
 
     void OnShortcutsClick(object sender, RoutedEventArgs e)
     {
-        MessageBox.Show(this,
-            "Ctrl+O　打开方案\n" +
-            "Ctrl+Shift+O　打开工程\n" +
-            "Ctrl+S　保存工程\n" +
-            "Ctrl+E　一键导出（刀路就绪时）\n" +
-            "Ctrl+1 … Ctrl+5　切换到第 1–5 步\n" +
-            "Ctrl+Z / Ctrl+Y　撤销 / 重做\n" +
-            "Ctrl+C / X / V　复制 / 剪切 / 粘贴板件\n" +
-            "Delete　删除选中特征或整板\n" +
-            "\n视口（密排 / 刀路 / 导出）\n" +
-            "滚轮　对准指针缩放 · 中键拖动　平移 · 双击中键 / F / Home　适配整板 · + / −　缩放\n" +
-            "密排拖动中：右键转 90° · 按住 S 或 Alt 吸附 · 选中两块板按住 D 量距\n" +
-            "\n仿真（导出页）\n" +
-            "空格　播放 / 暂停 · 点 G-code 行　定位到该运动块\n" +
-            "\n数值框：回车应用 · Esc 离开输入框",
-            "快捷键", MessageBoxButton.OK, MessageBoxImage.Information);
+        var dlg = new ShortcutsWindow { Owner = this };
+        dlg.ShowDialog();
     }
 
     async void OnStockInitialNestClick(object sender, RoutedEventArgs e)

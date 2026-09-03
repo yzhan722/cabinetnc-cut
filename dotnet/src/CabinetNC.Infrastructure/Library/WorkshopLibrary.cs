@@ -15,7 +15,18 @@ public sealed class WorkshopLibrary
     public LabelerDefaults Labeler { get; set; } = new();
     /// <summary>Most recently opened jobs / projects / machine programs, newest first.</summary>
     public List<RecentFile> RecentFiles { get; set; } = [];
+    /// <summary>Canvas display layers (CAD "show/hide"), remembered across sessions.</summary>
+    public DisplayLayers Display { get; set; } = new();
     public string? SavedAt { get; set; }
+}
+
+public sealed class DisplayLayers
+{
+    public bool Grain { get; set; } = true;
+    public bool Features { get; set; } = true;
+    public bool Labels { get; set; } = true;
+    public bool Dims { get; set; } = true;
+    public bool Rapids { get; set; } = true;
 }
 
 public sealed class RecentFile
