@@ -46,6 +46,7 @@ came from before applying the rules below; the NC header tells you.
 - Real `S`/`F` come from `ToolCatalog` (machine profile is fallback only).
 - **No** automatic `M6` — `IToolChangePost` reserved; default `NullToolChangePost` returns null. Operator loads one tool program at a time.
 - Tool IDs ASSUMED T1/T2/T3 presets — shop must confirm magazine numbers.
+- **Hole-size gap with the preset tools:** holes < Ø5 are drilled with T3 (Ø3, so they come out Ø3); holes ≥ Ø5 are pocket-cleared and need ~1 mm more than the smallest router (T1 Ø6.35). A Ø5 system hole — the most common cabinet hole — is therefore rejected by preflight (`pocket_too_small_for_tool`) until the shop adds a Ø5 drill to 工艺模版 / the post. The bundled demo was changed from Ø5 to Ø4 so a first run can export; the gap itself is a tooling decision for Troy.
 
 ### B. Troy single-file OSAI (`PostRecipe.TroyDefault()`, `.anc`)
 
