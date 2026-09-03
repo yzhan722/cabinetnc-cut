@@ -98,6 +98,20 @@ public class NcReverseTests
         Assert.Contains(cut, l => l.Words.Any(w => w.Letter == 'M' && w.Number == 6));
     }
 
+    /// <summary>The export viewer highlights the executing block; strokes must point back at the source line.</summary>
+    [Fact]
+    public void Strokes_carry_the_source_line_they_came_from()
+    {
+        var nc = "N1 G90\r\n\r\nN2 M6 T2\r\nN3 M3 S14500\r\nN4 G0 X10.0000 Y20.0000 Z30.0000\r\n\r\n\r\nN5 G1 Z0.5000 F1000.0\r\nN6 G1 X50.0000\r\nN7 M30\r\n";
+        var lines = OsaiTroyLexer.Lex(nc);
+        Assert.Equal(0, lines.First(l => l.N == 1).SourceLine);
+        Assert.Equal(2, lines.First(l => l.N == 2).SourceLine);
+        Assert.Equal(7, lines.First(l => l.N == 5).SourceLine);
+
+        var replay = OsaiTroyParser.Replay(nc);
+        Assert.Equal([4, 7, 8], replay.Strokes.Select(s => s.LineIndex).ToArray());
+    }
+
     [Fact]
     public void Parser_replays_self_emitted_header()
     {

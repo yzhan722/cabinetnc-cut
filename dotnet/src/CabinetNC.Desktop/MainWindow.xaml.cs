@@ -172,6 +172,10 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // The executing-block marker is an overlay; keep it glued to its line while the
+        // operator scrolls or the pane is resized.
+        NcPreview.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler((_, _) => PositionNcHighlight()));
+        NcPreview.SizeChanged += (_, _) => PositionNcHighlight();
         foreach (var m in MachineCatalog.All)
         {
             MachineCombo.Items.Add(m);
@@ -219,12 +223,14 @@ public partial class MainWindow : Window
             UpdateStageChrome();
             RefreshWorkflowDots();
             RefreshEmptyState();
+            RefreshRecentUi();
             SyncProjectNameBox();
             SetStatus("就绪 · 打开方案或示例开始（Ctrl+O）");
             // Worker probing can take seconds; never let it overwrite a status the operator
             // has since produced by working.
             await RefreshWorkerAsync();
         };
+        Closing += OnWindowClosing;
         Closed += async (_, _) =>
         {
             UsageLog.LogEvent("ui", "desktop.mainClosed");
@@ -253,6 +259,54 @@ public partial class MainWindow : Window
 
     void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // CAD convention: Enter applies a numeric field (the LostFocus handlers commit),
+        // Esc leaves it. The stock-kind rename box has its own Enter/Esc semantics.
+        if (Keyboard.FocusedElement is TextBox { AcceptsReturn: false } field
+            && field.Tag as string != "KindRename")
+        {
+            if (e.Key == Key.Enter)
+            {
+                field.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+                e.Handled = true;
+                return;
+            }
+            if (e.Key == Key.Escape)
+            {
+                Keyboard.ClearFocus();
+                Focus();
+                e.Handled = true;
+                return;
+            }
+        }
+
+        if (!IsTypingTarget() && Keyboard.Modifiers == ModifierKeys.None && ViewportActive())
+        {
+            if (e.Key == Key.Space && _stage == "out" && _ncSimStrokes.Count > 0)
+            {
+                OnOutSimPlayClick(sender, e);
+                e.Handled = true;
+                return;
+            }
+            if (e.Key is Key.F or Key.Home)
+            {
+                FitViewport();
+                e.Handled = true;
+                return;
+            }
+            if (e.Key is Key.OemPlus or Key.Add)
+            {
+                ZoomViewportCentered(1.25);
+                e.Handled = true;
+                return;
+            }
+            if (e.Key is Key.OemMinus or Key.Subtract)
+            {
+                ZoomViewportCentered(1 / 1.25);
+                e.Handled = true;
+                return;
+            }
+        }
+
         if (IsAltKey(e) && _dragMode == "nest")
         {
             if (!e.IsRepeat)
@@ -633,6 +687,7 @@ public partial class MainWindow : Window
         RefreshOneClickExport();
         RefreshStaleBanner();
         ApplyAwaitingNestChrome();
+        ApplyProjectNameChrome();
     }
 
     bool HasNcText() =>
@@ -998,6 +1053,10 @@ public partial class MainWindow : Window
         _ncSimTime = 0;
         _ncSimTotal = 0;
         _ncSimStrokes = [];
+        _ncSimStarts = [];
+        if (GcodeHeader is not null) GcodeHeader.Text = "G-code · 点任意行可定位仿真";
+        _ncHighlightLine = -1;
+        PositionNcHighlight();
         var text = file?.NcText;
         if (!string.IsNullOrWhiteSpace(text) && !text.StartsWith("//", StringComparison.Ordinal))
         {
@@ -1005,14 +1064,172 @@ public partial class MainWindow : Window
             {
                 _ncSimStrokes = OsaiTroyParser.Replay(text).Strokes;
                 _ncSimTotal = NcCutSim.TotalSec(_ncSimStrokes);
+                var starts = new List<double>(_ncSimStrokes.Count);
+                var acc = 0d;
+                foreach (var s in _ncSimStrokes)
+                {
+                    starts.Add(acc);
+                    acc += NcCutSim.DurationSec(s);
+                }
+                _ncSimStarts = starts;
             }
             catch
             {
                 _ncSimStrokes = [];
                 _ncSimTotal = 0;
+                _ncSimStarts = [];
             }
         }
         UpdateOutSimChrome();
+    }
+
+    List<double> _ncSimStarts = [];
+    bool _syncingNcLine;
+
+    /// <summary>Jump the simulation to the start of stroke <paramref name="index"/> (clamped).</summary>
+    void SeekNcSimToStroke(int index)
+    {
+        if (_ncSimStarts.Count == 0) return;
+        index = Math.Clamp(index, 0, _ncSimStarts.Count - 1);
+        _ncSimTime = _ncSimStarts[index];
+        UpdateOutSimChrome();
+        CanvasHost.InvalidateVisual();
+    }
+
+    void OnOutSimToStartClick(object sender, RoutedEventArgs e)
+    {
+        StopNcSim();
+        _ncSimTime = 0;
+        UpdateOutSimChrome();
+        CanvasHost.InvalidateVisual();
+    }
+
+    void OnOutSimToEndClick(object sender, RoutedEventArgs e)
+    {
+        StopNcSim();
+        _ncSimTime = _ncSimTotal;
+        UpdateOutSimChrome();
+        CanvasHost.InvalidateVisual();
+    }
+
+    void OnOutSimStepBackClick(object sender, RoutedEventArgs e)
+    {
+        if (_ncSimStrokes.Count == 0) return;
+        StopNcSim();
+        var pose = NcCutSim.At(_ncSimStrokes, _ncSimTime);
+        // Mid-stroke → back to this stroke's start; at a start → previous stroke.
+        var idx = pose.StrokeIndex < 0 ? 0 : pose.StrokeIndex;
+        if (idx < _ncSimStarts.Count && _ncSimTime <= _ncSimStarts[idx] + 1e-6)
+            idx--;
+        SeekNcSimToStroke(idx);
+    }
+
+    void OnOutSimStepForwardClick(object sender, RoutedEventArgs e)
+    {
+        if (_ncSimStrokes.Count == 0) return;
+        StopNcSim();
+        var pose = NcCutSim.At(_ncSimStrokes, _ncSimTime);
+        var idx = (pose.StrokeIndex < 0 ? 0 : pose.StrokeIndex) + 1;
+        if (idx >= _ncSimStarts.Count)
+        {
+            _ncSimTime = _ncSimTotal;
+            UpdateOutSimChrome();
+            CanvasHost.InvalidateVisual();
+            return;
+        }
+        SeekNcSimToStroke(idx);
+    }
+
+    int _ncHighlightLine = -1;
+
+    /// <summary>
+    /// Backplot → code: mark the G-code block the cutter is executing and keep it in view.
+    /// A translucent overlay is used instead of the TextBox selection so playback never
+    /// steals a selection the operator made to copy code, and the marker stays visible
+    /// while the box is unfocused.
+    /// </summary>
+    void HighlightNcLine(int line)
+    {
+        if (NcPreview is null || line < 0 || _syncingNcLine) return;
+        _ncHighlightLine = line;
+        try
+        {
+            var start = NcPreview.GetCharacterIndexFromLineIndex(line);
+            if (start < 0) return;
+            var rect = NcPreview.GetRectFromCharacterIndex(start);
+            if (rect.IsEmpty) return;
+            _syncingNcLine = true;
+            // Keep the executing block in the upper third, the way NC viewers do.
+            var viewport = NcPreview.ViewportHeight;
+            if (viewport > 0 && (rect.Top < 0 || rect.Bottom > viewport))
+                NcPreview.ScrollToVerticalOffset(Math.Max(0, NcPreview.VerticalOffset + rect.Top - viewport * 0.35));
+            PositionNcHighlight();
+            if (GcodeHeader is not null)
+                GcodeHeader.Text = $"G-code · 执行到第 {line + 1} 行 · 点任意行可定位仿真";
+        }
+        catch
+        {
+            // TextBox not laid out yet — the next tick will retry.
+        }
+        finally
+        {
+            _syncingNcLine = false;
+        }
+    }
+
+    /// <summary>Re-place the marker after scrolling or a new highlight; hides it when off-screen.</summary>
+    void PositionNcHighlight()
+    {
+        if (NcLineHighlight is null || NcPreview is null) return;
+        if (_ncHighlightLine < 0 || _stage != "out")
+        {
+            NcLineHighlight.Visibility = Visibility.Collapsed;
+            return;
+        }
+        try
+        {
+            var start = NcPreview.GetCharacterIndexFromLineIndex(_ncHighlightLine);
+            if (start < 0) { NcLineHighlight.Visibility = Visibility.Collapsed; return; }
+            var rect = NcPreview.GetRectFromCharacterIndex(start);
+            var viewport = NcPreview.ViewportHeight;
+            if (rect.IsEmpty || rect.Bottom < 0 || (viewport > 0 && rect.Top > viewport))
+            {
+                NcLineHighlight.Visibility = Visibility.Collapsed;
+                return;
+            }
+            NcLineHighlight.Margin = new Thickness(0, Math.Max(0, rect.Top), 12, 0);
+            NcLineHighlight.Height = Math.Max(2, rect.Height);
+            NcLineHighlight.Visibility = Visibility.Visible;
+        }
+        catch
+        {
+            NcLineHighlight.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>Code → backplot: clicking a G-code line seeks the simulation to that block.</summary>
+    void OnNcPreviewClick(object sender, MouseButtonEventArgs e)
+    {
+        if (_stage != "out" || _ncSimStrokes.Count == 0 || _syncingNcLine) return;
+        var caret = NcPreview.CaretIndex;
+        var line = NcPreview.GetLineIndexFromCharacterIndex(caret);
+        if (line < 0) return;
+        var idx = -1;
+        for (var i = 0; i < _ncSimStrokes.Count; i++)
+        {
+            if (_ncSimStrokes[i].LineIndex >= line)
+            {
+                idx = i;
+                break;
+            }
+        }
+        if (idx < 0)
+        {
+            SetStatus("这一行没有刀具运动；已定位到最近的运动块", StatusKind.Info);
+            idx = _ncSimStrokes.Count - 1;
+        }
+        StopNcSim();
+        SeekNcSimToStroke(idx);
     }
 
     void StopNcSim()
@@ -1099,9 +1316,20 @@ public partial class MainWindow : Window
                 var pose = NcCutSim.At(_ncSimStrokes, _ncSimTime);
                 var shop = ShopToolDiaByNum();
                 var dia = NcCutSim.ToolDiameterMm(pose.ToolNum, shop);
-                OutSimMeta.Text = pose.StrokeIndex < 0
-                    ? "线宽=刀径 · 滚轮缩放 · 中键平移 · 双击中键复位"
-                    : $"T{pose.ToolNum} Ø{dia:0.##}  Z{pose.Z:0.##}  F{pose.Feed:0}  ·  线宽=刀径";
+                if (pose.StrokeIndex < 0)
+                {
+                    OutSimMeta.Text = "线宽=刀径 · 滚轮缩放 · 中键平移 · F 适配";
+                }
+                else
+                {
+                    // DRO-style readout, the way a controller shows it: position, tool, feed, block.
+                    var stroke = _ncSimStrokes[pose.StrokeIndex];
+                    OutSimMeta.Text =
+                        $"X{pose.X,7:0.0} Y{pose.Y,7:0.0} Z{pose.Z,6:0.00}  T{pose.ToolNum} Ø{dia:0.#}  " +
+                        (pose.Rapid ? "快移" : $"F{pose.Feed:0}") +
+                        $"  {pose.StrokeIndex + 1}/{_ncSimStrokes.Count}";
+                    HighlightNcLine(stroke.LineIndex);
+                }
             }
         }
         if (OutSimTime is not null)
@@ -1150,34 +1378,101 @@ public partial class MainWindow : Window
         _simOy = oy;
     }
 
-    void OnCanvasWheel(object sender, MouseWheelEventArgs e)
+    /// <summary>The sheet viewport is live on the nest, ops and export stages once a nest exists.</summary>
+    bool ViewportActive() => _showNest && _stage is "nest" or "ops" or "out" && _nest is { Ok: true };
+
+    /// <summary>
+    /// Fit scale and padding exactly as OnPaintSurface computes them, so wheel zoom, pan and
+    /// the zoom readout agree with what is drawn (the nest stage reserves the holding bay).
+    /// </summary>
+    (float Fit, float Pad) CurrentNestFit()
     {
-        if (_stage != "out" || !_showNest) return;
-        if (IsNestChromeClick(e.OriginalSource)) return;
-        RefreshDpi();
-        var (sx, sy) = CanvasPixelPos(e);
         var (sw, sh, _) = ActiveSheetMetrics();
-        var pad = 56f;
-        var fit = FitNestScale(_surfaceW > 0 ? _surfaceW : (float)(CanvasHost.ActualWidth * _dpiX),
-            _surfaceH > 0 ? _surfaceH : (float)(CanvasHost.ActualHeight * _dpiY), sw, sh, pad);
+        var w = _surfaceW > 0 ? _surfaceW : (float)(CanvasHost.ActualWidth * _dpiX);
+        var h = _surfaceH > 0 ? _surfaceH : (float)(CanvasHost.ActualHeight * _dpiY);
+        var bay = _stage == "nest" ? CanvasPainter.NestHoldingBayWidth : 0f;
+        var pad = _stage == "out" ? 56f : 44f;
+        if (sw <= 0 || sh <= 0) return (0, pad);
+        var availW = Math.Max(1f, w - bay - pad);
+        var fit = Math.Min(availW / sw, (h - 2 * pad) / sh) * 0.9f;
+        return (fit > 0 ? fit : 0, pad);
+    }
+
+    void ZoomViewportAt(float sx, float sy, double factor)
+    {
+        var (fit, pad) = CurrentNestFit();
         if (fit <= 0) return;
+        var (_, sh, _) = ActiveSheetMetrics();
         var (scale, ox, oy) = ResolveSimView(fit, pad);
         var wx = (sx - ox) / scale;
         var wy = sh - (sy - oy) / scale;
-        var steps = e.Delta / 120.0;
-        var factor = (float)Math.Pow(1.2, steps);
-        var lo = fit * 0.05f;
-        var hi = fit * 80f;
-        var next = Math.Clamp(scale * factor, lo, hi);
+        var next = (float)Math.Clamp(scale * factor, fit * 0.05, fit * 80);
         CommitSimView(next, sx - wx * next, sy - (sh - wy) * next);
         CanvasHost.InvalidateVisual();
+        UpdateViewportReadout();
+    }
+
+    void ZoomViewportCentered(double factor)
+    {
+        if (!ViewportActive()) return;
+        RefreshDpi();
+        var w = _surfaceW > 0 ? _surfaceW : (float)(CanvasHost.ActualWidth * _dpiX);
+        var h = _surfaceH > 0 ? _surfaceH : (float)(CanvasHost.ActualHeight * _dpiY);
+        var bay = _stage == "nest" ? CanvasPainter.NestHoldingBayWidth : 0f;
+        ZoomViewportAt((w - bay) * 0.5f, h * 0.5f, factor);
+    }
+
+    void FitViewport()
+    {
+        ResetSimView();
+        CanvasHost.InvalidateVisual();
+        UpdateViewportReadout();
+    }
+
+    void OnViewZoomInClick(object sender, RoutedEventArgs e) => ZoomViewportCentered(1.25);
+    void OnViewZoomOutClick(object sender, RoutedEventArgs e) => ZoomViewportCentered(1 / 1.25);
+    void OnViewFitClick(object sender, RoutedEventArgs e) => FitViewport();
+
+    /// <summary>Status-bar readout: cursor position in sheet millimetres and zoom relative to fit.</summary>
+    void UpdateViewportReadout(float? sx = null, float? sy = null)
+    {
+        if (CursorReadout is null) return;
+        if (!ViewportActive() || _nestScale <= 0)
+        {
+            CursorReadout.Text = "";
+            return;
+        }
+        var (fit, _) = CurrentNestFit();
+        var zoom = fit > 0 ? _nestScale / fit * 100 : 100;
+        var zoomText = $"缩放 {zoom:0}%";
+        ViewportZoomText.Text = zoomText;
+        if (sx is float x && sy is float y && (_stage != "nest" || _holdingBayLeft <= 0 || x < _holdingBayLeft))
+        {
+            var (mx, my) = ScreenToSheet(x, y);
+            CursorReadout.Text = $"X {mx:0.0}  Y {my:0.0} mm  ·  {zoomText}";
+        }
+        else
+        {
+            CursorReadout.Text = zoomText;
+        }
+    }
+
+    void OnCanvasWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (!ViewportActive()) return;
+        if (IsNestChromeClick(e.OriginalSource)) return;
+        RefreshDpi();
+        var (sx, sy) = CanvasPixelPos(e);
+        if (_stage == "nest" && _holdingBayLeft > 0 && sx >= _holdingBayLeft) return;
+        var steps = e.Delta / 120.0;
+        ZoomViewportAt(sx, sy, Math.Pow(1.2, steps));
         e.Handled = true;
     }
 
     void OnCanvasPreviewDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ChangedButton != MouseButton.Middle) return;
-        if (_stage != "out" || !_showNest) return;
+        if (!ViewportActive()) return;
         if (IsNestChromeClick(e.OriginalSource)) return;
         RefreshDpi();
         var (x, y) = CanvasPixelPos(e);
@@ -1204,12 +1499,8 @@ public partial class MainWindow : Window
 
     void BeginSimPan(float x, float y)
     {
-        var (sw, sh, _) = ActiveSheetMetrics();
-        var pad = 56f;
-        var fit = FitNestScale(
-            _surfaceW > 0 ? _surfaceW : (float)(CanvasHost.ActualWidth * _dpiX),
-            _surfaceH > 0 ? _surfaceH : (float)(CanvasHost.ActualHeight * _dpiY),
-            sw, sh, pad);
+        var (fit, pad) = CurrentNestFit();
+        if (fit <= 0) return;
         var (scale, ox, oy) = ResolveSimView(fit, pad);
         CommitSimView(scale, ox, oy);
         _simPanning = true;
@@ -1226,14 +1517,6 @@ public partial class MainWindow : Window
         if (CanvasPane.IsMouseCaptured && _dragMode is null)
             CanvasPane.ReleaseMouseCapture();
         CanvasPane.Cursor = Cursors.Arrow;
-    }
-
-    static float FitNestScale(float canvasW, float canvasH, float sheetW, float sheetH, float pad)
-    {
-        if (sheetW <= 0 || sheetH <= 0) return 0;
-        var availW = Math.Max(1f, canvasW - pad);
-        var scale = Math.Min(availW / sheetW, (canvasH - 2 * pad) / sheetH) * 0.9f;
-        return scale > 0 ? scale : 0;
     }
 
     static string FmtSimClock(double sec)
@@ -1283,6 +1566,11 @@ public partial class MainWindow : Window
             OutAwaitingBtn.Tag = noNest ? "nest" : "ops";
         }
         OutAwaitingState.Visibility = outAwaiting ? Visibility.Visible : Visibility.Collapsed;
+        if (ViewportTools is not null)
+        {
+            ViewportTools.Visibility = ViewportActive() ? Visibility.Visible : Visibility.Collapsed;
+            UpdateViewportReadout();
+        }
         NestCanvasChrome.Visibility = !awaiting && _stage is "nest" or "ops" && _nest is { Ok: true }
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -1341,6 +1629,58 @@ public partial class MainWindow : Window
         btn.ContextMenu.IsOpen = true;
     }
 
+    void OnExitClick(object sender, RoutedEventArgs e) => Close();
+
+    void OnMenuUndoClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.TryUndo()) AfterHistoryRestore();
+        else SetStatus("没有可撤销的操作", StatusKind.Info);
+    }
+
+    void OnMenuRedoClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.TryRedo()) AfterHistoryRestore();
+        else SetStatus("没有可重做的操作", StatusKind.Info);
+    }
+
+    void OnStageMenuClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: string stage }) return;
+        if (_module != "production")
+        {
+            _module = "production";
+            HighlightModule();
+            ApplyModuleVisibility();
+            RefreshActiveModule();
+        }
+        GoToStage(stage);
+    }
+
+    void OnHelpChecklistClick(object sender, RoutedEventArgs e)
+    {
+        var dir = AppDomain.CurrentDomain.BaseDirectory;
+        // Packed builds ship docs next to the exe; source builds have them under the repo.
+        var candidates = new[]
+        {
+            Path.Combine(dir, "docs", "sprint"),
+            Path.GetFullPath(Path.Combine(dir, "..", "..", "..", "..", "..", "..", "docs", "sprint")),
+        };
+        var found = candidates.FirstOrDefault(Directory.Exists);
+        if (found is null)
+        {
+            SetStatus("未找到 docs/sprint 目录；检查单见仓库 docs/sprint/MACHINE_DRYRUN_CHECKLIST.md", StatusKind.Warning);
+            return;
+        }
+        OpenFolder(found);
+        SetStatus($"上机检查单 MACHINE_DRYRUN_CHECKLIST.md 与后处理变更检查单在 {found}", StatusKind.Info);
+    }
+
+    void OnAboutClick(object sender, RoutedEventArgs e)
+    {
+        var dlg = new AboutWindow(SelectedMachineId(), WorkshopLibraryStore.DefaultPath()) { Owner = this };
+        dlg.ShowDialog();
+    }
+
     void OnShortcutsClick(object sender, RoutedEventArgs e)
     {
         MessageBox.Show(this,
@@ -1352,7 +1692,12 @@ public partial class MainWindow : Window
             "Ctrl+Z / Ctrl+Y　撤销 / 重做\n" +
             "Ctrl+C / X / V　复制 / 剪切 / 粘贴板件\n" +
             "Delete　删除选中特征或整板\n" +
-            "密排拖动中：右键转 90° · 按住 S 或 Alt 吸附",
+            "\n视口（密排 / 刀路 / 导出）\n" +
+            "滚轮　对准指针缩放 · 中键拖动　平移 · 双击中键 / F / Home　适配整板 · + / −　缩放\n" +
+            "密排拖动中：右键转 90° · 按住 S 或 Alt 吸附 · 选中两块板按住 D 量距\n" +
+            "\n仿真（导出页）\n" +
+            "空格　播放 / 暂停 · 点 G-code 行　定位到该运动块\n" +
+            "\n数值框：回车应用 · Esc 离开输入框",
             "快捷键", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
@@ -1371,6 +1716,7 @@ public partial class MainWindow : Window
     {
         if (_activeNestSheet <= 0) return;
         _activeNestSheet--;
+        ResetSimView();
         UpdateNestSheetChrome();
         if (_stage == "ops" && !_opsAllSheets && _opsOverlay.Count > 0)
             RebuildOpsOverlay();
@@ -1382,6 +1728,7 @@ public partial class MainWindow : Window
         var max = NestSheetCount() - 1;
         if (_activeNestSheet >= max) return;
         _activeNestSheet++;
+        ResetSimView();
         UpdateNestSheetChrome();
         if (_stage == "ops" && !_opsAllSheets && _opsOverlay.Count > 0)
             RebuildOpsOverlay();
@@ -3577,7 +3924,8 @@ public partial class MainWindow : Window
         UpdateStageChrome();
         UpdateCanvasHint();
         RefreshWorkflowDots();
-        SetStatus($"已载入示例 · panels={_session.Package!.Panels.Count} · warnings={result.Warnings.Count}");
+        MarkWorkSaved();
+        SetStatus($"已载入示例 · {_session.Package!.Panels.Count} 块板 · 警告 {result.Warnings.Count}", StatusKind.Success);
         ShowImportDialog(true, "打开示例", Path.GetFileName(demo), result);
     }
 
@@ -4029,18 +4377,70 @@ public partial class MainWindow : Window
 
     void OnPackageGroupRightUp(object sender, MouseButtonEventArgs e)
     {
-        if (_stage == "stock")
-        {
-            e.Handled = true;
-            if (sender is FrameworkElement fe && fe.ContextMenu is { } menu)
-                menu.IsOpen = false;
-        }
+        // Right-click opens the header menu on every stage; OnPackageGroupMenuOpened
+        // decides which items apply (rename kinds on the stock stage, unload elsewhere).
     }
 
     void OnPackageGroupMenuOpened(object sender, RoutedEventArgs e)
     {
-        if (_stage == "stock" && sender is ContextMenu menu)
-            menu.IsOpen = false;
+        if (sender is not ContextMenu menu) return;
+        // Stock stage groups are material kinds (rename); other stages group by package (unload).
+        foreach (var item in menu.Items.OfType<MenuItem>())
+        {
+            var header = item.Header as string ?? "";
+            item.Visibility = header.StartsWith("重命名", StringComparison.Ordinal)
+                ? (_stage == "stock" ? Visibility.Visible : Visibility.Collapsed)
+                : (_stage == "stock" ? Visibility.Collapsed : Visibility.Visible);
+        }
+    }
+
+    /// <summary>The ⋯ button on a group header opens the same menu the right-click does.</summary>
+    void OnGroupMoreDown(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is not FrameworkElement btn) return;
+        DependencyObject? d = btn;
+        while (d is not null && d is not Expander)
+            d = VisualTreeHelper.GetParent(d);
+        if (d is not Expander { ContextMenu: { } menu }) return;
+        menu.PlacementTarget = btn;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
+    }
+
+    void OnRenameKindMenuClick(object sender, RoutedEventArgs e)
+    {
+        if (_stage != "stock") return;
+        if (sender is not MenuItem { Parent: ContextMenu { PlacementTarget: DependencyObject target } }) return;
+        DependencyObject? d = target;
+        while (d is not null && d is not Expander)
+            d = VisualTreeHelper.GetParent(d);
+        if (d is not Expander expander) return;
+        var name = FindDescendant<TextBlock>(expander, t => t.Tag as string == "KindName");
+        var edit = FindDescendant<TextBox>(expander, t => t.Tag as string == "KindRename");
+        if (name is null || edit is null) return;
+        var group = name.DataContext as CollectionViewGroup;
+        edit.Text = group?.Name?.ToString() ?? name.Text;
+        name.Visibility = Visibility.Collapsed;
+        edit.Visibility = Visibility.Visible;
+        Dispatcher.BeginInvoke(() =>
+        {
+            edit.Focus();
+            edit.SelectAll();
+        }, DispatcherPriority.Input);
+    }
+
+    static T? FindDescendant<T>(DependencyObject root, Func<T, bool> match) where T : DependencyObject
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T t && match(t)) return t;
+            var found = FindDescendant(child, match);
+            if (found is not null) return found;
+        }
+        return null;
     }
 
     void OnRemovePackageClick(object sender, RoutedEventArgs e)
@@ -4785,6 +5185,9 @@ public partial class MainWindow : Window
         }
 
         _nestBusy = true;
+        _nestCts?.Dispose();
+        _nestCts = new CancellationTokenSource();
+        var cancelToken = _nestCts.Token;
         SetNestBusyUi(true);
         BeginNestProgress("密排准备中…");
         UsageLog.LogActionStart("nest.run", new Dictionary<string, object?>
@@ -4842,7 +5245,8 @@ public partial class MainWindow : Window
                         EnginePreference = enginePreference,
                         AdvancedTimeout = advancedTimeout,
                         Progress = progress,
-                    })).ConfigureAwait(true);
+                    },
+                    cancelToken)).ConfigureAwait(true);
 
             var packed = packedPair.Result;
             var engineLog = packedPair.Log;
@@ -4980,6 +5384,7 @@ public partial class MainWindow : Window
             }
 
             _showNest = true;
+            ResetSimView();
             FocusRetargetedPlacements();
             if (_stage != "nest" && _stage != "ops")
             {
@@ -5068,6 +5473,18 @@ public partial class MainWindow : Window
             RefreshWorkflowDots();
             CanvasHost.InvalidateVisual();
         }
+        catch (OperationCanceledException) when (cancelToken.IsCancellationRequested)
+        {
+            SetStatus(_nest is { Ok: true }
+                ? "已取消密排 · 保留上一次结果"
+                : "已取消密排", StatusKind.Warning);
+            UsageLog.LogActionResult("nest.run", new Dictionary<string, object?>
+            {
+                ["ok"] = false,
+                ["withNc"] = withNc,
+                ["cancelled"] = true,
+            });
+        }
         catch (Exception ex)
         {
             SetStatus("密排失败: " + ex.Message, StatusKind.Error);
@@ -5082,11 +5499,23 @@ public partial class MainWindow : Window
             EndNestProgress();
             SetNestBusyUi(false);
             _nestBusy = false;
+            _nestCts?.Dispose();
+            _nestCts = null;
         }
         // Keep the worker warm, but only after the busy state is released: awaiting it inside
         // the try block kept the buttons disabled and the progress bar full for seconds after
         // the nest had actually finished.
         _ = RefreshWorkerAsync();
+    }
+
+    CancellationTokenSource? _nestCts;
+
+    void OnNestCancelClick(object sender, RoutedEventArgs e)
+    {
+        if (_nestCts is null || _nestCts.IsCancellationRequested) return;
+        _nestCts.Cancel();
+        NestCancelBtn.IsEnabled = false;
+        SetStatus("正在停止密排…", StatusKind.Busy);
     }
 
     void BeginNestProgress(string message)
@@ -5096,6 +5525,8 @@ public partial class MainWindow : Window
         NestProgress.Minimum = 0;
         NestProgress.Maximum = 100;
         NestProgress.Value = 0;
+        NestCancelBtn.IsEnabled = true;
+        NestCancelBtn.Visibility = Visibility.Visible;
         SetStatus(message);
     }
 
@@ -5104,6 +5535,7 @@ public partial class MainWindow : Window
         NestProgress.IsIndeterminate = false;
         NestProgress.Value = 0;
         NestProgress.Visibility = Visibility.Collapsed;
+        NestCancelBtn.Visibility = Visibility.Collapsed;
     }
 
     void OnNestProgress(NestProgressReport report)
@@ -5267,17 +5699,23 @@ public partial class MainWindow : Window
 
     async void OnOpenClick(object sender, RoutedEventArgs e)
     {
+        if (!ConfirmDiscardUnsavedWork("打开另一份方案")) return;
         var dlg = new OpenFileDialog
         {
             Filter = "OmniCam job|*.cnjob;*.zip;*.json;manifest.json|Manufacturing snapshot (*.cnjob)|*.cnjob|WoodJob zip (*.zip)|*.zip|JSON package (*.json)|*.json|All|*.*",
-            Title = "Open Fusion .cnjob / manufacturing-snapshot (or woodjob / cut-package)",
+            Title = "打开方案：Fusion .cnjob / manufacturing-snapshot（也支持 woodjob / cut-package）",
         };
         if (dlg.ShowDialog() != true) return;
-        var result = _session.OpenPackageFile(dlg.FileName);
+        await OpenPackagePathAsync(dlg.FileName);
+    }
+
+    async Task OpenPackagePathAsync(string path)
+    {
+        var result = _session.OpenPackageFile(path);
         if (!result.Ok)
         {
             SetStatus("导入失败: " + string.Join("; ", result.Errors.Select(x => $"{x.Path}: {x.Message}")), StatusKind.Error);
-            ShowImportDialog(false, "载入方案", Path.GetFileName(dlg.FileName), result);
+            ShowImportDialog(false, "载入方案", Path.GetFileName(path), result);
             return;
         }
         ClearManufacturingState();
@@ -5291,9 +5729,135 @@ public partial class MainWindow : Window
         _stageChanging = false;
         ApplyStageVisibility();
         UpdateStageChrome();
-        SetStatus($"Opened {Path.GetFileName(dlg.FileName)} · panels={_session.Package!.Panels.Count} · {_session.Package.SchemaName}");
-        ShowImportDialog(true, "载入方案", Path.GetFileName(dlg.FileName), result);
+        RememberRecentFile(path, "package");
+        MarkWorkSaved();
+        SetStatus($"已打开 {Path.GetFileName(path)} · {_session.Package!.Panels.Count} 块板 · {_session.Package.SchemaName}", StatusKind.Success);
+        ShowImportDialog(true, "载入方案", Path.GetFileName(path), result);
         await RefreshWorkerAsync();
+    }
+
+    /// <summary>Open / import guard: offer to save first when the current work would be lost.</summary>
+    bool ConfirmDiscardUnsavedWork(string action)
+    {
+        if (!HasUnsavedWork()) return true;
+        var r = MessageBox.Show(this,
+            $"当前工程「{_session.ResolvedProjectName}」有未保存的改动。\n\n{action}前先保存吗？",
+            "未保存的改动",
+            MessageBoxButton.YesNoCancel,
+            MessageBoxImage.Warning,
+            MessageBoxResult.Yes);
+        if (r == MessageBoxResult.Cancel) return false;
+        if (r == MessageBoxResult.Yes) return TrySaveProjectInteractive();
+        return true;
+    }
+
+    // ----- recent files ---------------------------------------------------------------
+
+    const int RecentFilesMax = 10;
+
+    void RememberRecentFile(string path, string kind)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        var full = Path.GetFullPath(path);
+        _library.RecentFiles.RemoveAll(r => string.Equals(r.Path, full, StringComparison.OrdinalIgnoreCase));
+        _library.RecentFiles.Insert(0, new RecentFile { Path = full, Kind = kind, OpenedAt = DateTimeOffset.Now.ToString("o") });
+        if (_library.RecentFiles.Count > RecentFilesMax)
+            _library.RecentFiles.RemoveRange(RecentFilesMax, _library.RecentFiles.Count - RecentFilesMax);
+        try
+        {
+            WorkshopLibraryStore.Save(_library);
+        }
+        catch
+        {
+            // recent list is a convenience; never let it break an open
+        }
+        RefreshRecentUi();
+    }
+
+    void RefreshRecentUi()
+    {
+        if (RecentMenu is null) return;
+        RecentMenu.Items.Clear();
+        var items = _library.RecentFiles.Where(r => !string.IsNullOrWhiteSpace(r.Path)).ToList();
+        if (items.Count == 0)
+        {
+            RecentMenu.Items.Add(new MenuItem { Header = "（暂无）", IsEnabled = false });
+        }
+        else
+        {
+            foreach (var r in items)
+            {
+                var exists = File.Exists(r.Path) || Directory.Exists(r.Path);
+                var mi = new MenuItem
+                {
+                    Header = $"{KindGlyph(r.Kind)} {Path.GetFileName(r.Path)}",
+                    InputGestureText = Path.GetDirectoryName(r.Path),
+                    Tag = r,
+                    IsEnabled = exists,
+                    ToolTip = exists ? r.Path : r.Path + "（文件已不存在）",
+                };
+                mi.Click += OnRecentFileClick;
+                RecentMenu.Items.Add(mi);
+            }
+            RecentMenu.Items.Add(new Separator());
+            var clear = new MenuItem { Header = "清除列表" };
+            clear.Click += (_, _) => { _library.RecentFiles.Clear(); PersistLibrary(); RefreshRecentUi(); };
+            RecentMenu.Items.Add(clear);
+        }
+
+        if (EmptyRecentPanel is null) return;
+        EmptyRecentPanel.Children.Clear();
+        var recent = items.Where(r => File.Exists(r.Path) || Directory.Exists(r.Path)).Take(5).ToList();
+        EmptyRecentPanel.Visibility = recent.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (recent.Count == 0) return;
+        EmptyRecentPanel.Children.Add(new TextBlock
+        {
+            Text = "最近打开",
+            Style = (Style)FindResource("FieldLabel"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 4),
+        });
+        foreach (var r in recent)
+        {
+            var b = new Button
+            {
+                Content = $"{KindGlyph(r.Kind)} {Path.GetFileName(r.Path)}",
+                Style = (Style)FindResource("LinkButton"),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 1, 0, 1),
+                Tag = r,
+                ToolTip = r.Path,
+            };
+            b.Click += OnRecentFileClick;
+            EmptyRecentPanel.Children.Add(b);
+        }
+    }
+
+    static string KindGlyph(string kind) => kind switch
+    {
+        "project" => "工程",
+        "anc" => ".anc",
+        _ => "方案",
+    };
+
+    async void OnRecentFileClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: RecentFile r }) return;
+        if (!File.Exists(r.Path) && !Directory.Exists(r.Path))
+        {
+            SetStatus($"文件已不存在：{r.Path}", StatusKind.Warning);
+            _library.RecentFiles.RemoveAll(x => string.Equals(x.Path, r.Path, StringComparison.OrdinalIgnoreCase));
+            PersistLibrary();
+            RefreshRecentUi();
+            return;
+        }
+        if (!ConfirmDiscardUnsavedWork("打开最近文件")) return;
+        switch (r.Kind)
+        {
+            case "project": OpenProjectPath(r.Path); break;
+            case "anc": await ImportAncPathAsync(r.Path); break;
+            default: await OpenPackagePathAsync(r.Path); break;
+        }
     }
 
     async void OnAddPackageClick(object sender, RoutedEventArgs e)
@@ -5320,6 +5884,7 @@ public partial class MainWindow : Window
                 return;
             }
             names.Add(Path.GetFileName(path));
+            RememberRecentFile(path, "package");
         }
 
         ClearManufacturingState();
@@ -5340,16 +5905,22 @@ public partial class MainWindow : Window
 
     async void OnImportAncClick(object sender, RoutedEventArgs e)
     {
+        if (!ConfirmDiscardUnsavedWork("从 .anc 反推")) return;
         var dlg = new OpenFileDialog
         {
             Filter = "Troy OSAI (*.anc;*.nc)|*.anc;*.nc|All|*.*",
             Title = "从机台 .anc / .nc 反推板件",
         };
         if (dlg.ShowDialog() != true) return;
+        await ImportAncPathAsync(dlg.FileName);
+    }
+
+    async Task ImportAncPathAsync(string path)
+    {
         string nc;
         try
         {
-            nc = File.ReadAllText(dlg.FileName);
+            nc = File.ReadAllText(path);
         }
         catch (Exception ex)
         {
@@ -5367,15 +5938,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        var jobId = Path.GetFileNameWithoutExtension(dlg.FileName);
-        _session.AcceptPackage(NcReverse.ToPackage(result, jobId), dlg.FileName);
+        var jobId = Path.GetFileNameWithoutExtension(path);
+        _session.AcceptPackage(NcReverse.ToPackage(result, jobId), path);
         ClearManufacturingState();
         _module = "remnants";
         HighlightModule();
         ApplyModuleVisibility();
         BindPackage();
         RefreshRecutPanelList();
-        SetStatus($"从 {Path.GetFileName(dlg.FileName)} 反推 {result.Panels.Count} 块板 · 勾选后点「重切勾选的板」");
+        RememberRecentFile(path, "anc");
+        MarkWorkSaved();
+        SetStatus($"从 {Path.GetFileName(path)} 反推 {result.Panels.Count} 块板 · 勾选后点「重切勾选的板」", StatusKind.Success);
         await RefreshWorkerAsync();
     }
 
@@ -5417,36 +5990,42 @@ public partial class MainWindow : Window
 
     void OnOpenProjectClick(object sender, RoutedEventArgs e)
     {
+        if (!ConfirmDiscardUnsavedWork("打开另一个工程")) return;
         var dlg = new OpenFileDialog
         {
             Filter = "OmniCam project|project.db;*.db|All|*.*",
             Title = "打开工程",
         };
         if (dlg.ShowDialog() != true) return;
-        var doc = _store.Load(dlg.FileName);
+        OpenProjectPath(dlg.FileName);
+    }
+
+    void OpenProjectPath(string projectPath)
+    {
+        var doc = _store.Load(projectPath);
         if (doc is null)
         {
             SetStatus("工程为空或无法读取");
-            ShowImportDialog(false, "打开工程", Path.GetFileName(dlg.FileName), null, "工程为空或无法读取");
+            ShowImportDialog(false, "打开工程", Path.GetFileName(projectPath), null, "工程为空或无法读取");
             return;
         }
         var result = _session.OpenPackageJson(
             doc.PackageJson,
-            dlg.FileName,
+            projectPath,
             doc.SourceSnapshotJson);
         if (!result.Ok)
         {
             SetStatus("工程中的方案无效: " + string.Join("; ", result.Errors.Select(x => x.Message)), StatusKind.Error);
-            ShowImportDialog(false, "打开工程", Path.GetFileName(dlg.FileName), result);
+            ShowImportDialog(false, "打开工程", Path.GetFileName(projectPath), result);
             return;
         }
 
         ClearManufacturingState();
         _session.MachineId = doc.MachineId;
-        _session.SetProjectDbPath(dlg.FileName);
+        _session.SetProjectDbPath(projectPath);
         _session.ProjectName = string.IsNullOrWhiteSpace(doc.Name) ? null : doc.Name;
         if (string.IsNullOrWhiteSpace(_session.ProjectName))
-            _session.SuggestProjectName(_session.Package?.JobId, dlg.FileName);
+            _session.SuggestProjectName(_session.Package?.JobId, projectPath);
         SyncMachineSelection(doc.MachineId);
 
         var session = ProjectSessionCodec.Deserialize(doc.SessionJson);
@@ -5509,8 +6088,10 @@ public partial class MainWindow : Window
             NcPreview.Text = doc.NcText;
         UpdateNestSheetChrome();
         CanvasHost.InvalidateVisual();
-        SetStatus($"Opened project · panels={_session.Package!.Panels.Count} · nest={places.Count} · ops={_opsOverlay.Count} · {doc.Name}");
-        ShowImportDialog(true, "打开工程", Path.GetFileName(dlg.FileName), result,
+        RememberRecentFile(projectPath, "project");
+        MarkWorkSaved();
+        SetStatus($"已打开工程 {doc.Name} · {_session.Package!.Panels.Count} 块板 · 摆位 {places.Count} · 刀路 {_opsOverlay.Count}", StatusKind.Success);
+        ShowImportDialog(true, "打开工程", Path.GetFileName(projectPath), result,
             $"工程名: {doc.Name}\n机型: {doc.MachineId}\n已恢复摆位: {places.Count}\n刀路: {_opsOverlay.Count}\n桥: {_profileBridges.Count}");
     }
 
@@ -5631,12 +6212,15 @@ public partial class MainWindow : Window
         }
     }
 
-    void OnSaveProjectClick(object sender, RoutedEventArgs e)
+    void OnSaveProjectClick(object sender, RoutedEventArgs e) => TrySaveProjectInteractive();
+
+    /// <summary>Save dialog + write; false when the operator cancelled or nothing is loaded.</summary>
+    bool TrySaveProjectInteractive()
     {
         if (_session.Package is null || string.IsNullOrWhiteSpace(_session.PackageJson))
         {
             SetStatus("请先载入方案再保存工程");
-            return;
+            return false;
         }
 
         var defaultName = ExportNaming.FileStem(_session.ResolvedProjectName) + ".db";
@@ -5648,7 +6232,7 @@ public partial class MainWindow : Window
         };
         if (!string.IsNullOrEmpty(_session.ProjectDbPath))
             dlg.InitialDirectory = Path.GetDirectoryName(_session.ProjectDbPath);
-        if (dlg.ShowDialog() != true) return;
+        if (dlg.ShowDialog() != true) return false;
 
         var nestJson = _nest is { Ok: true }
             ? SqliteProjectStore.SerializeNest(_nest.Placements.Select(p => new NestPlacementDto
@@ -5683,6 +6267,8 @@ public partial class MainWindow : Window
         _session.SetProjectDbPath(dlg.FileName);
         _session.MachineId = SelectedMachineId();
         _session.LabelerMachineId = SelectedLabelerMachineId();
+        RememberRecentFile(dlg.FileName, "project");
+        MarkWorkSaved();
         SetStatus($"已保存工程 → {dlg.FileName}");
         UsageLog.LogActionResult("project.save", new Dictionary<string, object?>
         {
@@ -5695,6 +6281,7 @@ public partial class MainWindow : Window
             ["machineId"] = SelectedMachineId(),
             ["stage"] = _stage,
         });
+        return true;
     }
 
     async void OnPingClick(object sender, RoutedEventArgs e) => await RefreshWorkerAsync(announce: true);
@@ -6077,7 +6664,7 @@ public partial class MainWindow : Window
         {
             Filter = "NC (*.nc)|*.nc|G-code (*.ngc)|*.ngc|All|*.*",
             FileName = $"{SelectedMachineId()}.nc",
-            Title = "Save NC",
+            Title = "保存 NC",
         };
         if (dlg.ShowDialog() != true) return;
         File.WriteAllText(dlg.FileName, text);
@@ -6209,7 +6796,7 @@ public partial class MainWindow : Window
         if (source is not DependencyObject d) return false;
         while (d is not null)
         {
-            if (d is FrameworkElement { Name: "NestCanvasChrome" or "NestSheetPrevBtn" or "NestSheetNextBtn" or "NestCreatePanelBtn" or "OutSimChrome" })
+            if (d is FrameworkElement { Name: "NestCanvasChrome" or "NestSheetPrevBtn" or "NestSheetNextBtn" or "NestCreatePanelBtn" or "OutSimChrome" or "ViewportTools" or "ToastHost" })
                 return true;
             if (d is System.Windows.Controls.Primitives.ButtonBase)
                 return true;
@@ -6433,6 +7020,7 @@ public partial class MainWindow : Window
     void OnCanvasMove(object sender, MouseEventArgs e)
     {
         var (x, y) = CanvasPixelPos(e);
+        UpdateViewportReadout(x, y);
 
         if (_simPanning)
         {
@@ -7943,20 +8531,11 @@ public partial class MainWindow : Window
         {
             var (sw, sh, _) = ActiveSheetMetrics();
             var bay = _stage == "nest" ? CanvasPainter.NestHoldingBayWidth : 0f;
-            var pad = _stage == "out" ? 56f : 44f;
-            var availW = Math.Max(1f, e.Info.Width - bay - pad);
-            var fitScale = Math.Min(availW / sw, (e.Info.Height - 2 * pad) / sh) * 0.9f;
+            var (fitScale, pad) = CurrentNestFit();
             if (fitScale <= 0) return;
-            var scale = fitScale;
-            var ox = pad;
-            var oy = pad;
-            if (_stage == "out")
-            {
-                var view = ResolveSimView(fitScale, pad);
-                scale = view.Scale;
-                ox = view.Ox;
-                oy = view.Oy;
-            }
+            // User zoom/pan applies on every stage that shows the sheet (CAD convention);
+            // ResolveSimView falls back to the fit when the user has not zoomed.
+            var (scale, ox, oy) = ResolveSimView(fitScale, pad);
             _nestPad = pad;
             _nestScale = scale;
             _nestOriginX = ox;
@@ -8342,9 +8921,86 @@ public partial class MainWindow : Window
     {
         var empty = string.IsNullOrWhiteSpace(_session.ProjectName) && _session.Package is null;
         var name = _session.ResolvedProjectName;
-        Title = empty ? "OmniCam" : "OmniCam — " + name;
+        var dirty = !empty && HasUnsavedWork();
+        Title = empty ? "OmniCam" : "OmniCam — " + name + (dirty ? " *" : "");
         if (ProjectNameBadge is not null)
-            ProjectNameBadge.Text = empty ? "" : name;
+            ProjectNameBadge.Text = empty ? "" : name + (dirty ? " *" : "");
+    }
+
+    // ----- unsaved-work model --------------------------------------------------------
+    // The project file holds package + nest + CAM session. "Unsaved" therefore means the
+    // fingerprint of that saveable content differs from the last open/save, with view-only
+    // state (stage, active sheet, selection) excluded so switching tabs never looks like work.
+
+    string? _savedWorkFingerprint;
+
+    string WorkFingerprint()
+    {
+        if (_session.Package is null) return "";
+        var s = CaptureProjectSession();
+        s.Stage = "";
+        s.ActiveNestSheet = 0;
+        s.OpsAllSheets = true;
+        s.ShowNest = false;
+        s.SelectedExportFile = null;
+        var nest = _nest is { Ok: true }
+            ? string.Join(";", _nest.Placements.Select(p =>
+                string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                    $"{p.PanelId}:{p.SheetIndex}:{p.OffsetX:0.###}:{p.OffsetY:0.###}:{p.RotationDeg:0.#}")))
+            : "";
+        var raw = string.Concat(
+            _session.PackageJson ?? "", "\n",
+            nest, "\n",
+            ProjectSessionCodec.Serialize(s), "\n",
+            _session.ResolvedProjectName, "\n",
+            SelectedMachineId());
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw)));
+    }
+
+    bool HasUnsavedWork()
+    {
+        if (_session.Package is null) return false;
+        try
+        {
+            return WorkFingerprint() != _savedWorkFingerprint;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Baseline after open/save: what is on screen now is what is on disk.</summary>
+    void MarkWorkSaved()
+    {
+        try
+        {
+            _savedWorkFingerprint = _session.Package is null ? null : WorkFingerprint();
+        }
+        catch
+        {
+            _savedWorkFingerprint = null;
+        }
+        ApplyProjectNameChrome();
+    }
+
+    /// <summary>Standard close guard: save / discard / cancel when work would be lost.</summary>
+    void OnWindowClosing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (!HasUnsavedWork()) return;
+        var r = MessageBox.Show(this,
+            $"工程「{_session.ResolvedProjectName}」有未保存的改动（板件、密排或刀路）。\n\n关闭前保存吗？",
+            "未保存的改动",
+            MessageBoxButton.YesNoCancel,
+            MessageBoxImage.Warning,
+            MessageBoxResult.Yes);
+        if (r == MessageBoxResult.Cancel)
+        {
+            e.Cancel = true;
+            return;
+        }
+        if (r == MessageBoxResult.Yes && !TrySaveProjectInteractive())
+            e.Cancel = true;
     }
 
     PanelPart? PanelOnSheet(int sheetIndex, IEnumerable<string?> opPanelIds)

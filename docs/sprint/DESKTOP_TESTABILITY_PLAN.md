@@ -72,5 +72,8 @@
 |------|---------------------------|---------------------|------------------------|----------------------|
 | 2026-09-02 | 7 395 | 0 | 20 | 16 |
 | 2026-09-02（UI 改版后） | 7 799（+404：状态/通知系统、引导态、快捷键、导出流程；样式已移出到 `Theme.xaml` 442 行） | 0 | 20 | 16（预检 Yes/No 改为专用对话框，快捷键说明用了一个新的） |
+| 2026-09-03（CAD/CAM 惯例对照后） | 约 8 100（+300：全阶段视口、仿真传输/DRO/代码联动、菜单命令、回车提交） | 0 | 20 | 16 |
+
+阶段 3 的候选又多了一块：视口状态（`_simUserScale/_simOx/_simOy` + `CurrentNestFit/ZoomViewportAt/FitViewport`）和仿真状态（`_ncSimTime/_ncSimStarts` + `SeekNcSimToStroke/HighlightNcLine`）都是纯状态机，适合先搬进 `Desktop.Core` 并配单测。
 
 说明：UI 改版把"状态栏 + Toast + 作废横幅 + 步骤标签"的逻辑全部写在了 code-behind 里，是阶段 1/2 拆分时第一批要搬进 `Desktop.Core` 的内容（`SetStatus/InferStatusKind`、`ShowToast`、`RefreshStaleBanner`、`RefreshWorkflowDots`、`AnnounceExport` 都是纯函数或接近纯函数）。

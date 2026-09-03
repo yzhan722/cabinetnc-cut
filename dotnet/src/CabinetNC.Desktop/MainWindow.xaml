@@ -136,6 +136,87 @@
   </Window.Resources>
 
   <DockPanel>
+    <!-- Menu bar: the discoverable, complete command surface every CAD/CAM app has.
+         Buttons below stay for the frequent actions; the menu shows every shortcut. -->
+    <Menu DockPanel.Dock="Top" Background="{StaticResource ChromeBrush}" BorderBrush="{StaticResource BorderBrush}"
+          BorderThickness="0,0,0,1" Padding="6,1" FontSize="13">
+      <MenuItem Header="文件(_F)">
+        <MenuItem Header="打开方案…" InputGestureText="Ctrl+O" Click="OnOpenClick" />
+        <MenuItem Header="加入方案…" Click="OnAddPackageClick" ToolTip="再打开一份或多份 .cnjob，和当前板件并列密排" />
+        <MenuItem Header="从 .anc 反推…" Click="OnImportAncClick" />
+        <MenuItem Header="打开示例" Click="OnLoadDemoClick" />
+        <MenuItem x:Name="RecentMenu" Header="最近打开">
+          <MenuItem Header="（暂无）" IsEnabled="False" />
+        </MenuItem>
+        <Separator />
+        <MenuItem Header="打开工程…" InputGestureText="Ctrl+Shift+O" Click="OnOpenProjectClick" />
+        <MenuItem Header="保存工程" InputGestureText="Ctrl+S" Click="OnSaveProjectClick" />
+        <Separator />
+        <MenuItem Header="退出" InputGestureText="Alt+F4" Click="OnExitClick" />
+      </MenuItem>
+      <MenuItem Header="编辑(_E)">
+        <MenuItem Header="撤销" InputGestureText="Ctrl+Z" Click="OnMenuUndoClick" />
+        <MenuItem Header="重做" InputGestureText="Ctrl+Y" Click="OnMenuRedoClick" />
+        <Separator />
+        <MenuItem Header="复制板件" InputGestureText="Ctrl+C" Click="OnGeomDuplicateClick" />
+        <MenuItem Header="剪切板件" InputGestureText="Ctrl+X" Click="OnCutPanelClick" />
+        <MenuItem Header="粘贴板件" InputGestureText="Ctrl+V" Click="OnPastePanelClick" />
+        <MenuItem Header="删除整板" InputGestureText="Delete" Click="OnDeletePanelClick" />
+        <Separator />
+        <MenuItem Header="镜像 X" Click="OnGeomMirrorXClick" />
+        <MenuItem Header="镜像 Y" Click="OnGeomMirrorYClick" />
+        <MenuItem Header="创建板件…" Click="OnCreatePanelClick" />
+      </MenuItem>
+      <MenuItem Header="视图(_V)">
+        <MenuItem Header="适配大板" InputGestureText="F / Home" Click="OnViewFitClick" />
+        <MenuItem Header="放大" InputGestureText="+" Click="OnViewZoomInClick" />
+        <MenuItem Header="缩小" InputGestureText="−" Click="OnViewZoomOutClick" />
+        <Separator />
+        <MenuItem Header="上一张大板" Click="OnNestSheetPrevClick" />
+        <MenuItem Header="下一张大板" Click="OnNestSheetNextClick" />
+        <Separator />
+        <MenuItem Header="1 载入方案" InputGestureText="Ctrl+1" Tag="load" Click="OnStageMenuClick" />
+        <MenuItem Header="2 板材与设备" InputGestureText="Ctrl+2" Tag="stock" Click="OnStageMenuClick" />
+        <MenuItem Header="3 密排" InputGestureText="Ctrl+3" Tag="nest" Click="OnStageMenuClick" />
+        <MenuItem Header="4 刀路与加工档" InputGestureText="Ctrl+4" Tag="ops" Click="OnStageMenuClick" />
+        <MenuItem Header="5 导出" InputGestureText="Ctrl+5" Tag="out" Click="OnStageMenuClick" />
+      </MenuItem>
+      <MenuItem Header="密排(_N)">
+        <MenuItem Header="初始密排" Click="OnStockInitialNestClick" ToolTip="按板材与设备页的参数生成第一版密排" />
+        <MenuItem Header="重新密排" Click="OnApplyNestSettingsClick" />
+        <MenuItem Header="本张密排优化" Click="OnNestStabilizeClick" />
+        <Separator />
+        <MenuItem Header="锁定摆位" Click="OnLockPlaceClick" />
+      </MenuItem>
+      <MenuItem Header="刀路(_C)">
+        <MenuItem Header="计算当前板材" Click="OnOpsCalculateCurrentClick" />
+        <MenuItem Header="计算全部" Click="OnOpsCalculateAllClick" />
+        <Separator />
+        <MenuItem Header="预检…" Click="OnPreflightClick" ToolTip="检查深度、顺序、刀具、定位等硬门" />
+      </MenuItem>
+      <MenuItem Header="导出(_X)">
+        <MenuItem Header="一键导出（Sheet×Tool 包）" InputGestureText="Ctrl+E" Click="OnOneClickExportClick" />
+        <Separator />
+        <MenuItem Header="导出当前大板 .anc" Click="OnExportSelectedClick" />
+        <MenuItem Header="导出当前板材种类 .anc" Click="OnExportKindClick" />
+        <MenuItem Header="导出全部 .anc" Click="OnExportAllClick" />
+        <Separator />
+        <MenuItem Header="这张大板 DXF" Click="OnExportDxfSheetClick" />
+        <MenuItem Header="按种类导出 DXF" Click="OnExportDxfKindClick" />
+        <MenuItem Header="工单 HTML…" Click="OnExportJobSheetClick" />
+        <MenuItem Header="cut-package JSON…" Click="OnExportJsonClick" />
+      </MenuItem>
+      <MenuItem Header="帮助(_H)">
+        <MenuItem Header="快捷键" Click="OnShortcutsClick" />
+        <MenuItem Header="上机检查单在哪里" Click="OnHelpChecklistClick" />
+        <Separator />
+        <MenuItem Header="使用日志…" Click="OnOpenUsageLogsClick" />
+        <MenuItem Header="计算引擎自检 (Ping)" Click="OnPingClick" />
+        <Separator />
+        <MenuItem Header="关于 OmniCam…" Click="OnAboutClick" />
+      </MenuItem>
+    </Menu>
+
     <!-- Top chrome -->
     <Border DockPanel.Dock="Top" Padding="14,8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Background="{StaticResource ChromeBrush}">
       <Grid>
@@ -197,6 +278,7 @@
           <ColumnDefinition Width="Auto" />
           <ColumnDefinition Width="Auto" />
           <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <TextBlock x:Name="StatusGlyph" Grid.Column="0" Text="&#xE946;" Style="{StaticResource IconText}"
                    FontSize="13" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,8,0" />
@@ -205,14 +287,22 @@
                    Foreground="{StaticResource TextBrush}" />
         <TextBlock x:Name="StatusTime" Grid.Column="2" Text="" VerticalAlignment="Center"
                    FontSize="11" Foreground="{StaticResource TextMutedBrush}" Margin="0,0,14,0" />
-        <ProgressBar x:Name="NestProgress" Grid.Column="3" Width="140" Height="6"
-                     Margin="0,0,14,0" Minimum="0" Maximum="100" Value="0"
-                     Visibility="Collapsed" VerticalAlignment="Center" />
-        <TextBlock x:Name="ProjectNameBadge" Grid.Column="4" Text=""
+        <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,14,0">
+          <ProgressBar x:Name="NestProgress" Width="140" Height="6"
+                       Minimum="0" Maximum="100" Value="0"
+                       Visibility="Collapsed" VerticalAlignment="Center" />
+          <Button x:Name="NestCancelBtn" Content="取消" Click="OnNestCancelClick" Visibility="Collapsed"
+                  Style="{StaticResource GhostButton}" Padding="8,1" MinHeight="20" FontSize="11" Margin="6,0,0,0"
+                  ToolTip="停止本次密排，保留上一次结果" />
+        </StackPanel>
+        <TextBlock x:Name="CursorReadout" Grid.Column="4" Text="" VerticalAlignment="Center"
+                   FontFamily="Consolas" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"
+                   Margin="0,0,16,0" MinWidth="0" ToolTip="光标在大板上的坐标（mm，原点=大板左下角）与当前缩放" />
+        <TextBlock x:Name="ProjectNameBadge" Grid.Column="5" Text=""
                    VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource NavyBrush}"
                    FontWeight="SemiBold" Margin="0,0,14,0" TextTrimming="CharacterEllipsis"
                    MaxWidth="280" />
-        <TextBlock x:Name="WorkerBadge" Grid.Column="5" Text="计算引擎 · 本地"
+        <TextBlock x:Name="WorkerBadge" Grid.Column="6" Text="计算引擎 · 本地"
                    VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource TextMutedBrush}"
                    ToolTip="排版与刀路在本机计算。「更多 → 计算引擎自检」可检查独立 Worker 进程。" />
       </Grid>
@@ -322,11 +412,46 @@
                     </Setter>
                   </Style>
                 </TabControl.Resources>
-                <TabItem x:Name="TabLoad" Tag="load" Header="1 载入方案" />
-                <TabItem x:Name="TabStock" Tag="stock" Header="2 板材与设备" />
-                <TabItem x:Name="TabNest" Tag="nest" Header="3 密排" />
-                <TabItem x:Name="TabOps" Tag="ops" Header="4 刀路与加工档" />
-                <TabItem x:Name="TabOut" Tag="out" Header="5 导出" />
+                <TabItem x:Name="TabLoad" Tag="load" AutomationProperties.Name="1 载入方案">
+                  <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="&#xE8E5;" Style="{StaticResource IconText}" FontSize="13" Margin="0,0,6,0" />
+                      <TextBlock Text="1 载入方案" />
+                    </StackPanel>
+                  </TabItem.Header>
+                </TabItem>
+                <TabItem x:Name="TabStock" Tag="stock" AutomationProperties.Name="2 板材与设备">
+                  <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="&#xE8F1;" Style="{StaticResource IconText}" FontSize="13" Margin="0,0,6,0" />
+                      <TextBlock Text="2 板材与设备" />
+                    </StackPanel>
+                  </TabItem.Header>
+                </TabItem>
+                <TabItem x:Name="TabNest" Tag="nest" AutomationProperties.Name="3 密排">
+                  <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="&#xE8A9;" Style="{StaticResource IconText}" FontSize="13" Margin="0,0,6,0" />
+                      <TextBlock Text="3 密排" />
+                    </StackPanel>
+                  </TabItem.Header>
+                </TabItem>
+                <TabItem x:Name="TabOps" Tag="ops" AutomationProperties.Name="4 刀路与加工档">
+                  <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="&#xE9F5;" Style="{StaticResource IconText}" FontSize="13" Margin="0,0,6,0" />
+                      <TextBlock Text="4 刀路与加工档" />
+                    </StackPanel>
+                  </TabItem.Header>
+                </TabItem>
+                <TabItem x:Name="TabOut" Tag="out" AutomationProperties.Name="5 导出">
+                  <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="&#xE896;" Style="{StaticResource IconText}" FontSize="13" Margin="0,0,6,0" />
+                      <TextBlock Text="5 导出" />
+                    </StackPanel>
+                  </TabItem.Header>
+                </TabItem>
               </TabControl>
               <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
                 <StackPanel x:Name="WfDots" Orientation="Horizontal" Margin="0,0,10,0" VerticalAlignment="Center" />
@@ -411,6 +536,7 @@
                                             PreviewMouseRightButtonUp="OnPackageGroupRightUp">
                                     <Expander.ContextMenu>
                                       <ContextMenu Opened="OnPackageGroupMenuOpened">
+                                        <MenuItem Header="重命名种类…" Click="OnRenameKindMenuClick" />
                                         <MenuItem Header="移出这份方案…" Click="OnRemovePackageClick" />
                                       </ContextMenu>
                                     </Expander.ContextMenu>
@@ -423,6 +549,13 @@
                                                   Focusable="False"
                                                   Visibility="{Binding StockKindPickerVisible, RelativeSource={RelativeSource AncestorType=Window}}"
                                                   PreviewMouseLeftButtonDown="OnStockKindPickDown" />
+                                        <!-- Visible entry point for the header actions (rename / unload) — right-click and
+                                             double-click still work, but nothing on screen used to hint at them. -->
+                                        <Button DockPanel.Dock="Right" Content="&#xE712;" AutomationProperties.Name="更多操作"
+                                                FontFamily="{StaticResource IconFont}" FontSize="12"
+                                                Style="{StaticResource GhostButton}" Padding="4,0" MinHeight="18" Margin="4,0,0,0"
+                                                Foreground="#12314F" Focusable="False"
+                                                PreviewMouseLeftButtonDown="OnGroupMoreDown" ToolTip="重命名种类 / 移出方案" />
                                         <TextBlock DockPanel.Dock="Right"
                                                    VerticalAlignment="Center"
                                                    Foreground="#12314F" FontSize="12" FontWeight="Bold">
@@ -514,12 +647,21 @@
             <Border x:Name="OutGcodePane" Grid.Column="0" Background="#1E1E1E" BorderBrush="#C8C8C8"
                     BorderThickness="0,0,1,0" Visibility="Collapsed">
               <DockPanel>
-                <TextBlock DockPanel.Dock="Top" Text="G-code" Foreground="#CFCFCF" FontWeight="SemiBold"
-                           Margin="12,10,12,6" />
-                <TextBox x:Name="NcPreview" IsReadOnly="True" AcceptsReturn="True"
-                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                         FontFamily="Consolas" FontSize="12"
-                         Background="#1E1E1E" Foreground="#D4D4D4" BorderThickness="0" Padding="10,4,10,10" />
+                <TextBlock x:Name="GcodeHeader" DockPanel.Dock="Top" Text="G-code" Foreground="#CFCFCF" FontWeight="SemiBold"
+                           Margin="12,10,12,6" TextTrimming="CharacterEllipsis" />
+                <Grid>
+                  <TextBox x:Name="NcPreview" IsReadOnly="True" AcceptsReturn="True"
+                           VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                           FontFamily="Consolas" FontSize="12"
+                           Background="#1E1E1E" Foreground="#D4D4D4" BorderThickness="0" Padding="10,4,10,10"
+                           SelectionBrush="#3A6EA5" SelectionOpacity="0.55"
+                           PreviewMouseLeftButtonUp="OnNcPreviewClick"
+                           ToolTip="仿真时高亮当前执行行；点某一行可把仿真定位到该运动块" />
+                  <!-- Current-block marker (CAM backplot convention); positioned in code from the line rect -->
+                  <Border x:Name="NcLineHighlight" Visibility="Collapsed" IsHitTestVisible="False"
+                          HorizontalAlignment="Stretch" VerticalAlignment="Top" Margin="0,0,12,0"
+                          Background="#5C2F6FB3" BorderBrush="#FF8AB4F8" BorderThickness="3,0,0,0" />
+                </Grid>
               </DockPanel>
             </Border>
 
@@ -567,24 +709,35 @@
                   <Border VerticalAlignment="Top" Background="#F7F7F7" BorderBrush="#DDDDDD" BorderThickness="0,0,0,1" Padding="8,5">
                     <Grid>
                       <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" MinWidth="90" />
                         <ColumnDefinition Width="Auto" />
                       </Grid.ColumnDefinitions>
                       <TextBlock x:Name="OutSimTitle" Text="G-code 切割仿真" VerticalAlignment="Center"
                                  FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,0,12,0" />
                       <TextBlock x:Name="OutSimMeta" Grid.Column="1" VerticalAlignment="Center"
-                                 FontSize="11" Foreground="#666"
+                                 FontFamily="Consolas" FontSize="12" Foreground="{StaticResource TextBrush}"
                                  Text="虚线空程 · 线宽=刀径 · 橙=留 0.5 · 蓝=通切" />
                     </Grid>
                   </Border>
                   <Border VerticalAlignment="Bottom" Background="#F7F7F7" BorderBrush="#DDDDDD" BorderThickness="0,1,0,0" Padding="8,6">
                     <DockPanel>
-                      <Button x:Name="OutSimPlayBtn" Content="▶" Click="OnOutSimPlayClick"
-                              Padding="12,2" DockPanel.Dock="Left" Margin="0,0,8,0"
-                              ToolTip="播放 / 暂停" />
-                      <Button Content="复位" Click="OnOutSimResetViewClick"
-                              Padding="8,2" DockPanel.Dock="Left" Margin="0,0,8,0"
-                              ToolTip="双击中键同样复位 · 滚轮对准指针缩放 · 中键平移" />
+                      <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" Margin="0,0,10,0">
+                        <Button Click="OnOutSimToStartClick" AutomationProperties.Name="回到开头" Padding="7,2" MinHeight="26" Margin="0,0,2,0" ToolTip="回到程序开头">
+                          <TextBlock Text="&#xE892;" Style="{StaticResource IconText}" FontSize="12" />
+                        </Button>
+                        <Button Click="OnOutSimStepBackClick" AutomationProperties.Name="上一段" Padding="7,2" MinHeight="26" Margin="0,0,2,0" ToolTip="上一段运动">
+                          <TextBlock Text="&#xE76B;" Style="{StaticResource IconText}" FontSize="12" />
+                        </Button>
+                        <Button x:Name="OutSimPlayBtn" AutomationProperties.Name="播放/暂停" Content="▶" Click="OnOutSimPlayClick"
+                                Style="{StaticResource PrimaryButton}" Padding="14,2" MinHeight="26" Margin="0,0,2,0"
+                                ToolTip="播放 / 暂停（空格）" />
+                        <Button Click="OnOutSimStepForwardClick" AutomationProperties.Name="下一段" Padding="7,2" MinHeight="26" Margin="0,0,2,0" ToolTip="下一段运动">
+                          <TextBlock Text="&#xE76C;" Style="{StaticResource IconText}" FontSize="12" />
+                        </Button>
+                        <Button Click="OnOutSimToEndClick" AutomationProperties.Name="跳到结尾" Padding="7,2" MinHeight="26" Margin="0,0,0,0" ToolTip="跳到程序结尾">
+                          <TextBlock Text="&#xE893;" Style="{StaticResource IconText}" FontSize="12" />
+                        </Button>
+                      </StackPanel>
                       <ComboBox x:Name="OutSimSpeed" Width="68" DockPanel.Dock="Right"
                                 Margin="8,0,0,0" VerticalAlignment="Center"
                                 SelectedIndex="1" SelectionChanged="OnOutSimSpeedChanged">
@@ -656,8 +809,31 @@
                       <Button x:Name="EmptyAncBtn" Content="从 .anc 反推…" Click="OnImportAncClick" Padding="14,9" Margin="0,0,8,0" />
                       <Button x:Name="EmptyDemoBtn" Content="打开示例" Click="OnLoadDemoClick" Style="{StaticResource GhostButton}" Padding="14,9" />
                     </WrapPanel>
+                    <StackPanel x:Name="EmptyRecentPanel" Margin="0,18,0,0" Visibility="Collapsed" />
                     <TextBlock Text="快捷键：Ctrl+O 打开方案 · Ctrl+S 保存工程 · Ctrl+1…5 切换步骤" Style="{StaticResource CaptionText}"
-                               TextAlignment="Center" Margin="0,18,0,0" />
+                               TextAlignment="Center" Margin="0,14,0,0" />
+                  </StackPanel>
+                </Border>
+                <!-- Viewport navigation (CAD convention: bottom-centre nav bar) -->
+                <Border x:Name="ViewportTools" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                        Margin="0,0,0,40" Background="#F2FFFFFF" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                        CornerRadius="6" Padding="4,3" Panel.ZIndex="40">
+                  <StackPanel Orientation="Horizontal">
+                    <Button Click="OnViewZoomOutClick" AutomationProperties.Name="缩小" Style="{StaticResource GhostButton}" Padding="8,3" MinHeight="26" Margin="0" ToolTip="缩小（−）">
+                      <TextBlock Text="&#xE71F;" Style="{StaticResource IconText}" FontSize="13" />
+                    </Button>
+                    <TextBlock x:Name="ViewportZoomText" Text="缩放 100%" VerticalAlignment="Center" FontSize="11" MinWidth="64"
+                               TextAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}" />
+                    <Button Click="OnViewZoomInClick" AutomationProperties.Name="放大" Style="{StaticResource GhostButton}" Padding="8,3" MinHeight="26" Margin="0" ToolTip="放大（+）">
+                      <TextBlock Text="&#xE8A3;" Style="{StaticResource IconText}" FontSize="13" />
+                    </Button>
+                    <Rectangle Width="1" Height="18" Fill="{StaticResource BorderBrush}" Margin="4,0" />
+                    <Button Click="OnViewFitClick" AutomationProperties.Name="适配大板" Style="{StaticResource GhostButton}" Padding="8,3" MinHeight="26" Margin="0" ToolTip="适配整张大板（F / Home，双击中键）">
+                      <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE9A6;" Style="{StaticResource IconText}" FontSize="13" Margin="0,0,4,0" />
+                        <TextBlock Text="适配" VerticalAlignment="Center" FontSize="12" />
+                      </StackPanel>
+                    </Button>
                   </StackPanel>
                 </Border>
                 <!-- Non-blocking notifications -->

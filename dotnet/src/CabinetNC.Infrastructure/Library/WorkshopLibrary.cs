@@ -13,7 +13,17 @@ public sealed class WorkshopLibrary
     public List<LibRemnant> Remnants { get; set; } = [];
     public NestDefaults Nest { get; set; } = new();
     public LabelerDefaults Labeler { get; set; } = new();
+    /// <summary>Most recently opened jobs / projects / machine programs, newest first.</summary>
+    public List<RecentFile> RecentFiles { get; set; } = [];
     public string? SavedAt { get; set; }
+}
+
+public sealed class RecentFile
+{
+    public string Path { get; set; } = "";
+    /// <summary>package | project | anc</summary>
+    public string Kind { get; set; } = "package";
+    public string? OpenedAt { get; set; }
 }
 
 /// <summary>Shop labeler (Excitech Label Printing) settings that the NC export must agree with.</summary>

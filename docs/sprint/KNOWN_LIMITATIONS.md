@@ -74,6 +74,10 @@ came from before applying the rules below; the NC header tells you.
 
 - `CabinetNC.Desktop` (13k lines, `MainWindow.xaml.cs` ≈ 7.4k) has **no automated tests**. The Windows CI job compiles it; behaviour is verified manually. Plan: `DESKTOP_TESTABILITY_PLAN.md`.
 - Label bitmaps are written flat next to the NC and checked against every `LS11` in the program; the machine picture folder is a library setting (`Labeler.MachinePictureDir`, default `D:\CNC`).
+- Viewport zoom/pan works on nest, ops and export stages (one shared view transform); the view resets when the active sheet changes or a nest is re-run. The nest stage's holding bay is screen-anchored and covers zoomed sheet content beneath it by design.
+- Export simulation: DRO readout and code ↔ backplot sync rely on `ToolStroke.LineIndex` (source line of the block). Blocks without motion (comments, `M` codes) map to the next motion block when clicked.
+- Unsaved-work detection is a fingerprint of the saveable content (package JSON, placements, CAM session without view state, project name, machine). It is recomputed on major refreshes and on close/open, not on every drag, so the title-bar `*` can lag one action behind a nest drag.
+- Recent files live in `library.json` (`recentFiles`, max 10); a missing file is greyed in the menu and dropped when clicked.
 
 ## UIA / smoke
 
