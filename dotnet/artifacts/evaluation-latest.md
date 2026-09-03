@@ -1,6 +1,6 @@
 ﻿# CabinetNC Product Evaluation
 
-- Evaluated: 2026-09-03T16:19:02.8670905+08:00
+- Evaluated: 2026-09-03T16:24:33.6650126+08:00
 - Score: **99/100** (target 85)
 - Hard gates: **PASS**
 - Status: **READY**
@@ -10,18 +10,18 @@
 | ID | Score | Result | Evidence |
 |----|-------|--------|----------|
 | A1-import | 6/6 | PASS | tests + ui-smoke 01 (demo import) |
-| A2-nest | 8/8 | PASS | tests + ui-smoke 01/02 (nest, stale 鈫?re-nest) |
-| A3-cam-nc | 8/8 | PASS | tests + ui-smoke 01 (璁＄畻鍏ㄩ儴, sim step) |
+| A2-nest | 8/8 | PASS | tests + ui-smoke 01/02 (nest, stale -> re-nest) |
+| A3-cam-nc | 8/8 | PASS | tests + ui-smoke 01 (compute-all, sim step) |
 | A4-export | 6/6 | PASS | export sources + tests + ui-smoke 01/03 (.anc + flat BMPs) |
 | A5-persistence | 4/4 | PASS | SQLite/library sources + tests + ui-smoke 04/05 |
-| A6-modules | 3/3 | PASS | ui-smoke 03/04 (琛ユ澘搴?module) |
+| A6-modules | 3/3 | PASS | ui-smoke 03/04 (remnants module) |
 | B1-full-tests | 6/6 | PASS | D:\project\cabinetnc-cut\dotnet\artifacts\evaluation-tests.log |
 | B2-rotation-xy | 5/5 | PASS | rotation unit tests + NcSafetyInvariantTests |
 | B3-invalid-input | 3/3 | PASS | importer rejection tests + ui-smoke 05 |
 | B4-poly-gap | 4/4 | PASS | Clipper tests + ui-smoke 01 |
 | B5-preflight | 4/4 | PASS | NcPreflight tests + export gate in ui-smoke 01 |
 | B6-review-lint | 2/3 | PARTIAL | 0 CS/high-NuGet/compatibility warnings |
-| C1-startup-worker | 3/3 | PASS | ui-smoke startup (status 灏辩华) |
+| C1-startup-worker | 3/3 | PASS | ui-smoke startup (ready status) |
 | C2-stage-gates | 2/2 | PASS | ui-smoke 02 (stale banner, workflow pills) |
 | C3-module-navigation | 3/3 | PASS | ui-smoke 03/04 |
 | C4-feedback-dialog | 2/2 | PASS | toasts asserted in ui-smoke 01/04 |

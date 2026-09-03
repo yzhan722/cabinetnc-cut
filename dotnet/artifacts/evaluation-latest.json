@@ -1,7 +1,7 @@
 ﻿{
     "schema":  "cabinetnc.product-evaluation",
     "schemaVersion":  1,
-    "evaluatedAt":  "2026-09-03T16:19:02.8670905+08:00",
+    "evaluatedAt":  "2026-09-03T16:24:33.6650126+08:00",
     "targetScore":  85,
     "score":  99,
     "maxScore":  100,
@@ -29,14 +29,14 @@
                          "earned":  8,
                          "max":  8,
                          "pass":  true,
-                         "evidence":  "tests + ui-smoke 01/02 (nest, stale 鈫?re-nest)"
+                         "evidence":  "tests + ui-smoke 01/02 (nest, stale -\u003e re-nest)"
                      },
                      {
                          "id":  "A3-cam-nc",
                          "earned":  8,
                          "max":  8,
                          "pass":  true,
-                         "evidence":  "tests + ui-smoke 01 (璁＄畻鍏ㄩ儴, sim step)"
+                         "evidence":  "tests + ui-smoke 01 (compute-all, sim step)"
                      },
                      {
                          "id":  "A4-export",
@@ -57,7 +57,7 @@
                          "earned":  3,
                          "max":  3,
                          "pass":  true,
-                         "evidence":  "ui-smoke 03/04 (琛ユ澘搴?module)"
+                         "evidence":  "ui-smoke 03/04 (remnants module)"
                      },
                      {
                          "id":  "B1-full-tests",
@@ -106,7 +106,7 @@
                          "earned":  3,
                          "max":  3,
                          "pass":  true,
-                         "evidence":  "ui-smoke startup (status 灏辩华)"
+                         "evidence":  "ui-smoke startup (ready status)"
                      },
                      {
                          "id":  "C2-stage-gates",
