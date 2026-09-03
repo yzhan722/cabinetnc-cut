@@ -12,6 +12,7 @@
 #   shot:<file.png>             screenshot the main window
 #   assert-status:<substring>   status bar text must contain substring
 #   assert-title:<substring>    window title must contain substring
+#   assert-text:<x:Name>=<sub>  the TextBlock/TextBox with that AutomationId must contain <sub>
 #   assert-file:<path>          file must exist
 #   assert-nofile:<path>        file must not exist
 #   launch-arg:<path>           (before any other step) pass this file on the command line;
@@ -151,6 +152,15 @@ foreach ($s in $steps) {
             'assert-title' {
                 $p.Refresh(); $t = $p.MainWindowTitle
                 if ($t -like "*$arg*") { Ok "title contains '$arg'" } else { Fail "title '$t' does not contain '$arg'" }
+            }
+            'assert-text' {
+                $id, $sub = $arg -split '=', 2
+                $c = New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $id.Trim())
+                $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c)
+                if ($null -eq $el) { Fail "element '$id' not found"; continue }
+                $t = $el.Current.Name
+                try { $vp = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern); if ($vp) { $t = $vp.Current.Value } } catch {}
+                if ($t -like "*$sub*") { Ok "$id contains '$sub'" } else { Fail "$id text '$t' does not contain '$sub'" }
             }
             'assert-file' {
                 $f = [Environment]::ExpandEnvironmentVariables($arg)

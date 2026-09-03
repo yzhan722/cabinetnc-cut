@@ -4,6 +4,8 @@ launch-arg:../fixtures/two_panels.anc
 wait:1500
 assert-status:反推
 assert-title:two_panels
+assert-text:ReverseCompareBadge=全部归属
+assert-text:ReverseCompareMeta=板 2 + 开窗 1
 shot:07-reverse-audit.png
 invoke:生产加工
 wait:600

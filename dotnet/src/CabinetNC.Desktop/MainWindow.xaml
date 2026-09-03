@@ -1485,7 +1485,7 @@
                           <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="90" /><ColumnDefinition Width="120" /><ColumnDefinition Width="*" />
                           </Grid.ColumnDefinitions>
-                          <TextBlock Text="{Binding Id}" FontFamily="Consolas" FontSize="12" />
+                          <TextBlock Text="{Binding PanelId}" FontFamily="Consolas" FontSize="12" />
                           <TextBlock Grid.Column="1" Text="{Binding Size}" FontFamily="Consolas" FontSize="12" />
                           <TextBlock Grid.Column="2" Text="{Binding Features}" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" />
                         </Grid>

@@ -1912,8 +1912,6 @@ public partial class MainWindow : Window
     NcReverseResult? _lastReverse;
     string? _lastReverseFile;
 
-    sealed record ReverseCompareRow(string Id, string Size, string Features);
-
     /// <summary>
     /// Recut audit (J5): the operator needs to see that every closed profile and every hole/groove
     /// in the machine program ended up on a recovered panel before cutting a replacement.
@@ -1927,51 +1925,15 @@ public partial class MainWindow : Window
             return;
         }
         var r = _lastReverse;
-        var contours = r.Ops.Count(o => o.Op == "contour");
-        var drills = r.Ops.Count(o => o.Op == "drill");
-        var grooves = r.Ops.Count(o => o.Op == "groove");
-        var pockets = r.Ops.Count(o => o.Op == "pocket");
-        var guillotine = r.Ops.Count(o => o.Op == "remnant");
-        var panels = r.Panels.Count;
-        var windows = r.Panels.Sum(p => p.Features.Count(f => f.Kind == "cutout"));
-        var holesOwned = r.Panels.Sum(p => p.Features.Count(f => f.Kind.Contains("hole", StringComparison.OrdinalIgnoreCase)));
-        var groovesOwned = r.Panels.Sum(p => p.Features.Count(f => f.Kind.Contains("groove", StringComparison.OrdinalIgnoreCase)));
-        var pocketsOwned = r.Panels.Sum(p => p.Features.Count(f => f.Kind == "pocket"));
-        var orphanContours = Math.Max(0, contours - panels - windows);
-        var orphanFeatures = Math.Max(0, drills - holesOwned) + Math.Max(0, grooves - groovesOwned) + Math.Max(0, pockets - pocketsOwned);
-
+        var audit = ReverseAudit.Summarize(r);
         ReverseCompareTitle.Text = "反推对照 · " + (_lastReverseFile is null ? "程序" : Path.GetFileName(_lastReverseFile));
-        ReverseCompareMeta.Text =
-            $"程序 {r.Strokes.Count} 段运动 · 安全高 {r.SafeZMm:0} · 板厚 {r.ThicknessMm:0.#}\n" +
-            $"闭合外形 {contours} → 板 {panels} + 开窗 {windows} · 孔 {drills} · 槽 {grooves} · 口袋 {pockets}" +
-            (guillotine > 0 ? $" · 余料切线 {guillotine}" : "");
-
-        ReverseCompareList.ItemsSource = r.Panels.Select(p =>
-        {
-            var pts = p.Outline.Points;
-            var w = pts.Count > 0 ? pts.Max(q => q.X) - pts.Min(q => q.X) : 0;
-            var h = pts.Count > 0 ? pts.Max(q => q.Y) - pts.Min(q => q.Y) : 0;
-            var holes = p.Features.Count(f => f.Kind.Contains("hole", StringComparison.OrdinalIgnoreCase));
-            var grv = p.Features.Count(f => f.Kind.Contains("groove", StringComparison.OrdinalIgnoreCase));
-            var win = p.Features.Count(f => f.Kind == "cutout");
-            var pk = p.Features.Count(f => f.Kind == "pocket");
-            var parts = new List<string>();
-            if (holes > 0) parts.Add($"孔 {holes}");
-            if (grv > 0) parts.Add($"槽 {grv}");
-            if (win > 0) parts.Add($"开窗 {win}");
-            if (pk > 0) parts.Add($"口袋 {pk}");
-            return new ReverseCompareRow(p.PanelId, $"{w:0.#} × {h:0.#}", parts.Count == 0 ? "无特征" : string.Join(" · ", parts));
-        }).ToList();
-
-        var problems = new List<string>();
-        if (orphanContours > 0) problems.Add($"{orphanContours} 个闭合外形没有归为板或开窗");
-        if (orphanFeatures > 0) problems.Add($"{orphanFeatures} 个孔/槽/口袋不在任何板内");
-        foreach (var w in r.Warnings) problems.Add(w);
-        if (problems.Count > 0)
+        ReverseCompareMeta.Text = ReverseAudit.MetaLine(audit, r.SafeZMm, r.ThicknessMm);
+        ReverseCompareList.ItemsSource = audit.Rows;
+        if (!audit.AllAccounted)
         {
             ReverseCompareBadge.Text = "⚠ 需核对";
             ReverseCompareBadge.Foreground = (Brush)FindResource("WarningBrush");
-            ReverseCompareWarn.Text = string.Join(" · ", problems) + " — 上机前对照原程序核对，缺失的特征不会出现在重切件上";
+            ReverseCompareWarn.Text = ReverseAudit.WarningLine(audit);
             ReverseCompareWarn.Foreground = (Brush)FindResource("WarningBrush");
             ReverseCompareWarn.Visibility = Visibility.Visible;
         }
