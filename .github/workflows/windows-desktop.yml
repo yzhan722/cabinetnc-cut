@@ -47,3 +47,7 @@ jobs:
       - name: Infrastructure tests
         if: always()
         run: dotnet test tests/CabinetNC.Infrastructure.Tests/CabinetNC.Infrastructure.Tests.csproj -c Release --verbosity minimal
+
+      - name: Desktop.Core tests
+        if: always()
+        run: dotnet test tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj -c Release --verbosity minimal

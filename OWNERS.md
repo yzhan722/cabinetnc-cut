@@ -49,6 +49,7 @@ diff, a safety-invariant run, and for motion changes a dry-run note.
 | Whatever the post emits, `NcReverse` recovers the same panels | `NcReverseRoundTripTests` |
 | Real machine programs keep replaying | `ShopAncFixtureTests` over `shop-anc/*.anc` |
 | Goldens are LF on every OS | `.gitattributes` |
+| Desktop logic that does not need WPF is tested without WPF | `CabinetNC.Desktop.Core` + `Desktop.Core.Tests` (incl. the no-WPF-reference guard) |
 
 ## Code ownership (review routing)
 
@@ -58,7 +59,8 @@ diff, a safety-invariant run, and for motion changes a dry-run note.
 | `dotnet/src/CabinetNC.Domain/Manufacturing/LabelExport.cs`, `Desktop/LabelBmp.cs` | Troy | Yi Zhou |
 | `dotnet/src/CabinetNC.Domain/Nesting/**` | Yi Zhou (P0 safety tests) | Troy |
 | `dotnet/src/CabinetNC.Domain/Manufacturing/NcReverse*.cs`, `NcProcessInfer.cs`, `NcToPanels.cs` | shared | — |
-| `dotnet/src/CabinetNC.Desktop/**` | Troy | — (no automated tests yet; see `docs/sprint/DESKTOP_TESTABILITY_PLAN.md`) |
+| `dotnet/src/CabinetNC.Desktop/**` | Troy | — (WPF shell; logic moves to `Desktop.Core`, see `docs/sprint/DESKTOP_TESTABILITY_PLAN.md`) |
+| `dotnet/src/CabinetNC.Desktop.Core/**` | shared | must stay WPF-free; every new behaviour lands with a test |
 | `dotnet/tests/**`, `.github/**`, `docs/**` | Yi Zhou | Troy |
 
 ## Archived: Vite dual-window lanes (2026-07)

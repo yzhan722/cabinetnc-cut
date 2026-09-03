@@ -73,7 +73,25 @@
 | 2026-09-02 | 7 395 | 0 | 20 | 16 |
 | 2026-09-02（UI 改版后） | 7 799（+404：状态/通知系统、引导态、快捷键、导出流程；样式已移出到 `Theme.xaml` 442 行） | 0 | 20 | 16（预检 Yes/No 改为专用对话框，快捷键说明用了一个新的） |
 | 2026-09-03（CAD/CAM 惯例对照后） | 约 8 100（+300：全阶段视口、仿真传输/DRO/代码联动、菜单命令、回车提交） | 0 | 20 | 16 |
+| 2026-09-03（Desktop.Core 第一步） | 8 426（未保存模型、最近文件、反推对照、图层开关、取消密排又加了功能；纯逻辑已迁出 257 行） | **43** | 20 | 18（关闭/打开前的"保存吗"两个提示） |
 
-阶段 3 的候选又多了一块：视口状态（`_simUserScale/_simOx/_simOy` + `CurrentNestFit/ZoomViewportAt/FitViewport`）和仿真状态（`_ncSimTime/_ncSimStarts` + `SeekNcSimToStroke/HighlightNcLine`）都是纯状态机，适合先搬进 `Desktop.Core` 并配单测。
+### 阶段 0 已完成：`CabinetNC.Desktop.Core` 建立
+
+`dotnet/src/CabinetNC.Desktop.Core`（net10.0，仅引用 Domain 与 Infrastructure）与 `dotnet/tests/CabinetNC.Desktop.Core.Tests`
+已进入解决方案和两个 CI 工作流。第一批迁入的都是纯函数 / 纯状态：
+
+| 类型 | 职责 | 原来在 |
+|---|---|---|
+| `StatusInference` | 状态文案 → 严重度（关键词表是契约） | `MainWindow.InferStatusKind` |
+| `RecentFiles` | MRU 去重 / 上限 / 访问键转义 / 种类标签 | `RememberRecentFile` 等 |
+| `WorkFingerprint` | 可保存内容指纹（剔除视图状态与衍生 Ops） | `WorkFingerprint()` |
+| `NcSimTimeline` | 段起点、步进、按源码行定位 | `_ncSimStarts` + 三个处理器 |
+| `ViewportMath` | 适配比例、绕指针缩放、屏幕↔板料坐标 | `CurrentNestFit` / `ZoomViewportAt` / `ScreenToSheet` |
+| `ExportSummary` | 导出后的状态栏与通知文案 | `WriteLabelBmps` / `AnnounceExport` |
+
+守卫测试 `NoWpfDependencyTests` 断言该程序集不引用 PresentationFramework / PresentationCore / WindowsBase / System.Xaml。
+迁出即有收益：`NcSimTimelineTests` 在第一次运行就抓到"仿真时间正好在段起点时，下一段原地不动"的边界 bug，Desktop 原实现同样有这个问题。
+
+下一步（阶段 1）：`ExportFlow` —— 把 `WriteExportNcFiles` / `WriteLabelBmps` 里"要写哪些文件、写到哪、缺什么"的决策变成纯函数，文件系统只留写盘一行。
 
 说明：UI 改版把"状态栏 + Toast + 作废横幅 + 步骤标签"的逻辑全部写在了 code-behind 里，是阶段 1/2 拆分时第一批要搬进 `Desktop.Core` 的内容（`SetStatus/InferStatusKind`、`ShowToast`、`RefreshStaleBanner`、`RefreshWorkflowDots`、`AnnounceExport` 都是纯函数或接近纯函数）。

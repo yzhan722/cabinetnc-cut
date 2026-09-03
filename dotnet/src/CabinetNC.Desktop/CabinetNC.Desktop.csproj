@@ -5,6 +5,7 @@
     <ProjectReference Include="..\CabinetNC.Domain\CabinetNC.Domain.csproj" />
     <ProjectReference Include="..\CabinetNC.FusionPackage\CabinetNC.FusionPackage.csproj" />
     <ProjectReference Include="..\CabinetNC.Application\CabinetNC.Application.csproj" />
+    <ProjectReference Include="..\CabinetNC.Desktop.Core\CabinetNC.Desktop.Core.csproj" />
     <ProjectReference Include="..\CabinetNC.ComputeWorker\CabinetNC.ComputeWorker.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\CabinetNC.Infrastructure\CabinetNC.Infrastructure.csproj" />
   </ItemGroup>

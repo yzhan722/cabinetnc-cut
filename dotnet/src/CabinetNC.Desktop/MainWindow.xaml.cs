@@ -24,10 +24,12 @@ using CabinetNC.FusionPackage;
 using CabinetNC.Infrastructure.Diagnostics;
 using CabinetNC.Infrastructure.Library;
 using CabinetNC.Infrastructure.Projects;
+using CabinetNC.Desktop.Core;
 using Microsoft.Win32;
 using SkiaSharp;
 using SkiaSharp.Views.Desktop;
 using PanelPart = CabinetNC.Domain.Parts.Panel;
+using StatusKind = CabinetNC.Desktop.Core.StatusSeverity;
 
 namespace CabinetNC.Desktop;
 
@@ -995,7 +997,6 @@ public partial class MainWindow : Window
             .SelectMany(f => LabelExport.MissingBitmaps(f.NcText, onDisk))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var target = _library.Labeler.MachinePictureDir;
         if (missing.Count > 0)
         {
             UsageLog.LogActionResult("export.labels.missing", new Dictionary<string, object?>
@@ -1004,26 +1005,18 @@ public partial class MainWindow : Window
                 ["dir"] = directory,
                 ["missing"] = missing.ToArray(),
             });
-            return ($"标签 {pastes.Count} 张在 {directory}；但程序请求的 {missing.Count} 个标签没有 BMP（{string.Join(", ", missing.Take(5))}），"
-                 + "上机前必须补齐，否则 M701 会一直等待", missing.Count);
         }
-        return ($"标签 {pastes.Count} 张已平铺写入 {directory}，全部复制到机床 {target}（不要放子目录）", 0);
+        return (ExportSummary.LabelStatus(pastes.Count, directory, _library.Labeler.MachinePictureDir, missing), missing.Count);
     }
 
     /// <summary>One clear card after every export: what was written, where the labels go, and a way to get there.</summary>
     void AnnounceExport(int fileCount, int labelCount, int missingLabels, string dir)
     {
-        if (missingLabels > 0)
-        {
-            ShowToast($"导出完成，但有 {missingLabels} 个标签缺少 BMP",
-                "程序里的 LS11 请求了不存在的标签图片。上机前补齐，否则机床会在 M701 一直等待。",
-                StatusKind.Error, "打开目录", () => OpenFolder(dir));
-            return;
-        }
-        var detail = labelCount > 0
-            ? $"{labelCount} 张标签 BMP 已平铺写在同一目录。全部复制到机床 {_library.Labeler.MachinePictureDir}，不要放子目录。"
-            : "没有标签需要复制。";
-        ShowToast($"已导出 {fileCount} 个程序文件", detail, StatusKind.Success, "打开目录", () => OpenFolder(dir));
+        var (title, detail, severity, offerOpen) = ExportSummary.Toast(fileCount, labelCount, missingLabels, _library.Labeler.MachinePictureDir);
+        if (offerOpen)
+            ShowToast(title, detail, severity, "打开目录", () => OpenFolder(dir));
+        else
+            ShowToast(title, detail, severity);
     }
 
     void ApplyExportFile(ExportNcFile? file)
@@ -1053,7 +1046,7 @@ public partial class MainWindow : Window
         _ncSimTime = 0;
         _ncSimTotal = 0;
         _ncSimStrokes = [];
-        _ncSimStarts = [];
+        _ncSimTimeline = NcSimTimeline.Empty;
         if (GcodeHeader is not null) GcodeHeader.Text = "G-code · 点任意行可定位仿真";
         _ncHighlightLine = -1;
         PositionNcHighlight();
@@ -1063,35 +1056,25 @@ public partial class MainWindow : Window
             try
             {
                 _ncSimStrokes = OsaiTroyParser.Replay(text).Strokes;
-                _ncSimTotal = NcCutSim.TotalSec(_ncSimStrokes);
-                var starts = new List<double>(_ncSimStrokes.Count);
-                var acc = 0d;
-                foreach (var s in _ncSimStrokes)
-                {
-                    starts.Add(acc);
-                    acc += NcCutSim.DurationSec(s);
-                }
-                _ncSimStarts = starts;
+                _ncSimTimeline = new NcSimTimeline(_ncSimStrokes);
+                _ncSimTotal = _ncSimTimeline.TotalSec;
             }
             catch
             {
                 _ncSimStrokes = [];
                 _ncSimTotal = 0;
-                _ncSimStarts = [];
+                _ncSimTimeline = NcSimTimeline.Empty;
             }
         }
         UpdateOutSimChrome();
     }
 
-    List<double> _ncSimStarts = [];
+    NcSimTimeline _ncSimTimeline = NcSimTimeline.Empty;
     bool _syncingNcLine;
 
-    /// <summary>Jump the simulation to the start of stroke <paramref name="index"/> (clamped).</summary>
-    void SeekNcSimToStroke(int index)
+    void SeekNcSimTo(double timeSec)
     {
-        if (_ncSimStarts.Count == 0) return;
-        index = Math.Clamp(index, 0, _ncSimStarts.Count - 1);
-        _ncSimTime = _ncSimStarts[index];
+        _ncSimTime = Math.Clamp(timeSec, 0, Math.Max(0, _ncSimTotal));
         UpdateOutSimChrome();
         CanvasHost.InvalidateVisual();
     }
@@ -1114,30 +1097,16 @@ public partial class MainWindow : Window
 
     void OnOutSimStepBackClick(object sender, RoutedEventArgs e)
     {
-        if (_ncSimStrokes.Count == 0) return;
+        if (_ncSimTimeline.IsEmpty) return;
         StopNcSim();
-        var pose = NcCutSim.At(_ncSimStrokes, _ncSimTime);
-        // Mid-stroke → back to this stroke's start; at a start → previous stroke.
-        var idx = pose.StrokeIndex < 0 ? 0 : pose.StrokeIndex;
-        if (idx < _ncSimStarts.Count && _ncSimTime <= _ncSimStarts[idx] + 1e-6)
-            idx--;
-        SeekNcSimToStroke(idx);
+        SeekNcSimTo(_ncSimTimeline.StepBack(_ncSimTime));
     }
 
     void OnOutSimStepForwardClick(object sender, RoutedEventArgs e)
     {
-        if (_ncSimStrokes.Count == 0) return;
+        if (_ncSimTimeline.IsEmpty) return;
         StopNcSim();
-        var pose = NcCutSim.At(_ncSimStrokes, _ncSimTime);
-        var idx = (pose.StrokeIndex < 0 ? 0 : pose.StrokeIndex) + 1;
-        if (idx >= _ncSimStarts.Count)
-        {
-            _ncSimTime = _ncSimTotal;
-            UpdateOutSimChrome();
-            CanvasHost.InvalidateVisual();
-            return;
-        }
-        SeekNcSimToStroke(idx);
+        SeekNcSimTo(_ncSimTimeline.StepForward(_ncSimTime));
     }
 
     int _ncHighlightLine = -1;
@@ -1210,26 +1179,18 @@ public partial class MainWindow : Window
     /// <summary>Code → backplot: clicking a G-code line seeks the simulation to that block.</summary>
     void OnNcPreviewClick(object sender, MouseButtonEventArgs e)
     {
-        if (_stage != "out" || _ncSimStrokes.Count == 0 || _syncingNcLine) return;
+        if (_stage != "out" || _ncSimTimeline.IsEmpty || _syncingNcLine) return;
         var caret = NcPreview.CaretIndex;
         var line = NcPreview.GetLineIndexFromCharacterIndex(caret);
         if (line < 0) return;
-        var idx = -1;
-        for (var i = 0; i < _ncSimStrokes.Count; i++)
-        {
-            if (_ncSimStrokes[i].LineIndex >= line)
-            {
-                idx = i;
-                break;
-            }
-        }
+        var idx = _ncSimTimeline.StrokeForLine(line);
         if (idx < 0)
         {
             SetStatus("这一行没有刀具运动；已定位到最近的运动块", StatusKind.Info);
             idx = _ncSimStrokes.Count - 1;
         }
         StopNcSim();
-        SeekNcSimToStroke(idx);
+        SeekNcSimTo(_ncSimTimeline.StartOf(idx));
     }
 
     void StopNcSim()
@@ -1392,10 +1353,7 @@ public partial class MainWindow : Window
         var h = _surfaceH > 0 ? _surfaceH : (float)(CanvasHost.ActualHeight * _dpiY);
         var bay = _stage == "nest" ? CanvasPainter.NestHoldingBayWidth : 0f;
         var pad = _stage == "out" ? 56f : 44f;
-        if (sw <= 0 || sh <= 0) return (0, pad);
-        var availW = Math.Max(1f, w - bay - pad);
-        var fit = Math.Min(availW / sw, (h - 2 * pad) / sh) * 0.9f;
-        return (fit > 0 ? fit : 0, pad);
+        return (ViewportMath.FitScale(w, h, sw, sh, bay, pad), pad);
     }
 
     void ZoomViewportAt(float sx, float sy, double factor)
@@ -1404,10 +1362,8 @@ public partial class MainWindow : Window
         if (fit <= 0) return;
         var (_, sh, _) = ActiveSheetMetrics();
         var (scale, ox, oy) = ResolveSimView(fit, pad);
-        var wx = (sx - ox) / scale;
-        var wy = sh - (sy - oy) / scale;
-        var next = (float)Math.Clamp(scale * factor, fit * 0.05, fit * 80);
-        CommitSimView(next, sx - wx * next, sy - (sh - wy) * next);
+        var (next, nox, noy) = ViewportMath.ZoomAbout(sx, sy, scale, ox, oy, sh, factor, fit);
+        CommitSimView(next, nox, noy);
         CanvasHost.InvalidateVisual();
         UpdateViewportReadout();
     }
@@ -1443,8 +1399,7 @@ public partial class MainWindow : Window
             return;
         }
         var (fit, _) = CurrentNestFit();
-        var zoom = fit > 0 ? _nestScale / fit * 100 : 100;
-        var zoomText = $"缩放 {zoom:0}%";
+        var zoomText = $"缩放 {ViewportMath.ZoomPercent(_nestScale, fit):0}%";
         ViewportZoomText.Text = zoomText;
         if (sx is float x && sy is float y && (_stage != "nest" || _holdingBayLeft <= 0 || x < _holdingBayLeft))
         {
@@ -5852,16 +5807,10 @@ public partial class MainWindow : Window
 
     // ----- recent files ---------------------------------------------------------------
 
-    const int RecentFilesMax = 10;
-
     void RememberRecentFile(string path, string kind)
     {
         if (string.IsNullOrWhiteSpace(path)) return;
-        var full = Path.GetFullPath(path);
-        _library.RecentFiles.RemoveAll(r => string.Equals(r.Path, full, StringComparison.OrdinalIgnoreCase));
-        _library.RecentFiles.Insert(0, new RecentFile { Path = full, Kind = kind, OpenedAt = DateTimeOffset.Now.ToString("o") });
-        if (_library.RecentFiles.Count > RecentFilesMax)
-            _library.RecentFiles.RemoveRange(RecentFilesMax, _library.RecentFiles.Count - RecentFilesMax);
+        _library.RecentFiles = RecentFiles.Remember(_library.RecentFiles, Path.GetFullPath(path), kind, DateTimeOffset.Now);
         try
         {
             WorkshopLibraryStore.Save(_library);
@@ -5887,17 +5836,17 @@ public partial class MainWindow : Window
             foreach (var r in items)
             {
                 var exists = File.Exists(r.Path) || Directory.Exists(r.Path);
+                var shown = RecentFiles.EscapeAccessKeys(Path.GetFileName(r.Path));
                 var mi = new MenuItem
                 {
-                    // Headers treat "_" as an access-key marker; file names must show every underscore.
-                    Header = $"{KindGlyph(r.Kind)} {Path.GetFileName(r.Path).Replace("_", "__")}",
+                    Header = $"{RecentFiles.KindLabel(r.Kind)} {shown}",
                     InputGestureText = Path.GetDirectoryName(r.Path),
                     Tag = r,
                     IsEnabled = exists,
                     ToolTip = exists ? r.Path : r.Path + "（文件已不存在）",
                 };
-                // The peer strips access-key markers from the name too, so escape here as well.
-                System.Windows.Automation.AutomationProperties.SetName(mi, Path.GetFileName(r.Path).Replace("_", "__"));
+                // The automation peer strips access-key markers from the name too.
+                System.Windows.Automation.AutomationProperties.SetName(mi, shown);
                 mi.Click += OnRecentFileClick;
                 RecentMenu.Items.Add(mi);
             }
@@ -5921,27 +5870,21 @@ public partial class MainWindow : Window
         });
         foreach (var r in recent)
         {
+            var shown = RecentFiles.EscapeAccessKeys(Path.GetFileName(r.Path));
             var b = new Button
             {
-                Content = $"{KindGlyph(r.Kind)} {Path.GetFileName(r.Path).Replace("_", "__")}",
+                Content = $"{RecentFiles.KindLabel(r.Kind)} {shown}",
                 Style = (Style)FindResource("LinkButton"),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 1, 0, 1),
                 Tag = r,
                 ToolTip = r.Path,
             };
-            System.Windows.Automation.AutomationProperties.SetName(b, Path.GetFileName(r.Path).Replace("_", "__"));
+            System.Windows.Automation.AutomationProperties.SetName(b, shown);
             b.Click += OnRecentFileClick;
             EmptyRecentPanel.Children.Add(b);
         }
     }
-
-    static string KindGlyph(string kind) => kind switch
-    {
-        "project" => "工程",
-        "anc" => ".anc",
-        _ => "方案",
-    };
 
     async void OnRecentFileClick(object sender, RoutedEventArgs e)
     {
@@ -5949,7 +5892,7 @@ public partial class MainWindow : Window
         if (!File.Exists(r.Path) && !Directory.Exists(r.Path))
         {
             SetStatus($"文件已不存在：{r.Path}", StatusKind.Warning);
-            _library.RecentFiles.RemoveAll(x => string.Equals(x.Path, r.Path, StringComparison.OrdinalIgnoreCase));
+            _library.RecentFiles = RecentFiles.Without(_library.RecentFiles, r.Path);
             PersistLibrary();
             RefreshRecentUi();
             return;
@@ -8598,15 +8541,8 @@ public partial class MainWindow : Window
         return best;
     }
 
-    (double Mx, double My) ScreenToSheet(float sx, float sy)
-    {
-        if (_nestScale <= 0) return (0, 0);
-        var ox = _nestOriginX;
-        var oy = _nestOriginY;
-        var mx = (sx - ox) / _nestScale;
-        var my = _nestSheetH - (sy - oy) / _nestScale;
-        return (mx, my);
-    }
+    (double Mx, double My) ScreenToSheet(float sx, float sy) =>
+        ViewportMath.ScreenToSheet(sx, sy, _nestScale, _nestOriginX, _nestOriginY, _nestSheetH);
 
     static bool PointInOutline(double x, double y, PanelPart panel)
     {
@@ -8795,14 +8731,11 @@ public partial class MainWindow : Window
         CanvasPainter.PaintGeom(canvas, e.Info.Width, e.Info.Height, _selected, _hoverHint);
     }
 
-    enum StatusKind { Info, Success, Warning, Error, Busy }
-
     /// <summary>
-    /// Status line with severity inferred from the message. 147 call sites pass plain text;
-    /// the keywords below sort them into success / warning / error so the operator gets a
-    /// coloured glyph instead of a uniform grey line. Explicit callers use the overload.
+    /// Status line with severity inferred from the message (Desktop.Core.StatusInference);
+    /// explicit callers use the overload.
     /// </summary>
-    void SetStatus(string text) => SetStatus(text, InferStatusKind(text));
+    void SetStatus(string text) => SetStatus(text, StatusInference.Infer(text));
 
     void SetStatus(string text, StatusKind kind)
     {
@@ -8824,21 +8757,6 @@ public partial class MainWindow : Window
         StatusBar.Background = bg is null
             ? new SolidColorBrush(Color.FromRgb(0xE9, 0xEC, 0xF1))
             : (Brush)FindResource(bg);
-    }
-
-    static StatusKind InferStatusKind(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return StatusKind.Info;
-        if (text.EndsWith("…", StringComparison.Ordinal) || text.EndsWith("...", StringComparison.Ordinal)
-            || text.Contains("中…", StringComparison.Ordinal))
-            return StatusKind.Busy;
-        string[] error = ["失败", "错误", "禁止", "无法", "不能", "没有 BMP", "异常", "拒绝", "无效", "找不到"];
-        string[] warning = ["警告", "未通过", "作废", "失效", "请先", "尚未", "缺", "跳过", "不匹配", "超出"];
-        string[] success = ["已导出", "已写入", "已保存", "已载入", "已计算", "成功", "完成", "通过", "就绪", "已应用", "已合并", "已删除", "已添加", "已更新", "已切换", "Saved"];
-        foreach (var k in error) if (text.Contains(k, StringComparison.Ordinal)) return StatusKind.Error;
-        foreach (var k in warning) if (text.Contains(k, StringComparison.Ordinal)) return StatusKind.Warning;
-        foreach (var k in success) if (text.Contains(k, StringComparison.Ordinal)) return StatusKind.Success;
-        return StatusKind.Info;
     }
 
     /// <summary>
@@ -9052,27 +8970,14 @@ public partial class MainWindow : Window
 
     string? _savedWorkFingerprint;
 
-    string WorkFingerprint()
+    string CurrentWorkFingerprint()
     {
         if (_session.Package is null) return "";
-        var s = CaptureProjectSession();
-        s.Stage = "";
-        s.ActiveNestSheet = 0;
-        s.OpsAllSheets = true;
-        s.ShowNest = false;
-        s.SelectedExportFile = null;
-        var nest = _nest is { Ok: true }
-            ? string.Join(";", _nest.Placements.Select(p =>
-                string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                    $"{p.PanelId}:{p.SheetIndex}:{p.OffsetX:0.###}:{p.OffsetY:0.###}:{p.RotationDeg:0.#}")))
-            : "";
-        var raw = string.Concat(
-            _session.PackageJson ?? "", "\n",
-            nest, "\n",
-            ProjectSessionCodec.Serialize(s), "\n",
-            _session.ResolvedProjectName, "\n",
-            SelectedMachineId());
-        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw)));
+        var placements = _nest is { Ok: true }
+            ? _nest.Placements.Select(p => new PlacementKey(p.PanelId, p.SheetIndex, p.OffsetX, p.OffsetY, p.RotationDeg))
+            : [];
+        return WorkFingerprint.Compute(
+            _session.PackageJson, placements, CaptureProjectSession(), _session.ResolvedProjectName, SelectedMachineId());
     }
 
     bool HasUnsavedWork()
@@ -9080,7 +8985,7 @@ public partial class MainWindow : Window
         if (_session.Package is null) return false;
         try
         {
-            return WorkFingerprint() != _savedWorkFingerprint;
+            return CurrentWorkFingerprint() != _savedWorkFingerprint;
         }
         catch
         {
@@ -9093,7 +8998,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            _savedWorkFingerprint = _session.Package is null ? null : WorkFingerprint();
+            _savedWorkFingerprint = _session.Package is null ? null : CurrentWorkFingerprint();
         }
         catch
         {

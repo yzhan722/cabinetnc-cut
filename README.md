@@ -26,6 +26,7 @@ cd dotnet
 dotnet test tests/CabinetNC.Domain.Tests         -c Release
 dotnet test tests/CabinetNC.Package.Tests        -c Release
 dotnet test tests/CabinetNC.Infrastructure.Tests -c Release
+dotnet test tests/CabinetNC.Desktop.Core.Tests   -c Release   # UI logic without WPF
 dotnet build src/CabinetNC.Desktop               -c Release   # Windows only
 ```
 
@@ -59,6 +60,7 @@ tool-change behaviour, single-face only, grouped-BLF nesting (not NFP), Desktop 
 | `dotnet/src/CabinetNC.FusionPackage` | `.cnjob` / woodjob / cut-package importers |
 | `dotnet/src/CabinetNC.Application` | `ProjectSession` |
 | `dotnet/src/CabinetNC.Infrastructure` | SQLite project store, workshop library (`%LocalAppData%\CabinetNC\library.json`), usage log |
+| `dotnet/src/CabinetNC.Desktop.Core` | WPF-free UI logic (status inference, viewport math, sim timeline, unsaved-work fingerprint, recent files, export texts) with its own tests |
 | `dotnet/src/CabinetNC.Desktop` | WPF shell (see testability plan) |
 | `dotnet/src/CabinetNC.ComputeWorker` | gRPC named-pipe worker (mostly unused today; see VISION decision) |
 | `docs/` | Vision, architecture, sprint acceptance plan, limitations, checklists |
