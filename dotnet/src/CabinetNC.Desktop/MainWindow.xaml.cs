@@ -228,9 +228,30 @@ public partial class MainWindow : Window
             RefreshRecentUi();
             SyncProjectNameBox();
             SetStatus("就绪 · 打开方案或示例开始（Ctrl+O）");
+            // Double-click / "open with" / shop script: the first openable path on the command line.
+            var startupFile = FileRouting.FirstOpenable(Environment.GetCommandLineArgs().Skip(1), File.Exists);
+            if (startupFile is not null)
+                await OpenAnyPathAsync(startupFile, "startup");
             // Worker probing can take seconds; never let it overwrite a status the operator
             // has since produced by working.
             await RefreshWorkerAsync();
+        };
+        AllowDrop = true;
+        PreviewDragOver += (_, e) =>
+        {
+            var ok = e.Data.GetDataPresent(DataFormats.FileDrop)
+                && e.Data.GetData(DataFormats.FileDrop) is string[] files
+                && files.Any(f => FileRouting.KindFor(f) is not null);
+            e.Effects = ok ? DragDropEffects.Copy : DragDropEffects.None;
+            e.Handled = true;
+        };
+        PreviewDrop += async (_, e) =>
+        {
+            if (e.Data.GetData(DataFormats.FileDrop) is not string[] files) return;
+            var file = files.FirstOrDefault(f => FileRouting.KindFor(f) is not null && File.Exists(f));
+            if (file is null) return;
+            e.Handled = true;
+            await OpenAnyPathAsync(file, "drop");
         };
         Closing += OnWindowClosing;
         Closed += async (_, _) =>
@@ -5901,11 +5922,30 @@ public partial class MainWindow : Window
             return;
         }
         if (!ConfirmDiscardUnsavedWork("打开最近文件")) return;
-        switch (r.Kind)
+        await OpenByKindAsync(r.Path, r.Kind);
+    }
+
+    /// <summary>Command line, drag-and-drop and the recent list all end here.</summary>
+    async Task OpenAnyPathAsync(string path, string source)
+    {
+        var kind = FileRouting.KindFor(path);
+        if (kind is null)
         {
-            case "project": OpenProjectPath(r.Path); break;
-            case "anc": await ImportAncPathAsync(r.Path); break;
-            default: await OpenPackagePathAsync(r.Path); break;
+            SetStatus($"不支持的文件类型：{Path.GetFileName(path)}", StatusKind.Warning);
+            return;
+        }
+        if (!ConfirmDiscardUnsavedWork("打开文件")) return;
+        UsageLog.LogEvent("ui", "desktop.openAny", new Dictionary<string, object?> { ["source"] = source, ["kind"] = kind, ["path"] = path });
+        await OpenByKindAsync(path, kind);
+    }
+
+    async Task OpenByKindAsync(string path, string kind)
+    {
+        switch (kind)
+        {
+            case "project": OpenProjectPath(path); break;
+            case "anc": await ImportAncPathAsync(path); break;
+            default: await OpenPackagePathAsync(path); break;
         }
     }
 

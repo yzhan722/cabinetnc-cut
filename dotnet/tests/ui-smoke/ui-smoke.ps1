@@ -14,6 +14,8 @@
 #   assert-title:<substring>    window title must contain substring
 #   assert-file:<path>          file must exist
 #   assert-nofile:<path>        file must not exist
+#   launch-arg:<path>           (before any other step) pass this file on the command line;
+#                               relative paths resolve against the steps file's folder
 param(
     [Parameter(Mandatory)] [string]$Exe,
     [Parameter(Mandatory)] [string]$StepsFile,
@@ -41,7 +43,17 @@ function Fail([string]$m) { $script:failures.Add($m); Write-Host "FAIL  $m" -For
 function Ok([string]$m) { Write-Host "ok    $m" }
 
 if ($AutoExportDir) { $env:OMNICAM_AUTO_EXPORT_DIR = $AutoExportDir; New-Item -ItemType Directory -Force -Path $AutoExportDir | Out-Null }
-$p = Start-Process -FilePath $Exe -WorkingDirectory (Split-Path $Exe) -PassThru
+$allLines = Get-Content -Path $StepsFile -Encoding UTF8 | Where-Object { $_.Trim() -ne '' -and -not $_.StartsWith('#') }
+$launchArgs = @()
+foreach ($l in $allLines) {
+    if ($l -like 'launch-arg:*') {
+        $rel = ($l -split ':', 2)[1].Trim()
+        $full = if ([IO.Path]::IsPathRooted($rel)) { $rel } else { [IO.Path]::GetFullPath((Join-Path (Split-Path $StepsFile) $rel)) }
+        $launchArgs += ('"' + $full + '"')
+    }
+}
+$p = if ($launchArgs.Count -gt 0) { Start-Process -FilePath $Exe -ArgumentList $launchArgs -WorkingDirectory (Split-Path $Exe) -PassThru }
+     else { Start-Process -FilePath $Exe -WorkingDirectory (Split-Path $Exe) -PassThru }
 $deadline = (Get-Date).AddSeconds($StartupTimeoutSec)
 while ((Get-Date) -lt $deadline) { $p.Refresh(); if ($p.MainWindowHandle -ne 0 -and $p.MainWindowTitle -like 'OmniCam*') { break }; Start-Sleep -Milliseconds 300 }
 $p.Refresh()
@@ -89,7 +101,7 @@ function Shot([string]$file) {
     Ok "shot $file"
 }
 
-$steps = Get-Content -Path $StepsFile -Encoding UTF8 | Where-Object { $_.Trim() -ne '' -and -not $_.StartsWith('#') }
+$steps = $allLines | Where-Object { $_ -notlike 'launch-arg:*' }
 foreach ($s in $steps) {
     $kind, $arg = $s -split ':', 2
     try {

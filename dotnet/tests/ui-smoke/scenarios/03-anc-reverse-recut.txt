@@ -1,0 +1,30 @@
+# A machine program passed on the command line is reverse-engineered into the remnant library,
+# the audit card says every stroke is accounted for, and the recovered panels nest + export.
+launch-arg:../fixtures/two_panels.anc
+wait:1500
+assert-status:反推
+assert-title:two_panels
+shot:07-reverse-audit.png
+invoke:生产加工
+wait:600
+tab:2 板材与设备
+wait:600
+invoke:初始密排 →
+wait:4500
+dismiss
+assert-status:密排完成
+tab:4 刀路与加工档
+wait:800
+invoke:计算全部
+wait:4500
+dismiss
+assert-status:已计算全部大板
+tab:5 导出
+wait:1500
+invoke:导出当前大板
+wait:3000
+dismiss
+assert-status:已导出 1 个文件
+assert-file:%OMNICAM_AUTO_EXPORT_DIR%\NC_01.bmp
+assert-file:%OMNICAM_AUTO_EXPORT_DIR%\NC_02.bmp
+shot:08-reverse-exported.png

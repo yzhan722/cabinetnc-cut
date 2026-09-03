@@ -5,6 +5,7 @@
 99 个事件处理器、76 个排版（nest/holding/PIP/guillotine/leftover）、58 个界面刷新、26 个导出/NC、
 21 个阶段切换、20 个库/材料/刀具、10 个导入、6 个板件编辑、5 个贴标。
 
+（2026-09-03 起行为验证改由 `tests/ui-smoke` 承担，见下方勾选项。）写这份文档时，
 唯一的行为验证是 `tests/manual/smoke_desktop.py`（UIA），最后一次成功运行 2026-07-22，
 控件名已经是 OmniCam 改版前的，upstream 自己的设计说明也承认它"不能当关门"。
 
@@ -56,7 +57,7 @@
       `NcPreflight`（目前 20 处），全部经 `Application`/`Desktop.Core`。
 - [ ] `MessageBox.Show`（目前 16 处）收敛到一个 `IUserPrompt` 接口，`Desktop.Core` 只依赖接口。
 - [ ] Windows CI 里 `dotnet test tests/CabinetNC.Desktop.Core.Tests` 加入门禁。
-- [ ] `smoke_desktop.py` 重新录制到 OmniCam 控件名，或者删掉并在 `KNOWN_LIMITATIONS.md` 明写"无 UIA"。不要留一个跑不起来的脚本装作有覆盖。
+- [x] UIA 冒烟已重建为 `tests/ui-smoke`（PowerShell + UIA，场景文件驱动，本地 2/2 通过；Windows CI 非阻塞运行并上传截图）。`smoke_desktop.py` 保留但明确不是门禁。
 
 ## 不要做
 

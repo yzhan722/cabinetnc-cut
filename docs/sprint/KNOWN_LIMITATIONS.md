@@ -87,6 +87,7 @@ came from before applying the rules below; the NC header tells you.
 - Automated UIA smoke can hang in non-interactive agent shells; **do not mark UIA PASS**.
 - `smoke_desktop.py` still targets pre-OmniCam control names and is **not** a gate. Its replacement is `dotnet/tests/ui-smoke` (PowerShell + UIA: demo → nest → CAM → export with file assertions, stale banner). It runs locally via `run-all.ps1` and on the Windows CI job as a *non-blocking* step until it has a flake-free track record; treat a red UI smoke as "look at the screenshots", not as a release block yet.
 - `OMNICAM_AUTO_EXPORT_DIR` (environment variable) makes exports skip the native dialogs and write into that folder — for the UI smoke and shop batch scripts only; never set it on an operator PC.
+- Opening files: a `.cnjob/.zip/.json` (job), `project.db` (project) or `.anc/.nc` (machine program → reverse) can be passed on the command line (Explorer "open with", double-click after association, shop scripts) or dropped onto the window; routing is `Desktop.Core.FileRouting`. File-type association itself is not registered by the app (no installer yet).
 - `dotnet/artifacts/smoke-latest.json` and `evaluation-latest.md` date from 2026-07-22 and predate the OmniCam UI; they are not current evidence.
 - Release goldens lock normalized NC only (`Category=GoldenRegression`). Labels, U/V, and UIA are **not** in that pack.
 - Manual path: `docs/sprint/MANUAL_SMOKE_10MIN.md` — items start as `MANUAL PENDING`.
