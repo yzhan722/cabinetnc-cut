@@ -51,3 +51,25 @@ jobs:
       - name: Desktop.Core tests
         if: always()
         run: dotnet test tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj -c Release --verbosity minimal
+
+      # Drives the real WPF app through UI Automation (demo → nest → CAM → export, stale
+      # banner). Hosted runners have an interactive desktop, but UIA timing can flake, so
+      # this step reports without failing the job until it has a track record.
+      - name: UI smoke (UIA, non-blocking)
+        id: uismoke
+        if: always()
+        continue-on-error: true
+        run: pwsh tests/ui-smoke/run-all.ps1
+
+      - name: Upload UI smoke screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-smoke-screenshots
+          path: dotnet/artifacts/ui-smoke/
+          if-no-files-found: ignore
+
+      - name: UI smoke summary
+        if: always()
+        run: |
+          "UI smoke outcome: ${{ steps.uismoke.outcome }}" | Out-File -Append $env:GITHUB_STEP_SUMMARY

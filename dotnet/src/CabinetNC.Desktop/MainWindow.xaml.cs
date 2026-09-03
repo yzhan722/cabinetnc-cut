@@ -924,7 +924,15 @@ public partial class MainWindow : Window
 
         string dir;
         string? singlePath = null;
-        if (plan.Files.Count == 1)
+        var autoDir = AutoExportDir();
+        if (autoDir is not null)
+        {
+            // Unattended mode (UI smoke / batch): no dialogs, everything into the given folder.
+            dir = autoDir;
+            if (plan.Files.Count == 1)
+                singlePath = Path.Combine(dir, plan.Files[0].RelativeName);
+        }
+        else if (plan.Files.Count == 1)
         {
             var dlg = new SaveFileDialog
             {
@@ -957,6 +965,16 @@ public partial class MainWindow : Window
             ["files"] = plan.Files.Select(f => f.RelativeName).ToArray(),
             ["skipped"] = plan.Skipped.ToArray(),
         });
+    }
+
+    /// <summary>
+    /// <c>OMNICAM_AUTO_EXPORT_DIR</c> makes exports write to that folder without any dialog so
+    /// the UI smoke (tests/ui-smoke) and shop batch scripts can run unattended. Unset = normal.
+    /// </summary>
+    static string? AutoExportDir()
+    {
+        var dir = Environment.GetEnvironmentVariable("OMNICAM_AUTO_EXPORT_DIR");
+        return string.IsNullOrWhiteSpace(dir) ? null : dir.Trim();
     }
 
     /// <summary>
