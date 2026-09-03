@@ -1621,6 +1621,27 @@ public partial class MainWindow : Window
         await RunNestAsync(withNc: false);
     }
 
+    // ----- display layers ---------------------------------------------------------------
+    bool _showGrain = true, _showFeatures = true, _showLabels = true, _showDims = true, _showRapids = true;
+
+    void OnDisplayMenuClick(object sender, RoutedEventArgs e) => OnMoreMenuClick(sender, e);
+
+    void OnDisplayToggleClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: string layer } item) return;
+        var on = item.IsChecked;
+        switch (layer)
+        {
+            case "grain": _showGrain = on; break;
+            case "features": _showFeatures = on; break;
+            case "labels": _showLabels = on; break;
+            case "dims": _showDims = on; break;
+            case "rapids": _showRapids = on; break;
+        }
+        CanvasHost.InvalidateVisual();
+        SetStatus($"{(on ? "显示" : "隐藏")}{item.Header}", StatusKind.Info);
+    }
+
     void OnMoreMenuClick(object sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.ContextMenu is null) return;
@@ -1899,6 +1920,7 @@ public partial class MainWindow : Window
             }
         }
         RecutPanelList.ItemsSource = rows;
+        RefreshReverseCompare();
     }
 
     sealed class RecutRow
@@ -1906,6 +1928,81 @@ public partial class MainWindow : Window
         public required string PanelId { get; init; }
         public required string Label { get; init; }
         public bool Selected { get; set; } = true;
+    }
+
+    NcReverseResult? _lastReverse;
+    string? _lastReverseFile;
+
+    sealed record ReverseCompareRow(string Id, string Size, string Features);
+
+    /// <summary>
+    /// Recut audit (J5): the operator needs to see that every closed profile and every hole/groove
+    /// in the machine program ended up on a recovered panel before cutting a replacement.
+    /// </summary>
+    void RefreshReverseCompare()
+    {
+        if (ReverseCompareCard is null) return;
+        if (_lastReverse is null || _session.Package is null)
+        {
+            ReverseCompareCard.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var r = _lastReverse;
+        var contours = r.Ops.Count(o => o.Op == "contour");
+        var drills = r.Ops.Count(o => o.Op == "drill");
+        var grooves = r.Ops.Count(o => o.Op == "groove");
+        var pockets = r.Ops.Count(o => o.Op == "pocket");
+        var guillotine = r.Ops.Count(o => o.Op == "remnant");
+        var panels = r.Panels.Count;
+        var windows = r.Panels.Sum(p => p.Features.Count(f => f.Kind == "cutout"));
+        var holesOwned = r.Panels.Sum(p => p.Features.Count(f => f.Kind.Contains("hole", StringComparison.OrdinalIgnoreCase)));
+        var groovesOwned = r.Panels.Sum(p => p.Features.Count(f => f.Kind.Contains("groove", StringComparison.OrdinalIgnoreCase)));
+        var pocketsOwned = r.Panels.Sum(p => p.Features.Count(f => f.Kind == "pocket"));
+        var orphanContours = Math.Max(0, contours - panels - windows);
+        var orphanFeatures = Math.Max(0, drills - holesOwned) + Math.Max(0, grooves - groovesOwned) + Math.Max(0, pockets - pocketsOwned);
+
+        ReverseCompareTitle.Text = "反推对照 · " + (_lastReverseFile is null ? "程序" : Path.GetFileName(_lastReverseFile));
+        ReverseCompareMeta.Text =
+            $"程序 {r.Strokes.Count} 段运动 · 安全高 {r.SafeZMm:0} · 板厚 {r.ThicknessMm:0.#}\n" +
+            $"闭合外形 {contours} → 板 {panels} + 开窗 {windows} · 孔 {drills} · 槽 {grooves} · 口袋 {pockets}" +
+            (guillotine > 0 ? $" · 余料切线 {guillotine}" : "");
+
+        ReverseCompareList.ItemsSource = r.Panels.Select(p =>
+        {
+            var pts = p.Outline.Points;
+            var w = pts.Count > 0 ? pts.Max(q => q.X) - pts.Min(q => q.X) : 0;
+            var h = pts.Count > 0 ? pts.Max(q => q.Y) - pts.Min(q => q.Y) : 0;
+            var holes = p.Features.Count(f => f.Kind.Contains("hole", StringComparison.OrdinalIgnoreCase));
+            var grv = p.Features.Count(f => f.Kind.Contains("groove", StringComparison.OrdinalIgnoreCase));
+            var win = p.Features.Count(f => f.Kind == "cutout");
+            var pk = p.Features.Count(f => f.Kind == "pocket");
+            var parts = new List<string>();
+            if (holes > 0) parts.Add($"孔 {holes}");
+            if (grv > 0) parts.Add($"槽 {grv}");
+            if (win > 0) parts.Add($"开窗 {win}");
+            if (pk > 0) parts.Add($"口袋 {pk}");
+            return new ReverseCompareRow(p.PanelId, $"{w:0.#} × {h:0.#}", parts.Count == 0 ? "无特征" : string.Join(" · ", parts));
+        }).ToList();
+
+        var problems = new List<string>();
+        if (orphanContours > 0) problems.Add($"{orphanContours} 个闭合外形没有归为板或开窗");
+        if (orphanFeatures > 0) problems.Add($"{orphanFeatures} 个孔/槽/口袋不在任何板内");
+        foreach (var w in r.Warnings) problems.Add(w);
+        if (problems.Count > 0)
+        {
+            ReverseCompareBadge.Text = "⚠ 需核对";
+            ReverseCompareBadge.Foreground = (Brush)FindResource("WarningBrush");
+            ReverseCompareWarn.Text = string.Join(" · ", problems) + " — 上机前对照原程序核对，缺失的特征不会出现在重切件上";
+            ReverseCompareWarn.Foreground = (Brush)FindResource("WarningBrush");
+            ReverseCompareWarn.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            ReverseCompareBadge.Text = "✓ 全部归属";
+            ReverseCompareBadge.Foreground = (Brush)FindResource("SuccessBrush");
+            ReverseCompareWarn.Visibility = Visibility.Collapsed;
+        }
+        ReverseCompareCard.Visibility = Visibility.Visible;
     }
 
     void OnRemnantToggleNestClick(object sender, RoutedEventArgs e)
@@ -3521,6 +3618,8 @@ public partial class MainWindow : Window
 
     void ClearManufacturingState()
     {
+        _lastReverse = null;
+        _lastReverseFile = null;
         _nest = null;
         _nestSheetsUsed = [];
         _partInPartSlots = [];
@@ -5790,12 +5889,15 @@ public partial class MainWindow : Window
                 var exists = File.Exists(r.Path) || Directory.Exists(r.Path);
                 var mi = new MenuItem
                 {
-                    Header = $"{KindGlyph(r.Kind)} {Path.GetFileName(r.Path)}",
+                    // Headers treat "_" as an access-key marker; file names must show every underscore.
+                    Header = $"{KindGlyph(r.Kind)} {Path.GetFileName(r.Path).Replace("_", "__")}",
                     InputGestureText = Path.GetDirectoryName(r.Path),
                     Tag = r,
                     IsEnabled = exists,
                     ToolTip = exists ? r.Path : r.Path + "（文件已不存在）",
                 };
+                // The peer strips access-key markers from the name too, so escape here as well.
+                System.Windows.Automation.AutomationProperties.SetName(mi, Path.GetFileName(r.Path).Replace("_", "__"));
                 mi.Click += OnRecentFileClick;
                 RecentMenu.Items.Add(mi);
             }
@@ -5821,13 +5923,14 @@ public partial class MainWindow : Window
         {
             var b = new Button
             {
-                Content = $"{KindGlyph(r.Kind)} {Path.GetFileName(r.Path)}",
+                Content = $"{KindGlyph(r.Kind)} {Path.GetFileName(r.Path).Replace("_", "__")}",
                 Style = (Style)FindResource("LinkButton"),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 1, 0, 1),
                 Tag = r,
                 ToolTip = r.Path,
             };
+            System.Windows.Automation.AutomationProperties.SetName(b, Path.GetFileName(r.Path).Replace("_", "__"));
             b.Click += OnRecentFileClick;
             EmptyRecentPanel.Children.Add(b);
         }
@@ -5941,6 +6044,8 @@ public partial class MainWindow : Window
         var jobId = Path.GetFileNameWithoutExtension(path);
         _session.AcceptPackage(NcReverse.ToPackage(result, jobId), path);
         ClearManufacturingState();
+        _lastReverse = result;
+        _lastReverseFile = path;
         _module = "remnants";
         HighlightModule();
         ApplyModuleVisibility();
@@ -5948,7 +6053,15 @@ public partial class MainWindow : Window
         RefreshRecutPanelList();
         RememberRecentFile(path, "anc");
         MarkWorkSaved();
+        var contours = result.Ops.Count(o => o.Op == "contour");
+        var windows = result.Panels.Sum(p => p.Features.Count(f => f.Kind == "cutout"));
+        var audited = contours == result.Panels.Count + windows && result.Warnings.Count == 0;
         SetStatus($"从 {Path.GetFileName(path)} 反推 {result.Panels.Count} 块板 · 勾选后点「重切勾选的板」", StatusKind.Success);
+        ShowToast($"反推出 {result.Panels.Count} 块板",
+            audited
+                ? "程序里的每个闭合外形都已归为板或开窗；对照表在「补板库」页。"
+                : "有外形或特征未能归属，请在「补板库」页的反推对照里核对后再重切。",
+            audited ? StatusKind.Success : StatusKind.Warning);
         await RefreshWorkerAsync();
     }
 
@@ -8670,7 +8783,12 @@ public partial class MainWindow : Window
                     OriginX: ox,
                     OriginY: oy,
                     NcSimToolDiaMm: _stage == "out" ? ShopToolDiaByNum() : null,
-                    SheetGrain: CurrentSheetGrain()));
+                    SheetGrain: _showGrain ? CurrentSheetGrain() : SheetGrainKind.None,
+                    ShowGrain: _showGrain,
+                    ShowFeatures: _showFeatures,
+                    ShowLabels: _showLabels,
+                    ShowDims: _showDims,
+                    ShowRapids: _showRapids));
             return;
         }
 

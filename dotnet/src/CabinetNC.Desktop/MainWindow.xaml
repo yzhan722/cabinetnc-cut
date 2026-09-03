@@ -124,6 +124,15 @@
       <Setter Property="Margin" Value="0,0,8,0" />
       <Setter Property="Foreground" Value="{StaticResource TextOnDarkMutedBrush}" />
     </Style>
+    <!-- Display layers; one shared instance so the nest and export toolbars stay in sync -->
+    <ContextMenu x:Key="DisplayMenu">
+      <MenuItem Header="板件纹理" IsCheckable="True" IsChecked="True" Tag="grain" Click="OnDisplayToggleClick" />
+      <MenuItem Header="孔 / 槽 / 口袋特征" IsCheckable="True" IsChecked="True" Tag="features" Click="OnDisplayToggleClick" />
+      <MenuItem Header="标签锚点" IsCheckable="True" IsChecked="True" Tag="labels" Click="OnDisplayToggleClick" />
+      <MenuItem Header="选中板件尺寸标注" IsCheckable="True" IsChecked="True" Tag="dims" Click="OnDisplayToggleClick" />
+      <Separator />
+      <MenuItem Header="仿真快移线（导出页）" IsCheckable="True" IsChecked="True" Tag="rapids" Click="OnDisplayToggleClick" />
+    </ContextMenu>
     <ContextMenu x:Key="NestPartContextMenu">
       <MenuItem Header="改变材料" Click="OnNestChangeMaterialClick" />
       <MenuItem Header="改变纹路朝向 90°" Click="OnNestRotateGrainClick" />
@@ -373,6 +382,9 @@
 
       <!-- Module bodies -->
       <Grid Grid.Column="1">
+        <!-- Non-blocking notifications: window-level so they show in every module -->
+        <StackPanel x:Name="ToastHost" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Margin="0,58,26,0" Width="360" Panel.ZIndex="50" IsHitTestVisible="True" />
         <!-- ===== 生产加工 ===== -->
         <DockPanel x:Name="ProductionHost">
           <!-- Workflow chevron -->
@@ -685,8 +697,19 @@
                         <TextBlock x:Name="NestSheetLabel" Text="大板 1 / 1" VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" />
                         <Button x:Name="NestSheetNextBtn" Content="▶" Click="OnNestSheetNextClick" Padding="8,2" Margin="6,0,0,0" />
                       </StackPanel>
-                      <TextBlock x:Name="NestSheetMeta" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                 FontSize="11" Foreground="#666" Text="" />
+                      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <TextBlock x:Name="NestSheetMeta" VerticalAlignment="Center"
+                                   FontSize="11" Foreground="#666" Text="" Margin="0,0,10,0" />
+                        <Button AutomationProperties.Name="显示" Click="OnDisplayMenuClick" Style="{StaticResource GhostButton}"
+                                Padding="6,1" MinHeight="22" Margin="0" ContextMenu="{StaticResource DisplayMenu}"
+                                ToolTip="显示 / 隐藏图层：纹理、特征、标签、尺寸">
+                          <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE7B3;" Style="{StaticResource IconText}" FontSize="12" Margin="0,0,4,0" />
+                            <TextBlock Text="显示" VerticalAlignment="Center" FontSize="11" />
+                            <TextBlock Text="&#xE70D;" Style="{StaticResource IconText}" FontSize="8" Margin="4,1,0,0" />
+                          </StackPanel>
+                        </Button>
+                      </StackPanel>
                     </Grid>
                   </Border>
                   <Button x:Name="NestCreatePanelBtn" Content="创建板件"
@@ -714,9 +737,16 @@
                       </Grid.ColumnDefinitions>
                       <TextBlock x:Name="OutSimTitle" Text="G-code 切割仿真" VerticalAlignment="Center"
                                  FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,0,12,0" />
-                      <TextBlock x:Name="OutSimMeta" Grid.Column="1" VerticalAlignment="Center"
-                                 FontFamily="Consolas" FontSize="12" Foreground="{StaticResource TextBrush}"
-                                 Text="虚线空程 · 线宽=刀径 · 橙=留 0.5 · 蓝=通切" />
+                      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock x:Name="OutSimMeta" VerticalAlignment="Center"
+                                   FontFamily="Consolas" FontSize="12" Foreground="{StaticResource TextBrush}"
+                                   Text="虚线空程 · 线宽=刀径 · 橙=留 0.5 · 蓝=通切" Margin="0,0,8,0" />
+                        <Button AutomationProperties.Name="显示" Click="OnDisplayMenuClick" Style="{StaticResource GhostButton}"
+                                Padding="6,1" MinHeight="22" Margin="0" ContextMenu="{StaticResource DisplayMenu}"
+                                ToolTip="显示 / 隐藏图层：快移线、标签、纹理">
+                          <TextBlock Text="&#xE7B3;" Style="{StaticResource IconText}" FontSize="12" />
+                        </Button>
+                      </StackPanel>
                     </Grid>
                   </Border>
                   <Border VerticalAlignment="Bottom" Background="#F7F7F7" BorderBrush="#DDDDDD" BorderThickness="0,1,0,0" Padding="8,6">
@@ -836,9 +866,6 @@
                     </Button>
                   </StackPanel>
                 </Border>
-                <!-- Non-blocking notifications -->
-                <StackPanel x:Name="ToastHost" HorizontalAlignment="Right" VerticalAlignment="Top"
-                            Margin="0,12,14,0" Width="360" Panel.ZIndex="50" IsHitTestVisible="True" />
               </Grid>
             </Border>
 
@@ -1436,6 +1463,39 @@
               <TextBlock Text="从机台 .anc 反推出板件后，勾选要重切的块（数量改为 1），再回生产加工密排导出。"
                          Style="{StaticResource SecondaryText}" />
               <TextBlock x:Name="RemnantsMeta" Margin="0,8,0,0" FontFamily="Consolas" FontSize="12" />
+
+              <!-- Reverse-engineering audit: what the program contained vs. what was recovered -->
+              <Border x:Name="ReverseCompareCard" Style="{StaticResource Card}" Margin="0,12,0,0" Visibility="Collapsed">
+                <StackPanel>
+                  <DockPanel>
+                    <TextBlock x:Name="ReverseCompareBadge" DockPanel.Dock="Right" FontSize="12" FontWeight="SemiBold"
+                               VerticalAlignment="Center" Text="" />
+                    <TextBlock x:Name="ReverseCompareTitle" Style="{StaticResource H2Text}" Text="反推对照" />
+                  </DockPanel>
+                  <TextBlock x:Name="ReverseCompareMeta" Style="{StaticResource SecondaryText}" FontFamily="Consolas" Margin="0,4,0,6" />
+                  <ItemsControl x:Name="ReverseCompareList" MaxHeight="180">
+                    <ItemsControl.Template>
+                      <ControlTemplate TargetType="ItemsControl">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"><ItemsPresenter /></ScrollViewer>
+                      </ControlTemplate>
+                    </ItemsControl.Template>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Grid Margin="0,1">
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="90" /><ColumnDefinition Width="120" /><ColumnDefinition Width="*" />
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Text="{Binding Id}" FontFamily="Consolas" FontSize="12" />
+                          <TextBlock Grid.Column="1" Text="{Binding Size}" FontFamily="Consolas" FontSize="12" />
+                          <TextBlock Grid.Column="2" Text="{Binding Features}" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <TextBlock x:Name="ReverseCompareWarn" Style="{StaticResource SecondaryText}" Margin="0,6,0,0" Visibility="Collapsed" />
+                </StackPanel>
+              </Border>
+
               <TextBlock Text="重切板件" FontWeight="SemiBold" Margin="0,12,0,4" />
               <ListBox x:Name="RecutPanelList" MinHeight="80" MaxHeight="180" FontSize="12" Margin="0,0,0,6">
                 <ListBox.ItemTemplate>

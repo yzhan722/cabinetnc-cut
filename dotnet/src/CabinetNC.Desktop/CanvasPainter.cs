@@ -197,7 +197,13 @@ static class CanvasPainter
         float? OriginX = null,
         float? OriginY = null,
         IReadOnlyDictionary<int, double>? NcSimToolDiaMm = null,
-        SheetGrainKind SheetGrain = SheetGrainKind.None);
+        SheetGrainKind SheetGrain = SheetGrainKind.None,
+        // Display layers (CAD "show/hide" toggles); all on by default.
+        bool ShowGrain = true,
+        bool ShowFeatures = true,
+        bool ShowLabels = true,
+        bool ShowDims = true,
+        bool ShowRapids = true);
 
     public static void PaintNest(
         SKCanvas canvas,
@@ -269,11 +275,11 @@ static class CanvasPainter
             using var stroke = new SKPaint { Color = strokeC, IsStroke = true, StrokeWidth = lw, IsAntialias = true };
             canvas.DrawPath(path, fill);
             canvas.DrawPath(path, stroke);
-            if (!opts.LitePaint && !opts.FaintParts)
+            if (!opts.LitePaint && !opts.FaintParts && opts.ShowGrain)
                 DrawPartGrain(canvas, panel, place, ToSx, ToSy, scale);
 
             // features on nest
-            if (!opts.LitePaint)
+            if (!opts.LitePaint && opts.ShowFeatures)
             foreach (var f in panel.Features)
             {
                 if (PanelEdit.IsHole(f))
@@ -337,13 +343,13 @@ static class CanvasPainter
                     bold: active);
             }
 
-            if (active && !opts.LitePaint)
+            if (active && !opts.LitePaint && opts.ShowDims)
             {
                 DrawDimHScreen(canvas, ToSx(aabb.MinX), ToSx(aabb.MaxX), ToSy(aabb.MinY) + 12, Fmt(aabb.MaxX - aabb.MinX));
                 DrawDimVScreen(canvas, ToSy(aabb.MinY), ToSy(aabb.MaxY), ToSx(aabb.MaxX) + 10, Fmt(aabb.MaxY - aabb.MinY));
             }
 
-            if (opts.LitePaint) continue;
+            if (opts.LitePaint || !opts.ShowLabels) continue;
 
             (double X, double Y)? ov = opts.LabelOverrides is { } map
                 && map.TryGetValue(panel.PanelId, out var o)
@@ -436,7 +442,7 @@ static class CanvasPainter
             PaintBridges(canvas, bridges, ToSx, ToSy, scale, opts.ActiveSheetIndex);
 
         if (opts.NcSimStrokes is { Count: > 0 } sim)
-            PaintNcSim(canvas, sim, opts.NcSimTimeSec, ToSx, ToSy, scale, opts.NcSimToolDiaMm);
+            PaintNcSim(canvas, sim, opts.NcSimTimeSec, ToSx, ToSy, scale, opts.NcSimToolDiaMm, opts.ShowRapids);
 
         if (opts.HoldingBayLeft > 0 && opts.HoldingBayLeft < w - 4)
             PaintHoldingBay(
@@ -938,13 +944,16 @@ static class CanvasPainter
         Func<double, float> toSx,
         Func<double, float> toSy,
         float scale,
-        IReadOnlyDictionary<int, double>? shopDia = null)
+        IReadOnlyDictionary<int, double>? shopDia = null,
+        bool showRapids = true)
     {
         var pose = NcCutSim.At(strokes, timeSec);
 
         for (var i = 0; i < strokes.Count; i++)
         {
             var s = strokes[i];
+            if (!showRapids && NcCutSim.KindOf(s) == NcCutSim.StrokeKind.Rapid)
+                continue;
             if (i > pose.StrokeIndex)
             {
                 DrawNcStroke(canvas, s, 0, 1, false, toSx, toSy, scale, shopDia);

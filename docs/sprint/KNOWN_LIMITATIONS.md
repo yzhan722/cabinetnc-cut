@@ -78,6 +78,8 @@ came from before applying the rules below; the NC header tells you.
 - Export simulation: DRO readout and code ↔ backplot sync rely on `ToolStroke.LineIndex` (source line of the block). Blocks without motion (comments, `M` codes) map to the next motion block when clicked.
 - Unsaved-work detection is a fingerprint of the saveable content (package JSON, placements, CAM session without view state, project name, machine). It is recomputed on major refreshes and on close/open, not on every drag, so the title-bar `*` can lag one action behind a nest drag.
 - Recent files live in `library.json` (`recentFiles`, max 10); a missing file is greyed in the menu and dropped when clicked.
+- Display layer toggles (grain / features / label anchors / dims / sim rapids) are session-only and not persisted.
+- The reverse audit card counts what `NcReverse` classified; a contour it could not classify at all (open loop, mid-depth pass) shows up as a groove/pocket op, not as an "unassigned contour".
 
 ## UIA / smoke
 
