@@ -52,13 +52,13 @@ jobs:
         if: always()
         run: dotnet test tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj -c Release --verbosity minimal
 
-      # Drives the real WPF app through UI Automation (demo → nest → CAM → export, stale
-      # banner). Hosted runners have an interactive desktop, but UIA timing can flake, so
-      # this step reports without failing the job until it has a track record.
-      - name: UI smoke (UIA, non-blocking)
+      # Drives the real WPF app through UI Automation (tests/ui-smoke/scenarios: demo → nest →
+      # CAM → export, stale banner, .anc reverse → recut, library recovery, corrupt project).
+      # Blocking since 2026-09-03 after five consecutive green runs on the hosted runner; if
+      # it ever flakes, look at the uploaded screenshots before touching the scenarios.
+      - name: UI smoke (UIA)
         id: uismoke
         if: always()
-        continue-on-error: true
         run: pwsh tests/ui-smoke/run-all.ps1
 
       - name: Upload UI smoke screenshots

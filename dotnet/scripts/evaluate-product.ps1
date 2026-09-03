@@ -182,8 +182,7 @@ $report = [ordered]@{
         "True NFP/DXOPT-grade placement is not implemented",
         "CAM simulation is point-playhead, not material removal",
         "SkiaSharp/OpenTK emits NU1701 target-framework compatibility warnings",
-        "Signed MSI and real-machine validation remain",
-        "UI smoke runs on the hosted Windows runner but is still non-blocking in CI (see windows-desktop.yml)"
+        "Signed MSI and real-machine validation remain"
     )
 }
 $report | ConvertTo-Json -Depth 8 | Set-Content $reportJson -Encoding UTF8

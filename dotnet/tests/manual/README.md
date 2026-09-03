@@ -3,7 +3,7 @@
 ## 自动冒烟（当前）：`tests/ui-smoke`
 
 PowerShell + UI Automation，驱动 Release 版 Desktop 走真实流程，断言状态栏 / 标题 / 导出文件并截图。
-Windows CI（`windows-desktop.yml`）以非阻塞方式运行同一套脚本，截图作为工件上传。
+Windows CI（`windows-desktop.yml`）把同一套脚本作为阻塞步骤运行，截图作为工件 `ui-smoke-screenshots` 上传。
 
 ```powershell
 cd d:\project\cabinetnc-cut\dotnet

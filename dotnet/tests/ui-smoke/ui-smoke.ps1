@@ -1,6 +1,6 @@
 # OmniCam UI smoke driver — launches the Release Desktop, drives it through UI Automation,
 # captures screenshots and checks assertions. Windows only (WPF + UIA). Used by run-all.ps1
-# and by the Windows CI job (non-blocking). Replaces the stale tests/manual/smoke_desktop.py.
+# and by the Windows CI job (blocking). Replaces the stale tests/manual/smoke_desktop.py.
 #
 # Steps file: one step per line, UTF-8.
 #   invoke:<button name>        click a Button by its automation name

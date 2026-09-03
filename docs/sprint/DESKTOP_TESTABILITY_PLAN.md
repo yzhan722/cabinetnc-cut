@@ -57,7 +57,7 @@
       `NcPreflight`（目前 20 处），全部经 `Application`/`Desktop.Core`。
 - [ ] `MessageBox.Show`（目前 16 处）收敛到一个 `IUserPrompt` 接口，`Desktop.Core` 只依赖接口。
 - [ ] Windows CI 里 `dotnet test tests/CabinetNC.Desktop.Core.Tests` 加入门禁。
-- [x] UIA 冒烟已重建为 `tests/ui-smoke`（PowerShell + UIA，场景文件驱动，本地 2/2 通过；Windows CI 非阻塞运行并上传截图）。`smoke_desktop.py` 保留但明确不是门禁。
+- [x] UIA 冒烟已重建为 `tests/ui-smoke`（PowerShell + UIA，场景文件驱动，5 个场景；Windows CI 作为阻塞步骤运行并上传截图，2026-09-03 起）。`smoke_desktop.py` 保留但明确不是门禁。
 
 ## 不要做
 
