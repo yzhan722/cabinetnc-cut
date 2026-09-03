@@ -1,36 +1,70 @@
-# Desktop manual smoke (10 minutes) — RC audit2
+# Desktop 手工冒烟（10 分钟）— OmniCam 界面版
 
-**Status:** `MANUAL PENDING` (automated UIA must not be marked PASS in agent shells)
+**Status:** `MANUAL PENDING`（代理环境里的 UIA 自动化不得标 PASS）
 
-**Build:** Release Desktop from `sprint/14d-rc`  
-**Tag target:** `rc-14d-audit2-20260805`  
-**Date:** 2026-08-05
+**Build:** Release Desktop，`sprint/14d-rc`，把「帮助 → 关于 OmniCam」里的 `commit` 抄到下方签字栏  
+**Rewritten:** 2026-09-03（对应 2026-09-02/03 的界面改版；旧版 10 条见 git 历史 `rc-14d-audit2-20260805`）
 
-Do **not** claim UIA PASS if `smoke_desktop.py` hangs or is skipped.
+每条 ≤ 8 步，"预期"一句话。做不到就写 FAIL 和现象，不要跳过。
 
-## Checklist
+## 一、载入与导航（2 分钟）
 
-| # | Step | Pass? | Notes |
-|---|------|-------|-------|
-| 1 | Import real woodjob (`demo_woodjob_120.zip` or shop job) | MANUAL PENDING | |
-| 2 | Edit a hole/groove → Nest/CAM dirty / export blocked until re-nest | MANUAL PENDING | |
-| 3 | Undo / Redo restores feature + dirty flags | MANUAL PENDING | |
-| 4 | Mirror panel; confirm outline/features | MANUAL PENDING | |
-| 5 | Material × Thickness grouping (no mixed sheet) | MANUAL PENDING | |
-| 6 | Pocket with explicit depth clears; missing depth / too-small fails Preflight | MANUAL PENDING | |
-| 7 | Preflight: hard errors cannot be overridden (pocket/tool/depth) | MANUAL PENDING | |
-| 8 | 一键打包: files are `{job}_S{n}_{Tn}.nc` + `{job}_S{n}.dxf` + manifest | MANUAL PENDING | |
-| 9 | Spot-check NC header: ToolId, DiameterMm, FeedXY, FeedZ, RPM | MANUAL PENDING | |
-| 10 | Labels HTML + BOM CSV share WorkpieceId with panels | MANUAL PENDING | |
+| # | 步骤 | 预期 | Pass? | 备注 |
+|---|------|------|-------|------|
+| 1 | 启动 → 空状态页点「打开示例」 | 状态栏绿色 ✓「已载入示例 · 1 块板」，顶部步骤标签 载入/板材 变 ✓，其余灰 | | |
+| 2 | 按 Ctrl+3、Ctrl+5、Ctrl+1 | 页签随之切换；步骤标签的黑框跟随当前步 | | |
+| 3 | 「文件 → 最近打开」 | 列出刚打开的文件（下划线完整显示）；不存在的文件灰显 | | |
+| 4 | 「帮助 → 关于 OmniCam」→「复制构建信息」 | 弹窗含 `commit <sha>`、构建时间、机型、库路径；剪贴板里有同样内容 | | |
 
-## Stop rules
+## 二、密排与视口（2 分钟）
 
-- Any hard Preflight error → do not cut.
-- Dual-face / B-side → blocked without registration (still Partial).
-- Do not invent M6 on the controller until shop dialect confirmed.
+| # | 步骤 | 预期 | Pass? | 备注 |
+|---|------|------|-------|------|
+| 5 | 「2 板材与设备」→ 深色主按钮「初始密排 →」 | 自动跳到「3 密排」；绿色通知卡「密排完成 …」带「去计算刀路」；按钮**立刻**恢复可用，进度条消失 | | |
+| 6 | 画布上滚轮、中键拖动、按 F | 对准指针缩放、平移、适配整板；状态栏右侧显示 `X … Y … mm · 缩放 %`；底部导航条同步 | | |
+| 7 | 「显示 ▾」取消 特征 / 标签锚点 / 纹理 | 板件只剩外形与尺寸标注；重新勾选恢复 | | |
+| 8 | 回到「1 载入方案」点「镜像X」，再到「3 密排」 | 黄色横幅「板件已修改…」带「重新密排」；步骤标签 密排/刀路/导出 变 ⚠；标题栏出现 ` *` | | |
+| 9 | 点横幅「重新密排」 | 横幅消失，⚠ 变 ✓，通知卡再次出现 | | |
 
-## Sign-off
+## 三、刀路、仿真与导出（4 分钟）
 
-- Operator: _______________
-- Date: _______________
-- Result: PASS / FAIL / PARTIAL
+| # | 步骤 | 预期 | Pass? | 备注 |
+|---|------|------|-------|------|
+| 10 | 「4 刀路与加工档」→ 主按钮「计算全部」 | 状态栏绿色「已计算全部大板 …」；步骤标签 刀路/导出 变 ✓ | | |
+| 11 | 「5 导出」：点 ⏭ 再点 ◁ 三次 | 右侧 DRO 显示 X/Y/Z、T、F 与段号；左侧代码区滚动并高亮当前块，标题「执行到第 N 行」 | | |
+| 12 | 在代码区点任意 `G1` 行 | 仿真刀位跳到该块，DRO 与高亮同步 | | |
+| 13 | 空格 | 播放 / 暂停；4× 速度可切 | | |
+| 14 | 文件卡片 | 第一行写明「OSAI 单文件 .anc · Z0=板底 · 自动换刀 M6 · 安全高 30」 | | |
+| 15 | 「导出当前大板」→ 存到一个空目录 | 目录里有 `.anc` 和同名 stem 的 `.bmp` **平铺**（无 `label\` 子目录）；绿色通知卡「已导出 1 个程序文件」带「打开目录」；状态栏写明"复制到机床 D:\CNC" | | |
+| 16 | 删掉目录里一个 `.bmp`，再导出一次到同一目录 | 红色通知卡「导出完成，但有 N 个标签缺少 BMP」（停留更久），状态栏红色 | | |
+| 17 | 用真实作业制造一个预检**软**警告后导出 | 出现「预检未通过 — 仍要导出？」对话框，必须填 ≥ 6 字原因才能继续；原因进使用日志 `export.preflight.override` | | |
+| 18 | 硬错误（例如把一个孔改到 Ø5） | 红色硬错误对话框，文案说明哪把刀进不去、怎么改；不可强制导出 | | |
+
+## 四、会话与关闭（1 分钟）
+
+| # | 步骤 | 预期 | Pass? | 备注 |
+|---|------|------|-------|------|
+| 19 | 有 ` *` 时点「打开方案…」 | 先问「先保存吗？」，取消回到原处 | | |
+| 20 | 有 ` *` 时关窗口 | 「未保存的改动」保存 / 放弃 / 取消；选保存后取消保存对话框 → 窗口不关 | | |
+| 21 | 「参数设置 → 机床与贴标」改目录后「保存参数」 | 状态栏绿色；再次导出时文案里的机床目录随之改变 | | |
+
+## 五、补板库（1 分钟）
+
+| # | 步骤 | 预期 | Pass? | 备注 |
+|---|------|------|-------|------|
+| 22 | 「从 .anc 反推…」打开机床上跑过的程序 | 切到「补板库」；「反推对照」卡列出 段数 / 外形→板+开窗 / 孔 槽 口袋，逐板尺寸；全部归属显示 ✓，否则 ⚠ 并写明数量 | | |
+| 23 | 勾选一块 →「重切勾选的板」→ 密排 → 导出 | 只导出该板，数量 1 | | |
+
+## 停止规则
+
+- 任何硬预检错误 → 不上机。
+- 双面 / B 面 → 未配置定位策略时被阻断（仍是 Partial，见 `DUAL_FACE_QUESTIONNAIRE.md`）。
+- 缺 BMP 的导出 → 补齐前不进 Process 2。
+- 把结果按 `POST_CHANGE_CHECKLIST.md` 第三节写进 `SHOP_LOG.md`。
+
+## 签字
+
+- 操作员：_______________
+- 日期：_______________
+- commit：_______________
+- 结果：PASS / FAIL / PARTIAL（FAIL 的条目号：______）
