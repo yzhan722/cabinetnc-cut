@@ -24,6 +24,7 @@ param(
     [Parameter(Mandatory)] [string]$StepsFile,
     [string]$ShotDir = (Join-Path $PSScriptRoot '..\..\artifacts\ui-smoke'),
     [string]$AutoExportDir = '',
+    [string]$ResultJson = '',
     [int]$StartupTimeoutSec = 90
 )
 $ErrorActionPreference = 'Stop'
@@ -42,8 +43,22 @@ public static class SmokeWin32 {
 New-Item -ItemType Directory -Force -Path $ShotDir | Out-Null
 
 $failures = New-Object System.Collections.Generic.List[string]
-function Fail([string]$m) { $script:failures.Add($m); Write-Host "FAIL  $m" -ForegroundColor Red }
-function Ok([string]$m) { Write-Host "ok    $m" }
+$stepLog = New-Object System.Collections.Generic.List[object]
+function Fail([string]$m) { $script:failures.Add($m); $script:stepLog.Add([pscustomobject]@{ ok = $false; message = $m }); Write-Host "FAIL  $m" -ForegroundColor Red }
+function Ok([string]$m) { $script:stepLog.Add([pscustomobject]@{ ok = $true; message = $m }); Write-Host "ok    $m" }
+function Write-Result([bool]$passed) {
+    if (-not $ResultJson) { return }
+    New-Item -ItemType Directory -Force -Path (Split-Path $ResultJson) | Out-Null
+    # .ToArray(): Windows PowerShell 5.1 throws "argument types do not match" when a
+    # List[object] of PSCustomObjects is wrapped with @() inside a [pscustomobject] cast.
+    [pscustomobject]@{
+        scenario = [IO.Path]::GetFileNameWithoutExtension($StepsFile)
+        passed = $passed
+        failures = $failures.ToArray()
+        steps = $stepLog.ToArray()
+        finishedAt = (Get-Date).ToString('o')
+    } | ConvertTo-Json -Depth 5 | Set-Content -Path $ResultJson -Encoding UTF8
+}
 
 if ($AutoExportDir) { $env:OMNICAM_AUTO_EXPORT_DIR = $AutoExportDir; New-Item -ItemType Directory -Force -Path $AutoExportDir | Out-Null }
 $allLines = Get-Content -Path $StepsFile -Encoding UTF8 | Where-Object { $_.Trim() -ne '' -and -not $_.StartsWith('#') }
@@ -68,7 +83,7 @@ $p = if ($launchArgs.Count -gt 0) { Start-Process -FilePath $Exe -ArgumentList $
 $deadline = (Get-Date).AddSeconds($StartupTimeoutSec)
 while ((Get-Date) -lt $deadline) { $p.Refresh(); if ($p.MainWindowHandle -ne 0 -and $p.MainWindowTitle -like 'OmniCam*') { break }; Start-Sleep -Milliseconds 300 }
 $p.Refresh()
-if ($p.MainWindowHandle -eq 0) { Fail 'main window did not appear'; if (-not $p.HasExited) { $p.Kill() }; exit 1 }
+if ($p.MainWindowHandle -eq 0) { Fail 'main window did not appear'; if (-not $p.HasExited) { $p.Kill() }; Write-Result $false; exit 1 }
 Start-Sleep -Milliseconds 2000
 $h = $p.MainWindowHandle
 [SmokeWin32]::ShowWindow($h, 9) | Out-Null
@@ -197,6 +212,7 @@ foreach ($s in $steps) {
 try { $p.CloseMainWindow() | Out-Null; Start-Sleep -Milliseconds 800 } catch {}
 # The unsaved-work prompt may hold the window open; the smoke never keeps state.
 if (-not $p.HasExited) { try { $p.Kill() } catch {} }
-if ($failures.Count -gt 0) { Write-Host "$($failures.Count) failure(s)" -ForegroundColor Red; exit 1 }
+if ($failures.Count -gt 0) { Write-Result $false; Write-Host "$($failures.Count) failure(s)" -ForegroundColor Red; exit 1 }
+Write-Result $true
 Write-Host 'all steps passed' -ForegroundColor Green
 exit 0

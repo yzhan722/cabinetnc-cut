@@ -11,7 +11,8 @@ New-Item -ItemType Directory -Force -Path $artifacts | Out-Null
 
 $testLog = Join-Path $artifacts "evaluation-tests.log"
 $buildLog = Join-Path $artifacts "evaluation-build.log"
-$smokeJson = Join-Path $artifacts "smoke-latest.json"
+# Written by tests\ui-smoke\run-all.ps1 (PowerShell + UIA); the Python smoke is legacy.
+$smokeJson = Join-Path $artifacts "ui-smoke\results.json"
 $reportJson = Join-Path $artifacts "evaluation-latest.json"
 $reportMd = Join-Path $artifacts "evaluation-latest.md"
 
@@ -30,17 +31,20 @@ try {
     & dotnet test "CabinetNC.slnx" --no-restore 2>&1 | Tee-Object -FilePath $testLog
     $testsOk = $LASTEXITCODE -eq 0
 
-    & dotnet build "src\CabinetNC.Desktop\CabinetNC.Desktop.csproj" --no-restore -v minimal 2>&1 |
+    # The smoke launches the Release exe; build it in Release so it is what the operator gets.
+    & dotnet build "src\CabinetNC.Desktop\CabinetNC.Desktop.csproj" -c Release --no-restore -v minimal 2>&1 |
         Tee-Object -FilePath $buildLog
     $buildOk = $LASTEXITCODE -eq 0
 
-    $smokeArgs = @(
-        "tests\manual\smoke_desktop.py",
-        "--json", $smokeJson
-    )
-    if ($KeepOpen) { $smokeArgs += "--keep-open" }
-    & python @smokeArgs
-    $smokeOk = $LASTEXITCODE -eq 0
+    Remove-Item $smokeJson -Force -ErrorAction SilentlyContinue
+    if ($buildOk) {
+        # The smoke runs under either PowerShell 7 or Windows PowerShell 5.1.
+        $shell = if (Get-Command pwsh -ErrorAction SilentlyContinue) { "pwsh" } else { "powershell" }
+        & $shell -NoProfile -ExecutionPolicy Bypass -File "tests\ui-smoke\run-all.ps1"
+        $smokeOk = $LASTEXITCODE -eq 0
+    } else {
+        $smokeOk = $false
+    }
 }
 finally {
     Pop-Location
@@ -52,21 +56,26 @@ $smoke = if (Test-Path $smokeJson) {
     $null
 }
 
-function Test-SmokeCase([string]$prefix) {
+function Test-Scenario([string]$name) {
     if ($null -eq $smoke) { return $false }
-    return @($smoke.cases | Where-Object {
-        $_.id -like "$prefix*" -and $_.status -eq "PASS"
-    }).Count -gt 0
+    return @($smoke.scenarios | Where-Object { $_.scenario -eq $name -and $_.passed }).Count -gt 0
 }
 
-$startupOk = Test-SmokeCase "SMK-001"
-$modulesOk = Test-SmokeCase "SMK-002"
-$importOk = Test-SmokeCase "SMK-010"
-$nestOk = Test-SmokeCase "SMK-031"
-$polyOk = Test-SmokeCase "SMK-036"
-$camOk = Test-SmokeCase "SMK-043"
-$toolOk = Test-SmokeCase "SMK-042"
-$outOk = Test-SmokeCase "SMK-046"
+# Scenario -> what it proves (see tests\ui-smoke\scenarios\*.txt for the asserted steps).
+$demoFlowOk = Test-Scenario "01-demo-to-export"     # startup, demo import, nest, CAM, sim step, export + label bitmap
+$staleOk = Test-Scenario "02-stale-banner"          # geometry edit -> stale banner -> re-nest
+$reverseOk = Test-Scenario "03-anc-reverse-recut"   # command-line .anc -> reverse audit -> remnants -> nest -> export
+$libraryOk = Test-Scenario "04-library-recovery"    # truncated library.json recovered from .bak with a warning
+$corruptOk = Test-Scenario "05-corrupt-project"     # corrupt project.db -> readable error, app still usable
+
+$startupOk = $demoFlowOk -or $staleOk -or $reverseOk
+$modulesOk = $reverseOk -or $libraryOk
+$importOk = $demoFlowOk
+$nestOk = $demoFlowOk -and $staleOk
+$polyOk = $demoFlowOk
+$camOk = $demoFlowOk
+$toolOk = $demoFlowOk
+$outOk = $demoFlowOk -and $reverseOk
 $noCompilerWarnings = if (Test-Path $buildLog) {
     -not (Select-String -Path $buildLog -Pattern "warning CS|error CS" -Quiet)
 } else { $false }
@@ -79,7 +88,8 @@ $noCompatibilityWarnings = if (Test-Path $buildLog) {
 
 $manualDoc = Test-Path (Join-Path $repoRoot "docs\testing\SMOKE_CASE_LIBRARY.md")
 $rulesDoc = Test-Path (Join-Path $repoRoot "docs\testing\PRODUCT_EVALUATION_RULES.md")
-$smokeSource = Test-Path (Join-Path $dotnetRoot "tests\manual\smoke_desktop.py")
+$smokeSource = (Test-Path (Join-Path $dotnetRoot "tests\ui-smoke\run-all.ps1")) -and
+    (@(Get-ChildItem (Join-Path $dotnetRoot "tests\ui-smoke\scenarios") -Filter "*.txt" -ErrorAction SilentlyContinue).Count -ge 3)
 $packScript = Test-Path (Join-Path $dotnetRoot "scripts\pack.ps1")
 $exportSources = @(
     "src\CabinetNC.Domain\Manufacturing\NestDxfWriter.cs",
@@ -106,34 +116,34 @@ function Add-Criterion(
 }
 
 # A. Functional closure (35)
-Add-Criterion "A1-import" 6 ($testsOk -and $importOk) "tests + SMK-010"
-Add-Criterion "A2-nest" 8 ($testsOk -and $nestOk -and $polyOk) "tests + SMK-031 + SMK-036"
-Add-Criterion "A3-cam-nc" 8 ($testsOk -and $camOk -and $toolOk) "tests + SMK-042/043/044"
-Add-Criterion "A4-export" 6 ($testsOk -and $outOk -and -not ($exportSources -contains $false)) "export sources + tests + SMK-046/050-053"
-Add-Criterion "A5-persistence" 4 ($testsOk -and -not ($projectSources -contains $false)) "SQLite/library sources + tests"
-Add-Criterion "A6-modules" 3 $modulesOk "SMK-002"
+Add-Criterion "A1-import" 6 ($testsOk -and $importOk) "tests + ui-smoke 01 (demo import)"
+Add-Criterion "A2-nest" 8 ($testsOk -and $nestOk -and $polyOk) "tests + ui-smoke 01/02 (nest, stale -> re-nest)"
+Add-Criterion "A3-cam-nc" 8 ($testsOk -and $camOk -and $toolOk) "tests + ui-smoke 01 (compute-all, sim step)"
+Add-Criterion "A4-export" 6 ($testsOk -and $outOk -and -not ($exportSources -contains $false)) "export sources + tests + ui-smoke 01/03 (.anc + flat BMPs)"
+Add-Criterion "A5-persistence" 4 ($testsOk -and $libraryOk -and $corruptOk -and -not ($projectSources -contains $false)) "SQLite/library sources + tests + ui-smoke 04/05"
+Add-Criterion "A6-modules" 3 $modulesOk "ui-smoke 03/04 (remnants module)"
 
 # B. Safety and correctness (25)
 Add-Criterion "B1-full-tests" 6 $testsOk $testLog
-Add-Criterion "B2-rotation-xy" 5 ($testsOk -and $nestOk -and $camOk) "rotation unit test + UI NC negative-XY assertion"
-Add-Criterion "B3-invalid-input" 3 $testsOk "CutPackageImporter rejection tests" 2
-Add-Criterion "B4-poly-gap" 4 ($testsOk -and $polyOk) "Clipper tests + SMK-036"
-Add-Criterion "B5-preflight" 4 ($testsOk -and $outOk) "NcPreflight tests + SMK-046"
+Add-Criterion "B2-rotation-xy" 5 ($testsOk -and $nestOk -and $camOk) "rotation unit tests + NcSafetyInvariantTests"
+Add-Criterion "B3-invalid-input" 3 ($testsOk -and $corruptOk) "importer rejection tests + ui-smoke 05" 2
+Add-Criterion "B4-poly-gap" 4 ($testsOk -and $polyOk) "Clipper tests + ui-smoke 01"
+Add-Criterion "B5-preflight" 4 ($testsOk -and $outOk) "NcPreflight tests + export gate in ui-smoke 01"
 Add-Criterion "B6-review-lint" 3 (
     $buildOk -and $noCompilerWarnings -and $noHighNuget -and $noCompatibilityWarnings
 ) "0 CS/high-NuGet/compatibility warnings" 2
 
 # C. Operability (15)
-Add-Criterion "C1-startup-worker" 3 $startupOk "SMK-001"
-Add-Criterion "C2-stage-gates" 2 $startupOk "SMK-003"
-Add-Criterion "C3-module-navigation" 3 $modulesOk "SMK-002"
-Add-Criterion "C4-feedback-dialog" 2 $importOk "SMK-010 import result dialog"
-Add-Criterion "C5-manual-library" 3 $manualDoc "SMOKE_CASE_LIBRARY.md"
-Add-Criterion "C6-status-preflight" 2 $outOk "SMK-046"
+Add-Criterion "C1-startup-worker" 3 $startupOk "ui-smoke startup (ready status)"
+Add-Criterion "C2-stage-gates" 2 $staleOk "ui-smoke 02 (stale banner, workflow pills)"
+Add-Criterion "C3-module-navigation" 3 $modulesOk "ui-smoke 03/04"
+Add-Criterion "C4-feedback-dialog" 2 ($importOk -and $libraryOk) "toasts asserted in ui-smoke 01/04"
+Add-Criterion "C5-manual-library" 3 $manualDoc "SMOKE_CASE_LIBRARY.md + MANUAL_SMOKE_10MIN.md"
+Add-Criterion "C6-status-preflight" 2 $outOk "ui-smoke 01 export status"
 
 # D. Maintainability (10)
-Add-Criterion "D1-domain-tests" 3 $testsOk "Domain/Package/Infrastructure suites"
-Add-Criterion "D2-repeatable-uia" 2 ($smokeSource -and $smokeOk) "smoke JSON + exit code"
+Add-Criterion "D1-domain-tests" 3 $testsOk "Domain/Package/Infrastructure/Desktop.Core suites"
+Add-Criterion "D2-repeatable-uia" 2 ($smokeSource -and $smokeOk) "ui-smoke results.json + exit code"
 Add-Criterion "D3-open-dependencies" 2 (Test-Path (Join-Path $dotnetRoot "src\CabinetNC.Domain\CabinetNC.Domain.csproj")) "Clipper2 package; no MakerHub binaries"
 Add-Criterion "D4-doc-consistency" 3 ($rulesDoc -and $manualDoc) "rubric + manual library"
 
@@ -172,7 +182,8 @@ $report = [ordered]@{
         "True NFP/DXOPT-grade placement is not implemented",
         "CAM simulation is point-playhead, not material removal",
         "SkiaSharp/OpenTK emits NU1701 target-framework compatibility warnings",
-        "Signed MSI and real-machine validation remain"
+        "Signed MSI and real-machine validation remain",
+        "UI smoke runs on the hosted Windows runner but is still non-blocking in CI (see windows-desktop.yml)"
     )
 }
 $report | ConvertTo-Json -Depth 8 | Set-Content $reportJson -Encoding UTF8

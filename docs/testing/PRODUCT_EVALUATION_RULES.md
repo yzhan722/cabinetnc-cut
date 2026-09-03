@@ -10,8 +10,8 @@
 |------|------|
 | Desktop 构建成功 | `dotnet build src/CabinetNC.Desktop/...` exit 0 |
 | 全 Solution 测试成功 | `dotnet test CabinetNC.slnx` 0 failed（含 `Category=GoldenRegression` 金样） |
-| 关键 UIA 冒烟成功 | `smoke_desktop.py` critical cases 全绿 |
-| 120 板 woodjob 可导入 | 弹窗/状态含 `panels=120` |
+| 关键 UIA 冒烟成功 | `tests/ui-smoke/run-all.ps1` 全部场景通过（`artifacts/ui-smoke/results.json`）；`smoke_desktop.py` 已弃用 |
+| 示例方案可导入并走完到导出 | 场景 01：状态含 `已载入示例` → 密排 → 计算全部 → 导出出 `.anc` + 平铺 BMP |
 | 旋转加工坐标安全 | 90° 单测 + UI NC 不含负 X/Y |
 | 导出前预检可执行 | Out 阶段预检 case 通过 |
 
@@ -53,7 +53,7 @@
 | ID | 分值 | 评估项 |
 |----|------|--------|
 | D1 | 3 | Domain 非平凡逻辑有直接测试 |
-| D2 | 2 | UIA 冒烟脚本可重复执行并输出 JSON |
+| D2 | 2 | UIA 冒烟脚本可重复执行并输出 JSON（`tests/ui-smoke`，本地与 Windows CI 同一套） |
 | D3 | 2 | 外部依赖用途明确、无专有 MakerHub 二进制 |
 | D4 | 3 | 架构、差距、loop 与测试文档一致 |
 
@@ -73,6 +73,7 @@
 3. 同一根因造成多项失败，各项分别扣分，但报告必须归并根因。
 4. 已知高危依赖警告单列风险；若存在可利用路径则触发硬门槛失败。
 5. 每轮保存 `artifacts/evaluation-latest.json` 和评估摘要。
+6. 运行方式：`pwsh dotnet/scripts/evaluate-product.ps1`（需要 .NET 10 SDK 在 PATH 上；脚本会构建 Release Desktop、跑全部测试项目、再跑 UI 冒烟）。2026-09-03 基线：99/100，硬门全过，B6 因 SkiaSharp/OpenTK 的 NU1701 兼容性警告扣 1 分。
 
 ## 双分数
 

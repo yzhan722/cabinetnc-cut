@@ -1,7 +1,7 @@
 ﻿{
     "schema":  "cabinetnc.product-evaluation",
     "schemaVersion":  1,
-    "evaluatedAt":  "2026-07-22T13:04:19.9605470+10:00",
+    "evaluatedAt":  "2026-09-03T16:19:02.8670905+08:00",
     "targetScore":  85,
     "score":  99,
     "maxScore":  100,
@@ -22,42 +22,42 @@
                          "earned":  6,
                          "max":  6,
                          "pass":  true,
-                         "evidence":  "tests + SMK-010"
+                         "evidence":  "tests + ui-smoke 01 (demo import)"
                      },
                      {
                          "id":  "A2-nest",
                          "earned":  8,
                          "max":  8,
                          "pass":  true,
-                         "evidence":  "tests + SMK-031 + SMK-036"
+                         "evidence":  "tests + ui-smoke 01/02 (nest, stale 鈫?re-nest)"
                      },
                      {
                          "id":  "A3-cam-nc",
                          "earned":  8,
                          "max":  8,
                          "pass":  true,
-                         "evidence":  "tests + SMK-042/043/044"
+                         "evidence":  "tests + ui-smoke 01 (璁＄畻鍏ㄩ儴, sim step)"
                      },
                      {
                          "id":  "A4-export",
                          "earned":  6,
                          "max":  6,
                          "pass":  true,
-                         "evidence":  "export sources + tests + SMK-046/050-053"
+                         "evidence":  "export sources + tests + ui-smoke 01/03 (.anc + flat BMPs)"
                      },
                      {
                          "id":  "A5-persistence",
                          "earned":  4,
                          "max":  4,
                          "pass":  true,
-                         "evidence":  "SQLite/library sources + tests"
+                         "evidence":  "SQLite/library sources + tests + ui-smoke 04/05"
                      },
                      {
                          "id":  "A6-modules",
                          "earned":  3,
                          "max":  3,
                          "pass":  true,
-                         "evidence":  "SMK-002"
+                         "evidence":  "ui-smoke 03/04 (琛ユ澘搴?module)"
                      },
                      {
                          "id":  "B1-full-tests",
@@ -71,28 +71,28 @@
                          "earned":  5,
                          "max":  5,
                          "pass":  true,
-                         "evidence":  "rotation unit test + UI NC negative-XY assertion"
+                         "evidence":  "rotation unit tests + NcSafetyInvariantTests"
                      },
                      {
                          "id":  "B3-invalid-input",
                          "earned":  3,
                          "max":  3,
                          "pass":  true,
-                         "evidence":  "CutPackageImporter rejection tests"
+                         "evidence":  "importer rejection tests + ui-smoke 05"
                      },
                      {
                          "id":  "B4-poly-gap",
                          "earned":  4,
                          "max":  4,
                          "pass":  true,
-                         "evidence":  "Clipper tests + SMK-036"
+                         "evidence":  "Clipper tests + ui-smoke 01"
                      },
                      {
                          "id":  "B5-preflight",
                          "earned":  4,
                          "max":  4,
                          "pass":  true,
-                         "evidence":  "NcPreflight tests + SMK-046"
+                         "evidence":  "NcPreflight tests + export gate in ui-smoke 01"
                      },
                      {
                          "id":  "B6-review-lint",
@@ -106,56 +106,56 @@
                          "earned":  3,
                          "max":  3,
                          "pass":  true,
-                         "evidence":  "SMK-001"
+                         "evidence":  "ui-smoke startup (status 灏辩华)"
                      },
                      {
                          "id":  "C2-stage-gates",
                          "earned":  2,
                          "max":  2,
                          "pass":  true,
-                         "evidence":  "SMK-003"
+                         "evidence":  "ui-smoke 02 (stale banner, workflow pills)"
                      },
                      {
                          "id":  "C3-module-navigation",
                          "earned":  3,
                          "max":  3,
                          "pass":  true,
-                         "evidence":  "SMK-002"
+                         "evidence":  "ui-smoke 03/04"
                      },
                      {
                          "id":  "C4-feedback-dialog",
                          "earned":  2,
                          "max":  2,
                          "pass":  true,
-                         "evidence":  "SMK-010 import result dialog"
+                         "evidence":  "toasts asserted in ui-smoke 01/04"
                      },
                      {
                          "id":  "C5-manual-library",
                          "earned":  3,
                          "max":  3,
                          "pass":  true,
-                         "evidence":  "SMOKE_CASE_LIBRARY.md"
+                         "evidence":  "SMOKE_CASE_LIBRARY.md + MANUAL_SMOKE_10MIN.md"
                      },
                      {
                          "id":  "C6-status-preflight",
                          "earned":  2,
                          "max":  2,
                          "pass":  true,
-                         "evidence":  "SMK-046"
+                         "evidence":  "ui-smoke 01 export status"
                      },
                      {
                          "id":  "D1-domain-tests",
                          "earned":  3,
                          "max":  3,
                          "pass":  true,
-                         "evidence":  "Domain/Package/Infrastructure suites"
+                         "evidence":  "Domain/Package/Infrastructure/Desktop.Core suites"
                      },
                      {
                          "id":  "D2-repeatable-uia",
                          "earned":  2,
                          "max":  2,
                          "pass":  true,
-                         "evidence":  "smoke JSON + exit code"
+                         "evidence":  "ui-smoke results.json + exit code"
                      },
                      {
                          "id":  "D3-open-dependencies",
@@ -190,7 +190,7 @@
                          "earned":  4,
                          "max":  4,
                          "pass":  true,
-                         "evidence":  "D:\\project\\cabinetnc-cut\\dotnet\\artifacts\\smoke-latest.json"
+                         "evidence":  "D:\\project\\cabinetnc-cut\\dotnet\\artifacts\\ui-smoke\\results.json"
                      },
                      {
                          "id":  "E4-manual-runbook",
@@ -204,6 +204,7 @@
                          "True NFP/DXOPT-grade placement is not implemented",
                          "CAM simulation is point-playhead, not material removal",
                          "SkiaSharp/OpenTK emits NU1701 target-framework compatibility warnings",
-                         "Signed MSI and real-machine validation remain"
+                         "Signed MSI and real-machine validation remain",
+                         "UI smoke runs on the hosted Windows runner but is still non-blocking in CI (see windows-desktop.yml)"
                      ]
 }
