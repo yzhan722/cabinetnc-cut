@@ -75,6 +75,7 @@
 | 2026-09-03（CAD/CAM 惯例对照后） | 约 8 100（+300：全阶段视口、仿真传输/DRO/代码联动、菜单命令、回车提交） | 0 | 20 | 16 |
 | 2026-09-03（Desktop.Core 第一步） | 8 426（未保存模型、最近文件、反推对照、图层开关、取消密排又加了功能；纯逻辑已迁出 257 行） | **43** | 20 | 18（关闭/打开前的"保存吗"两个提示） |
 | 2026-09-03（ExportFlow） | 8 380 | **49** | 20 | 18 |
+| 2026-09-03（WorkflowRules） | 8 360 | **56** | 20 | 18 |
 
 ### 阶段 0 已完成：`CabinetNC.Desktop.Core` 建立
 
@@ -101,6 +102,14 @@
 端到端验证：用反推出的两板方案导出 → `probe_sheet1.anc`（含 `LS11='NC_01'`/`'NC_02'`）+ `NC_01.bmp` / `NC_02.bmp` 平铺同目录，
 通知卡与状态栏文案来自 `ExportSummary`。
 
-下一步（阶段 2）：`StageMachine` —— 阶段可进性、按钮可用性、脏标记传播。
+### 阶段 2 已完成：`WorkflowRules`
+
+`WorkflowRules.Evaluate(WorkflowFacts)` 从 7 个事实（阶段、是否在生产加工模块、有方案 / 密排 / 刀路 / NC、几何是否脏）推出：
+五个步骤标签的 完成 / 作废 / 当前 / 提示、后续页签是否可进、一键导出是否可用、作废横幅是否显示、密排 / 刀路 / 导出三个引导态
+及导出引导指向哪一步。Desktop 的 `RefreshWorkflowDots` / `RefreshStaleBanner` / `ApplyAwaitingNestChrome` / `GoToStage` 只做映射。
+7 个 `WorkflowRulesTests` 把"没方案只能进第 1 步"、"脏但没有下游结果不算作废"、"横幅不在载入页也不在其他模块显示"等规则钉住。
+
+下一步（阶段 3）：排版交互状态机（`_dragMode`、holding bay、PIP、guillotine 预览）。这一块与 Skia 绘制耦合最深，需要先把指针事件抽象成
+（位置、按下 / 抬起 / 移动、修饰键）再动。
 
 说明：UI 改版把"状态栏 + Toast + 作废横幅 + 步骤标签"的逻辑全部写在了 code-behind 里，是阶段 1/2 拆分时第一批要搬进 `Desktop.Core` 的内容（`SetStatus/InferStatusKind`、`ShowToast`、`RefreshStaleBanner`、`RefreshWorkflowDots`、`AnnounceExport` 都是纯函数或接近纯函数）。

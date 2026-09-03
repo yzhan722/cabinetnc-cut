@@ -627,66 +627,61 @@ public partial class MainWindow : Window
         LockPlaceBtn.Visibility = _stage == "nest" ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>Plain facts for <see cref="WorkflowRules"/>; the only place the shell reads them together.</summary>
+    WorkflowFacts CurrentWorkflowFacts() => new(
+        Stage: _stage,
+        InProduction: _module == "production",
+        HasPackage: _session.Package?.Panels.Count > 0,
+        HasNest: _nest is { Ok: true, Placements.Count: > 0 },
+        HasOps: _opsOverlay.Count > 0 || HasNcText(),
+        HasNc: HasNcText(),
+        ManufacturingDirty: _session.ManufacturingDirty);
+
     void RefreshWorkflowDots()
     {
         WfDots.Children.Clear();
-        var pkg = _session.Package;
-        var hasPkg = pkg?.Panels.Count > 0;
-        var hasNest = _nest is { Ok: true, Placements.Count: > 0 };
-        var hasOps = _opsOverlay.Count > 0 || HasNcText();
-        var hasNc = HasNcText();
-        var stages = new (string Id, string Label, bool Done, string Hint)[]
+        var view = WorkflowRules.Evaluate(CurrentWorkflowFacts());
+        foreach (var step in view.Steps)
         {
-            ("load", "载入", hasPkg, hasPkg ? "方案已载入" : "尚未载入方案"),
-            ("stock", "板材", hasPkg, hasPkg ? "板材参数可用" : "先载入方案"),
-            ("nest", "密排", hasNest, hasNest ? "密排完成" : "尚未密排"),
-            ("ops", "刀路", hasOps, hasOps ? "刀路已计算" : "尚未计算刀路"),
-            ("out", "导出", hasNc, hasNc ? "程序文件就绪" : "尚无程序文件"),
-        };
-        var stale = _session.ManufacturingDirty && (hasNest || hasNc);
-        foreach (var (id, label, done, hint) in stages)
-        {
-            var current = id == _stage;
-            var showStale = stale && id is "nest" or "ops" or "out";
             var pill = new Border
             {
                 CornerRadius = new CornerRadius(10),
                 Padding = new Thickness(8, 2, 8, 2),
                 Margin = new Thickness(0, 0, 4, 0),
-                Background = showStale
+                Background = step.Stale
                     ? (Brush)FindResource("WarningSoftBrush")
-                    : done ? (Brush)FindResource("SuccessSoftBrush") : (Brush)FindResource("HoverBrush"),
-                BorderBrush = current ? (Brush)FindResource("NavyBrush") : Brushes.Transparent,
-                BorderThickness = new Thickness(current ? 1.5 : 0),
-                ToolTip = showStale ? "板件已修改，需要重新密排" : hint,
+                    : step.Done ? (Brush)FindResource("SuccessSoftBrush") : (Brush)FindResource("HoverBrush"),
+                BorderBrush = step.Current ? (Brush)FindResource("NavyBrush") : Brushes.Transparent,
+                BorderThickness = new Thickness(step.Current ? 1.5 : 0),
+                ToolTip = step.Hint,
                 Cursor = Cursors.Hand,
-                Tag = id,
+                Tag = step.Id,
             };
             var text = new StackPanel { Orientation = Orientation.Horizontal };
             text.Children.Add(new TextBlock
             {
-                Text = showStale ? "\uE7BA" : done ? "\uE73E" : "\uE91F",
+                Text = step.Stale ? "\uE7BA" : step.Done ? "\uE73E" : "\uE91F",
                 FontFamily = (FontFamily)FindResource("IconFont"),
                 FontSize = 10,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 4, 0),
-                Foreground = showStale
+                Foreground = step.Stale
                     ? (Brush)FindResource("WarningBrush")
-                    : done ? (Brush)FindResource("SuccessBrush") : (Brush)FindResource("TextMutedBrush"),
+                    : step.Done ? (Brush)FindResource("SuccessBrush") : (Brush)FindResource("TextMutedBrush"),
             });
             text.Children.Add(new TextBlock
             {
-                Text = label,
+                Text = step.Label,
                 FontSize = 11,
-                FontWeight = current ? FontWeights.SemiBold : FontWeights.Normal,
+                FontWeight = step.Current ? FontWeights.SemiBold : FontWeights.Normal,
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = done || current ? (Brush)FindResource("TextBrush") : (Brush)FindResource("TextMutedBrush"),
+                Foreground = step.Done || step.Current ? (Brush)FindResource("TextBrush") : (Brush)FindResource("TextMutedBrush"),
             });
             pill.Child = text;
             pill.MouseLeftButtonUp += (_, _) => { if (pill.Tag is string s) GoToStage(s); };
             WfDots.Children.Add(pill);
         }
-        RefreshOneClickExport();
+        OneClickExportBtn.IsEnabled = view.OneClickExportEnabled;
         RefreshStaleBanner();
         ApplyAwaitingNestChrome();
         ApplyProjectNameChrome();
@@ -697,7 +692,7 @@ public partial class MainWindow : Window
         || (!string.IsNullOrWhiteSpace(NcPreview.Text) && !NcPreview.Text.StartsWith("//"));
 
     void RefreshOneClickExport() =>
-        OneClickExportBtn.IsEnabled = _nest is { Ok: true, Placements.Count: > 0 } && HasNcText();
+        OneClickExportBtn.IsEnabled = WorkflowRules.Evaluate(CurrentWorkflowFacts()).OneClickExportEnabled;
 
     public sealed class ExportNcFile
     {
@@ -1499,20 +1494,18 @@ public partial class MainWindow : Window
         NestAwaitingState.Visibility = awaiting && _stage == "nest"
             ? Visibility.Visible
             : Visibility.Collapsed;
-        OpsAwaitingState.Visibility = awaiting && _stage == "ops"
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        var outAwaiting = _stage == "out" && _session.Package is not null && !HasNcText();
-        if (outAwaiting)
+        var view = WorkflowRules.Evaluate(CurrentWorkflowFacts());
+        OpsAwaitingState.Visibility = view.ShowOpsAwaiting ? Visibility.Visible : Visibility.Collapsed;
+        if (view.ShowOutAwaiting)
         {
-            var noNest = _nest is not { Ok: true };
+            var noNest = view.OutAwaitingTarget == "nest";
             OutAwaitingText.Text = noNest
                 ? "导出需要先完成「3 密排」和「4 刀路与加工档」。"
                 : "到「4 刀路与加工档」点「计算全部」生成刀路后，这里会按大板列出可导出的程序文件。";
             OutAwaitingBtn.Content = noNest ? "前往密排" : "前往刀路";
-            OutAwaitingBtn.Tag = noNest ? "nest" : "ops";
+            OutAwaitingBtn.Tag = view.OutAwaitingTarget;
         }
-        OutAwaitingState.Visibility = outAwaiting ? Visibility.Visible : Visibility.Collapsed;
+        OutAwaitingState.Visibility = view.ShowOutAwaiting ? Visibility.Visible : Visibility.Collapsed;
         if (ViewportTools is not null)
         {
             ViewportTools.Visibility = ViewportActive() ? Visibility.Visible : Visibility.Collapsed;
@@ -1539,7 +1532,7 @@ public partial class MainWindow : Window
     /// <summary>Programmatic stage switch through the tab control so OnStageChanged does the bookkeeping.</summary>
     void GoToStage(string stage)
     {
-        var index = stage switch { "load" => 0, "stock" => 1, "nest" => 2, "ops" => 3, "out" => 4, _ => 0 };
+        var index = WorkflowRules.StageIndex(stage);
         if (index > 0 && _session.Package is null) index = 0;
         if (StageTabs.SelectedIndex == index)
         {
@@ -8859,12 +8852,8 @@ public partial class MainWindow : Window
 
     void RefreshStaleBanner()
     {
-        var show = _module == "production"
-            && _session.Package is not null
-            && _session.ManufacturingDirty
-            && (_nest is not null || HasNcText())
-            && _stage is not "load";
-        StaleBanner.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        var view = WorkflowRules.Evaluate(CurrentWorkflowFacts());
+        StaleBanner.Visibility = view.ShowStaleBanner ? Visibility.Visible : Visibility.Collapsed;
         StaleGotoNestBtn.Visibility = _stage == "nest" ? Visibility.Collapsed : Visibility.Visible;
     }
 
