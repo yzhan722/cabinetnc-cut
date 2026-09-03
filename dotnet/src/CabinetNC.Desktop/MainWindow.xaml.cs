@@ -920,93 +920,85 @@ public partial class MainWindow : Window
             else if (snapshot.TryGetValue(name, out var old))
                 toWrite.Add(old);
         }
-        toWrite = toWrite.Where(f => !string.IsNullOrWhiteSpace(f.NcText) && !f.NcText.StartsWith("//")).ToList();
-        if (toWrite.Count == 0)
+        var plan = ExportFlow.Plan(toWrite.Select(f => new ExportItem(f.FileName, f.NcText, f.Labels)));
+        if (plan.IsEmpty)
         {
             SetStatus("选中的文件没有可写的 G-code");
             return;
         }
 
-        if (toWrite.Count == 1)
+        string dir;
+        string? singlePath = null;
+        if (plan.Files.Count == 1)
         {
-            var one = toWrite[0];
             var dlg = new SaveFileDialog
             {
                 Filter = "Troy OSAI (*.anc)|*.anc|NC (*.nc)|*.nc|All|*.*",
-                FileName = one.FileName,
+                FileName = plan.Files[0].RelativeName,
                 Title = "导出当前选中",
             };
             if (dlg.ShowDialog() != true) return;
-            File.WriteAllText(dlg.FileName, one.NcText);
-            var oneDir = Path.GetDirectoryName(dlg.FileName)!;
-            var oneLabels = WriteLabelBmps(oneDir, [one]);
-            SetStatus(oneLabels.Text is null
-                ? $"已导出 {one.FileName} → {dlg.FileName}"
-                : $"已导出 {one.FileName} · {oneLabels.Text}");
-            AnnounceExport(1, one.Labels.Count, oneLabels.Missing, oneDir);
-            UsageLog.LogActionResult("export.nc.selected", new Dictionary<string, object?>
-            {
-                ["ok"] = true,
-                ["count"] = 1,
-                ["path"] = dlg.FileName,
-                ["file"] = one.FileName,
-            });
-            return;
+            singlePath = dlg.FileName;
+            dir = Path.GetDirectoryName(dlg.FileName)!;
+        }
+        else
+        {
+            var folder = new OpenFolderDialog { Title = "选择导出目录" };
+            if (folder.ShowDialog() != true) return;
+            dir = folder.FolderName;
         }
 
-        var folder = new OpenFolderDialog { Title = "选择导出目录" };
-        if (folder.ShowDialog() != true) return;
-        var dir = folder.FolderName;
-        foreach (var f in toWrite)
-            File.WriteAllText(Path.Combine(dir, f.FileName), f.NcText);
-        var manyLabels = WriteLabelBmps(dir, toWrite);
-        SetStatus(manyLabels.Text is null
-            ? $"已导出 {toWrite.Count} 个文件 → {dir}"
-            : $"已导出 {toWrite.Count} 个文件 · {manyLabels.Text}");
-        AnnounceExport(toWrite.Count, toWrite.Sum(f => f.Labels.Count), manyLabels.Missing, dir);
-        UsageLog.LogActionResult("export.nc.files", new Dictionary<string, object?>
+        var written = WritePlan(plan, dir, singlePath);
+        SetStatus(written.LabelStatus is null
+            ? $"已导出 {plan.Files.Count} 个文件 → {(singlePath ?? dir)}"
+            : $"已导出 {plan.Files.Count} 个文件 · {written.LabelStatus}");
+        AnnounceExport(plan.Files.Count, plan.LabelCount, written.Missing.Count, dir);
+        UsageLog.LogActionResult(plan.Files.Count == 1 ? "export.nc.selected" : "export.nc.files", new Dictionary<string, object?>
         {
             ["ok"] = true,
-            ["count"] = toWrite.Count,
+            ["count"] = plan.Files.Count,
             ["dir"] = dir,
-            ["files"] = toWrite.Select(f => f.FileName).ToArray(),
+            ["path"] = singlePath,
+            ["files"] = plan.Files.Select(f => f.RelativeName).ToArray(),
+            ["skipped"] = plan.Skipped.ToArray(),
         });
     }
 
     /// <summary>
-    /// Writes one <c>stem.bmp</c> per paste flat next to the NC, then checks that every
-    /// <c>LS11</c> the programs will request has a bitmap. Returns the status text, or null
-    /// when the files carry no labels. The machine's label software only searches its
-    /// configured picture folder (no sub-folders), so the operator copies the bitmaps
-    /// straight into <see cref="LabelerDefaults.MachinePictureDir"/>.
+    /// The only place the export touches the file system: programs, then flat <c>stem.bmp</c>
+    /// files next to them, then a check that every LS11 the programs request has a bitmap.
+    /// The decisions (what, where, expected stems) come from <see cref="ExportFlow.Plan"/>.
     /// </summary>
-    (string? Text, int Missing) WriteLabelBmps(string directory, IReadOnlyList<ExportNcFile> files)
+    (string? LabelStatus, IReadOnlyList<string> Missing) WritePlan(ExportPlan plan, string dir, string? singlePath)
     {
-        var pastes = files.SelectMany(f => f.Labels).ToList();
-        if (pastes.Count == 0 || string.IsNullOrWhiteSpace(directory))
-            return (null, 0);
-        Directory.CreateDirectory(directory);
-        foreach (var paste in pastes)
-            File.WriteAllBytes(Path.Combine(directory, paste.Stem + ".bmp"), LabelBmp.Render(paste));
+        Directory.CreateDirectory(dir);
+        if (singlePath is not null && plan.Files.Count == 1)
+            File.WriteAllText(singlePath, plan.Files[0].Text);
+        else
+            foreach (var f in plan.Files)
+                File.WriteAllText(Path.Combine(dir, f.RelativeName), f.Text);
 
-        var onDisk = Directory.EnumerateFiles(directory, "*.bmp")
+        foreach (var b in plan.Bitmaps)
+            File.WriteAllBytes(Path.Combine(dir, b.RelativeName), LabelBmp.Render(b.Paste));
+
+        if (plan.LabelCount == 0 && plan.ExpectedStems.Count == 0)
+            return (null, []);
+
+        var onDisk = Directory.EnumerateFiles(dir, "*.bmp")
             .Select(Path.GetFileNameWithoutExtension)
             .Where(s => s is not null)
             .Select(s => s!);
-        var missing = files
-            .SelectMany(f => LabelExport.MissingBitmaps(f.NcText, onDisk))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var missing = ExportFlow.Missing(plan, onDisk);
         if (missing.Count > 0)
         {
             UsageLog.LogActionResult("export.labels.missing", new Dictionary<string, object?>
             {
                 ["ok"] = false,
-                ["dir"] = directory,
+                ["dir"] = dir,
                 ["missing"] = missing.ToArray(),
             });
         }
-        return (ExportSummary.LabelStatus(pastes.Count, directory, _library.Labeler.MachinePictureDir, missing), missing.Count);
+        return (ExportSummary.LabelStatus(plan.LabelCount, dir, _library.Labeler.MachinePictureDir, missing), missing);
     }
 
     /// <summary>One clear card after every export: what was written, where the labels go, and a way to get there.</summary>
@@ -6723,15 +6715,13 @@ public partial class MainWindow : Window
             Title = "保存 NC",
         };
         if (dlg.ShowDialog() != true) return;
-        File.WriteAllText(dlg.FileName, text);
         var saveDir = Path.GetDirectoryName(dlg.FileName)!;
-        var labels = _exportSelected is { Labels.Count: > 0 } sel
-            ? WriteLabelBmps(saveDir, [sel])
-            : (Text: null, Missing: 0);
-        SetStatus(labels.Text is null
+        var savePlan = ExportFlow.Plan([new ExportItem(Path.GetFileName(dlg.FileName), text, _exportSelected?.Labels ?? [])]);
+        var saved = WritePlan(savePlan, saveDir, dlg.FileName);
+        SetStatus(saved.LabelStatus is null
             ? $"已保存 NC → {dlg.FileName}"
-            : $"已保存 NC · {labels.Text}");
-        AnnounceExport(1, _exportSelected?.Labels.Count ?? 0, labels.Missing, saveDir);
+            : $"已保存 NC · {saved.LabelStatus}");
+        AnnounceExport(1, savePlan.LabelCount, saved.Missing.Count, saveDir);
         UsageLog.LogActionResult("export.nc", new Dictionary<string, object?>
         {
             ["ok"] = true,

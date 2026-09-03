@@ -74,6 +74,7 @@
 | 2026-09-02（UI 改版后） | 7 799（+404：状态/通知系统、引导态、快捷键、导出流程；样式已移出到 `Theme.xaml` 442 行） | 0 | 20 | 16（预检 Yes/No 改为专用对话框，快捷键说明用了一个新的） |
 | 2026-09-03（CAD/CAM 惯例对照后） | 约 8 100（+300：全阶段视口、仿真传输/DRO/代码联动、菜单命令、回车提交） | 0 | 20 | 16 |
 | 2026-09-03（Desktop.Core 第一步） | 8 426（未保存模型、最近文件、反推对照、图层开关、取消密排又加了功能；纯逻辑已迁出 257 行） | **43** | 20 | 18（关闭/打开前的"保存吗"两个提示） |
+| 2026-09-03（ExportFlow） | 8 380 | **49** | 20 | 18 |
 
 ### 阶段 0 已完成：`CabinetNC.Desktop.Core` 建立
 
@@ -92,6 +93,14 @@
 守卫测试 `NoWpfDependencyTests` 断言该程序集不引用 PresentationFramework / PresentationCore / WindowsBase / System.Xaml。
 迁出即有收益：`NcSimTimelineTests` 在第一次运行就抓到"仿真时间正好在段起点时，下一段原地不动"的边界 bug，Desktop 原实现同样有这个问题。
 
-下一步（阶段 1）：`ExportFlow` —— 把 `WriteExportNcFiles` / `WriteLabelBmps` 里"要写哪些文件、写到哪、缺什么"的决策变成纯函数，文件系统只留写盘一行。
+### 阶段 1 已完成：`ExportFlow`
+
+`ExportFlow.Plan(items)` 决定写哪些程序（过滤空 / `//` 错误文本）、哪些 `stem.bmp`（跨大板去重、平铺）、程序会请求哪些
+`LS11` stem；`ExportFlow.Missing(plan, 磁盘上的 stem)` 在写盘之后核对。Desktop 里 `WriteExportNcFiles` / `OnSaveNcClick`
+共用一个 `WritePlan`，它是导出流程里唯一碰文件系统的地方。6 个 `ExportFlowTests` 覆盖过滤、去重、大小写、"程序要的标签没人渲染"。
+端到端验证：用反推出的两板方案导出 → `probe_sheet1.anc`（含 `LS11='NC_01'`/`'NC_02'`）+ `NC_01.bmp` / `NC_02.bmp` 平铺同目录，
+通知卡与状态栏文案来自 `ExportSummary`。
+
+下一步（阶段 2）：`StageMachine` —— 阶段可进性、按钮可用性、脏标记传播。
 
 说明：UI 改版把"状态栏 + Toast + 作废横幅 + 步骤标签"的逻辑全部写在了 code-behind 里，是阶段 1/2 拆分时第一批要搬进 `Desktop.Core` 的内容（`SetStatus/InferStatusKind`、`ShowToast`、`RefreshStaleBanner`、`RefreshWorkflowDots`、`AnnounceExport` 都是纯函数或接近纯函数）。
