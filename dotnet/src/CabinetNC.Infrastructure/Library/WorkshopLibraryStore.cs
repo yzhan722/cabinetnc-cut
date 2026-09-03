@@ -4,6 +4,17 @@ using System.Text.Json;
 using CabinetNC.Domain.Machines;
 using CabinetNC.Domain.Manufacturing;
 
+public enum LibraryLoadStatus
+{
+    /// <summary>No library file yet — factory defaults.</summary>
+    Fresh,
+    Loaded,
+    /// <summary>Main file unreadable; the previous good copy was used.</summary>
+    RecoveredFromBackup,
+    /// <summary>Main file unreadable and no usable backup — factory defaults, data lost.</summary>
+    Corrupt,
+}
+
 public static class WorkshopLibraryStore
 {
     static readonly JsonSerializerOptions JsonOpts = new()
@@ -12,8 +23,19 @@ public static class WorkshopLibraryStore
         WriteIndented = true,
     };
 
+    /// <summary>
+    /// <c>%LocalAppData%\CabinetNC\library.json</c>, unless <c>OMNICAM_LIBRARY_PATH</c> points
+    /// elsewhere (UI smoke and test rigs must never touch the operator's real library).
+    /// </summary>
     public static string DefaultPath()
     {
+        var overridePath = Environment.GetEnvironmentVariable("OMNICAM_LIBRARY_PATH");
+        if (!string.IsNullOrWhiteSpace(overridePath))
+        {
+            var full = Path.GetFullPath(overridePath.Trim());
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            return full;
+        }
         var dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "CabinetNC");
@@ -21,32 +43,70 @@ public static class WorkshopLibraryStore
         return Path.Combine(dir, "library.json");
     }
 
-    public static WorkshopLibrary Load(string? path = null)
+    public static string BackupPath(string path) => path + ".bak";
+
+    public static WorkshopLibrary Load(string? path = null) => Load(path, out _);
+
+    /// <summary>
+    /// Loads the library, falling back to the previous good copy (<c>library.json.bak</c>) when
+    /// the main file is missing its schema or does not parse — a truncated file after a power
+    /// cut must not silently wipe the shop's remnants, materials and labeler settings.
+    /// </summary>
+    public static WorkshopLibrary Load(string? path, out LibraryLoadStatus status)
     {
         path ??= DefaultPath();
-        try
+        var main = TryRead(path);
+        if (main is not null)
         {
-            if (File.Exists(path))
-            {
-                var doc = JsonSerializer.Deserialize<WorkshopLibrary>(File.ReadAllText(path), JsonOpts);
-                if (doc is not null && doc.SchemaName == WorkshopLibrary.Schema)
-                    return EnsureDefaults(doc);
-            }
+            status = LibraryLoadStatus.Loaded;
+            return EnsureDefaults(main);
         }
-        catch
+        var mainExisted = File.Exists(path);
+        var backup = TryRead(BackupPath(path));
+        if (backup is not null)
         {
-            /* corrupt → defaults */
+            status = LibraryLoadStatus.RecoveredFromBackup;
+            return EnsureDefaults(backup);
         }
+        status = mainExisted ? LibraryLoadStatus.Corrupt : LibraryLoadStatus.Fresh;
         return EnsureDefaults(CreateDefault());
     }
 
+    static WorkshopLibrary? TryRead(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return null;
+            var doc = JsonSerializer.Deserialize<WorkshopLibrary>(File.ReadAllText(path), JsonOpts);
+            return doc is not null && doc.SchemaName == WorkshopLibrary.Schema ? doc : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Atomic save: serialize to <c>.tmp</c>, then swap it in while the previous good file
+    /// becomes <c>.bak</c>. A crash at any point leaves either the old or the new complete file.
+    /// </summary>
     public static void Save(WorkshopLibrary lib, string? path = null)
     {
         path ??= DefaultPath();
         lib.SchemaName = WorkshopLibrary.Schema;
         lib.Version = WorkshopLibrary.SchemaVersion;
         lib.SavedAt = DateTimeOffset.UtcNow.ToString("o");
-        File.WriteAllText(path, JsonSerializer.Serialize(lib, JsonOpts));
+        var json = JsonSerializer.Serialize(lib, JsonOpts);
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, json);
+        if (File.Exists(path))
+        {
+            File.Replace(tmp, path, BackupPath(path), ignoreMetadataErrors: true);
+        }
+        else
+        {
+            File.Move(tmp, path);
+        }
     }
 
     public static WorkshopLibrary CreateDefault()

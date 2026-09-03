@@ -1,0 +1,7 @@
+{
+  "schemaName": "cabinetnc.library",
+  "version": 1,
+  "materials": [],
+  "tools": [],
+  "remnants": [
+    { "id": "REM-SMOKE-1", "material": "Left_White_SS", "wid

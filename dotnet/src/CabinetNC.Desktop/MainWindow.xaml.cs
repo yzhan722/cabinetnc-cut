@@ -51,7 +51,40 @@ public partial class MainWindow : Window
     readonly ProjectSession _session = new();
     readonly WorkerProcessHost _worker = new();
     readonly SqliteProjectStore _store = new();
-    WorkshopLibrary _library = WorkshopLibraryStore.Load();
+    WorkshopLibrary _library = LoadLibraryAtStartup();
+    static LibraryLoadStatus _libraryLoadStatus;
+
+    static WorkshopLibrary LoadLibraryAtStartup()
+    {
+        var lib = WorkshopLibraryStore.Load(null, out _libraryLoadStatus);
+        if (_libraryLoadStatus is LibraryLoadStatus.RecoveredFromBackup or LibraryLoadStatus.Corrupt)
+        {
+            UsageLog.LogEvent("warn", "library.load", new Dictionary<string, object?>
+            {
+                ["status"] = _libraryLoadStatus.ToString(),
+                ["path"] = WorkshopLibraryStore.DefaultPath(),
+            }, error: _libraryLoadStatus.ToString());
+        }
+        return lib;
+    }
+
+    /// <summary>A silently reset library would cost the shop its remnants; say what happened.</summary>
+    void AnnounceLibraryLoad()
+    {
+        switch (_libraryLoadStatus)
+        {
+            case LibraryLoadStatus.RecoveredFromBackup:
+                ShowToast("参数库已从备份恢复",
+                    "library.json 无法读取（可能是上次写入时断电），已改用上一份完整备份。请核对补板库和贴标目录。",
+                    StatusKind.Warning, "打开目录", () => OpenFolder(Path.GetDirectoryName(WorkshopLibraryStore.DefaultPath())!));
+                break;
+            case LibraryLoadStatus.Corrupt:
+                ShowToast("参数库已重置为出厂默认",
+                    "library.json 损坏且没有可用备份。补板库、材料和贴标目录需要重新录入。",
+                    StatusKind.Error, "打开目录", () => OpenFolder(Path.GetDirectoryName(WorkshopLibraryStore.DefaultPath())!));
+                break;
+        }
+    }
     readonly HashSet<string> _locked = new(StringComparer.Ordinal);
     PanelPart? _selected;
     PanelPart? _clipboardPanel;
@@ -229,6 +262,7 @@ public partial class MainWindow : Window
             LoadDisplayLayers();
             SyncProjectNameBox();
             SetStatus("就绪 · 打开方案或示例开始（Ctrl+O）");
+            AnnounceLibraryLoad();
             // Double-click / "open with" / shop script: the first openable path on the command line.
             var startupFile = FileRouting.FirstOpenable(Environment.GetCommandLineArgs().Skip(1), File.Exists);
             if (startupFile is not null)

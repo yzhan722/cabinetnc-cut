@@ -15,8 +15,10 @@
 #   assert-text:<x:Name>=<sub>  the TextBlock/TextBox with that AutomationId must contain <sub>
 #   assert-file:<path>          file must exist
 #   assert-nofile:<path>        file must not exist
+#   assert-name:<text>          some element (toast title, label…) must currently have exactly this name
 #   launch-arg:<path>           (before any other step) pass this file on the command line;
 #                               relative paths resolve against the steps file's folder
+#   pre-copy:<src>><dst>        (before launch) copy a fixture; <dst> may use %ENV% variables
 param(
     [Parameter(Mandatory)] [string]$Exe,
     [Parameter(Mandatory)] [string]$StepsFile,
@@ -51,6 +53,14 @@ foreach ($l in $allLines) {
         $rel = ($l -split ':', 2)[1].Trim()
         $full = if ([IO.Path]::IsPathRooted($rel)) { $rel } else { [IO.Path]::GetFullPath((Join-Path (Split-Path $StepsFile) $rel)) }
         $launchArgs += ('"' + $full + '"')
+    }
+    elseif ($l -like 'pre-copy:*') {
+        $src, $dst = (($l -split ':', 2)[1]) -split '>', 2
+        $src = $src.Trim(); $dst = [Environment]::ExpandEnvironmentVariables($dst.Trim())
+        $srcFull = if ([IO.Path]::IsPathRooted($src)) { $src } else { [IO.Path]::GetFullPath((Join-Path (Split-Path $StepsFile) $src)) }
+        New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+        Copy-Item $srcFull $dst -Force
+        Ok "pre-copy $srcFull -> $dst"
     }
 }
 $p = if ($launchArgs.Count -gt 0) { Start-Process -FilePath $Exe -ArgumentList $launchArgs -WorkingDirectory (Split-Path $Exe) -PassThru }
@@ -102,7 +112,7 @@ function Shot([string]$file) {
     Ok "shot $file"
 }
 
-$steps = $allLines | Where-Object { $_ -notlike 'launch-arg:*' }
+$steps = $allLines | Where-Object { $_ -notlike 'launch-arg:*' -and $_ -notlike 'pre-copy:*' }
 foreach ($s in $steps) {
     $kind, $arg = $s -split ':', 2
     try {
@@ -152,6 +162,12 @@ foreach ($s in $steps) {
             'assert-title' {
                 $p.Refresh(); $t = $p.MainWindowTitle
                 if ($t -like "*$arg*") { Ok "title contains '$arg'" } else { Fail "title '$t' does not contain '$arg'" }
+            }
+            'assert-name' {
+                $c = New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::NameProperty, $arg)
+                $until = (Get-Date).AddSeconds(5); $el = $null
+                do { $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c); if ($null -eq $el) { Start-Sleep -Milliseconds 250 } } while ($null -eq $el -and (Get-Date) -lt $until)
+                if ($null -ne $el) { Ok "element named '$arg' present" } else { Fail "no element named '$arg'" }
             }
             'assert-text' {
                 $id, $sub = $arg -split '=', 2

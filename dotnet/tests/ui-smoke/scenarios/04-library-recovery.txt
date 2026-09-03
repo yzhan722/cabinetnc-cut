@@ -1,0 +1,11 @@
+# A truncated library.json (power cut mid-write) must be recovered from library.json.bak,
+# the operator must be told, and the remnant from the backup must be back in 补板库.
+pre-copy:../fixtures/library-truncated.json>%OMNICAM_LIBRARY_PATH%
+pre-copy:../fixtures/library-valid.json>%OMNICAM_LIBRARY_PATH%.bak
+wait:1500
+assert-name:参数库已从备份恢复
+shot:09-library-recovered.png
+invoke:补板库
+wait:1000
+assert-text:ModuleSubtitle=补板库
+shot:10-remnants-after-recovery.png

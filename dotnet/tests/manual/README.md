@@ -15,6 +15,7 @@ pwsh tests\ui-smoke\run-all.ps1 -Only stale  # 只跑名字含 stale 的场景
 - 场景文件在 `tests/ui-smoke/scenarios/*.txt`，一行一步（`invoke:` / `tab:` / `menu:` / `ctx:` / `assert-status:` / `assert-file:` / `shot:` …），
   步骤语法见 `ui-smoke.ps1` 头部注释。
 - 导出步骤靠环境变量 `OMNICAM_AUTO_EXPORT_DIR`（由 `run-all.ps1` 设为临时目录）绕过原生对话框；不设该变量时 Desktop 行为不变。
+- `run-all.ps1` 同时把 `OMNICAM_LIBRARY_PATH` 指向每个场景独立的临时 `library.json`，冒烟不会改动操作员真实的参数库；`pre-copy:` 步骤可在启动前放置库文件夹具（见场景 04 的损坏恢复）。
 - 截图输出到 `dotnet/artifacts/ui-smoke/`（已 gitignore）。
 
 ## 自动冒烟（旧）：`smoke_desktop.py`
