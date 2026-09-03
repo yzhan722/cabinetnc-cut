@@ -6111,7 +6111,20 @@ public partial class MainWindow : Window
 
     void OpenProjectPath(string projectPath)
     {
-        var doc = _store.Load(projectPath);
+        ProjectDocument? doc;
+        try
+        {
+            doc = _store.Load(projectPath);
+        }
+        catch (Exception ex)
+        {
+            // A half-copied or foreign .db must not take the whole session down.
+            UsageLog.LogActionResult("project.open", new Dictionary<string, object?> { ["path"] = projectPath }, error: ex.Message);
+            SetStatus($"工程文件无法读取：{ex.Message}", StatusKind.Error);
+            ShowImportDialog(false, "打开工程", Path.GetFileName(projectPath), null,
+                "这个文件不是可读的 OmniCam 工程（可能已损坏或复制不完整）。\n" + ex.Message);
+            return;
+        }
         if (doc is null)
         {
             SetStatus("工程为空或无法读取");
@@ -6360,19 +6373,30 @@ public partial class MainWindow : Window
             : _session.ResolvedProjectName;
         _session.ProjectName = name;
         SyncProjectNameBox();
-        _store.Save(dlg.FileName, new ProjectDocument
+        try
         {
-            Name = name,
-            PackageJson = _session.PackageJson!,
-            SourceSnapshotJson = _session.SourceSnapshotJson,
-            MachineId = SelectedMachineId(),
-            NestPlacementsJson = nestJson,
-            NcText = string.IsNullOrWhiteSpace(NcPreview.Text) || NcPreview.Text.StartsWith("//")
-                ? null
-                : NcPreview.Text,
-            SessionJson = ProjectSessionCodec.Serialize(session),
-            UpdatedAt = DateTimeOffset.UtcNow,
-        });
+            _store.Save(dlg.FileName, new ProjectDocument
+            {
+                Name = name,
+                PackageJson = _session.PackageJson!,
+                SourceSnapshotJson = _session.SourceSnapshotJson,
+                MachineId = SelectedMachineId(),
+                NestPlacementsJson = nestJson,
+                NcText = string.IsNullOrWhiteSpace(NcPreview.Text) || NcPreview.Text.StartsWith("//")
+                    ? null
+                    : NcPreview.Text,
+                SessionJson = ProjectSessionCodec.Serialize(session),
+                UpdatedAt = DateTimeOffset.UtcNow,
+            });
+        }
+        catch (Exception ex)
+        {
+            // Locked file, full disk, read-only USB stick: report and keep the session (still unsaved).
+            UsageLog.LogActionResult("project.save", new Dictionary<string, object?> { ["path"] = dlg.FileName }, error: ex.Message);
+            SetStatus($"保存工程失败：{ex.Message}", StatusKind.Error);
+            ShowToast("工程没有保存", $"{Path.GetFileName(dlg.FileName)}：{ex.Message}\n换一个位置再试；当前工作仍在窗口里。", StatusKind.Error);
+            return false;
+        }
         _session.SetProjectDbPath(dlg.FileName);
         _session.MachineId = SelectedMachineId();
         _session.LabelerMachineId = SelectedLabelerMachineId();
