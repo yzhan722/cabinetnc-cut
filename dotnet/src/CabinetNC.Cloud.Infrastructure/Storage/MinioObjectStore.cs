@@ -115,7 +115,7 @@ public sealed class MinioObjectStore : IObjectStore, IDisposable
         {
             if (_bucketReady)
                 return;
-            if (!await _client.BucketExistsAsync(new BucketExistsArgs().WithBucket(_bucket), ct))
+            if (!await BucketExistsWithStartupRetryAsync(ct))
             {
                 try
                 {
@@ -133,6 +133,28 @@ public sealed class MinioObjectStore : IObjectStore, IDisposable
         finally
         {
             _bucketGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// The first call after a MinIO (re)start can land in the window where the server accepts
+    /// connections but still answers 503 with an empty body, which the SDK surfaces as a
+    /// <see cref="NullReferenceException"/> from its error parser. Retry only this readiness probe;
+    /// real problems such as bad credentials still surface after the last attempt.
+    /// </summary>
+    async Task<bool> BucketExistsWithStartupRetryAsync(CancellationToken ct)
+    {
+        const int attempts = 6;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await _client.BucketExistsAsync(new BucketExistsArgs().WithBucket(_bucket), ct);
+            }
+            catch (Exception ex) when (attempt < attempts && ex is MinioException or NullReferenceException or HttpRequestException)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * Math.Pow(2, attempt - 1)), ct);
+            }
         }
     }
 

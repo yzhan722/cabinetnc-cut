@@ -86,11 +86,92 @@ powershell -NoProfile -ExecutionPolicy Bypass -File dotnet\scripts\smoke-worker.
 
 注意：当前 RC 里 Desktop 的排版计算是在 Desktop 进程内直接调 `NestEngineRouter`，并不经过 gRPC worker（详见 IMPLEMENTATION_NOTES §1.6）。
 
-## 4. 内网服务器（Ubuntu 24.04）— TODO（Task 8）
+## 4. 内网服务器（Ubuntu 24.04）— READY（Task 8，机器 B 本机验证；第二台 LAN 机器的验证待运维执行）
 
-基准：8 vCPU / 32 GB / 500 GB NVMe / 1 Gbps / 无 GPU。
+基准：8 vCPU / 32 GB / 500 GB NVMe / 1 Gbps / 无 GPU。栈定义在 `deploy/intranet/`：
 
-将包含：Docker Compose（postgres / minio / cabinetnc-api / cabinetnc-worker / reverse-proxy）、持久卷、健康检查、内部 CA 与证书信任、`.env.example` 说明。**`.gitignore` 含 `.env.*`，提交 `.env.example` 前需加 `!deploy/intranet/.env.example`。**
+| 服务 | 镜像 | 对外端口 | 数据 |
+|---|---|---|---|
+| `reverse-proxy` | `caddy:2-alpine` | **443**（+80 仅跳转 https）——唯一发布到 LAN 的端口 | `caddy-data`（含内部 CA）、`caddy-config` |
+| `cabinetnc-api` | 本地构建 `dotnet/src/CabinetNC.Cloud.Api/Dockerfile` | 无（只在 `edge` + `backend` 网络） | 无状态 |
+| `cabinetnc-worker` | 本地构建 `dotnet/src/CabinetNC.Cloud.Worker/Dockerfile` | 无（只在 `backend`） | 无状态 |
+| `postgres` | `postgres:17-alpine` | 无；`backend` 网络 `internal: true`，连主机外网都不通 | `postgres-data` |
+| `minio` | `minio/minio:RELEASE.2025-09-07T16-13-09Z` | 无（console 9001 也不发布，维护用 SSH 隧道） | `minio-data` |
+
+启动顺序由健康检查串起来：postgres/minio healthy → api（跑 migration）healthy → worker、proxy。
+
+### 4.1 服务器准备
+
+```bash
+# Ubuntu 24.04：Docker Engine + compose 插件
+sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2 git
+sudo usermod -aG docker "$USER"   # 重新登录生效
+# 防火墙只放 443（和 80）；5432/9000 不需要、也没有发布
+sudo ufw allow 443/tcp && sudo ufw allow 80/tcp
+```
+
+给服务器一个 LAN 内可解析的 DNS 名（例如 `cabinetnc.shop.local`），Desktop 用它访问，证书也签给它。
+
+### 4.2 配置与启动
+
+```bash
+git clone <repo> cabinetnc-cut && cd cabinetnc-cut/deploy/intranet
+cp .env.example .env
+# 用随机值替换 .env 里每一个 CHANGE_ME：
+openssl rand -base64 48          # POSTGRES_PASSWORD / MINIO_ROOT_PASSWORD / CABINETNC_BOOTSTRAP_ADMIN_PASSWORD
+openssl rand -base64 64          # CABINETNC_JWT_SIGNING_KEY（API 拒绝 < 32 bytes）
+# CABINETNC_PUBLIC_HOST=cabinetnc.shop.local ；SOURCE_REVISION=$(git rev-parse HEAD) 让 EngineVersion 带上 git 版本
+
+docker compose up -d --build     # 首次约 2–3 分钟（拉基础镜像 + 编译）
+docker compose ps                # 5 个服务都应为 (healthy)
+```
+
+`.env` 已被 `.gitignore` 忽略（只有 `.env.example` 入库，且全是占位符）。首次启动 API 日志里会有**一条**预期的 EF `Failed executing DbCommand ... __EFMigrationsHistory`——那是 EF 在空库上探测迁移历史表，随后立刻 `Applying migration`；之后的启动不会再出现。
+
+### 4.3 证书信任（内部 CA）— 不允许关闭 TLS 校验
+
+默认 `Caddyfile` 用 `tls internal`：Caddy 首次启动生成自己的根证书（`CN=Caddy Local Authority - <year> ECC Root`，10 年有效）。把它导出并安装到**每台 Desktop**：
+
+```bash
+docker compose cp reverse-proxy:/data/caddy/pki/authorities/local/root.crt ./cabinetnc-root.crt
+```
+
+```powershell
+# Windows Desktop（以管理员身份；或加 -user 只装到当前用户）
+certutil -addstore -f Root .\cabinetnc-root.crt
+# 验证——显式指定 CA，不用 -k / --insecure：
+curl.exe --cacert .\cabinetnc-root.crt --ssl-revoke-best-effort https://cabinetnc.shop.local/api/v1/health
+```
+
+`--ssl-revoke-best-effort` 只是让 Windows 的 schannel 在内部 CA **没有 CRL/OCSP** 时跳过吊销查询，链校验仍然生效；不加它会报 `CERT_TRUST_REVOCATION_STATUS_UNKNOWN`。.NET Desktop 的 `HttpClient` 默认不做吊销检查，装好根证书即可。Linux：`sudo cp cabinetnc-root.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates`。
+
+要改用车间自己 CA 签发的证书：把 `tls.crt` / `tls.key` 放进 `deploy/intranet/certs/`，把 `Caddyfile` 的 `tls internal` 换成 `tls /certs/tls.crt /certs/tls.key`，`docker compose restart reverse-proxy`。
+
+### 4.4 首个管理员与收尾
+
+首次启动带着三个 `CABINETNC_BOOTSTRAP_*` 变量；用它登录成功后，**从 `.env` 删除这三行**，`docker compose up -d`（只会重建 API 容器）。没有这三行时 API 不会创建任何默认账号。
+
+### 4.5 第二台机器验证（运维 TODO）
+
+计划要求从另一台 LAN 机器验证并记录：
+
+```powershell
+curl.exe --cacert .\cabinetnc-root.crt --ssl-revoke-best-effort -w "http=%{http_code} tls=%{time_appconnect}s total=%{time_total}s`n" https://cabinetnc.shop.local/api/v1/health
+```
+
+记录 http 码、TLS 握手/总耗时、证书主题到 `IMPLEMENTATION_NOTES.md` §8。机器 B 只有一台机器，已记录 127.0.0.1 经 proxy 的数据。
+
+### 4.6 日常运维
+
+```bash
+docker compose logs -f cabinetnc-api cabinetnc-worker        # JSON 行日志，含 correlationId / jobId
+docker compose exec postgres pg_dump -U cabinetnc cabinetnc > backup-$(date +%F).sql   # 数据库备份
+docker run --rm -v cabinetnc-intranet_minio-data:/data -v "$PWD":/out alpine tar czf /out/minio-$(date +%F).tgz -C /data .   # 对象备份
+git pull && docker compose up -d --build                       # 升级：API 启动时自动迁移
+docker compose run -d -e CABINETNC_WORKER_ID=worker-2 cabinetnc-worker   # 临时加一个 worker（ID 必须不同）
+```
+
+限流按客户端 IP 计数；API 只信任来自 `172.28.100.0/24`（compose 里 `edge` 网络的固定网段）的 `X-Forwarded-For`。若改了该网段，同步改 compose 里 API 的 `CABINETNC_TRUSTED_PROXY_CIDRS`。
 
 ## 5. Cloud API 与首次初始化管理员 — READY（Task 6）
 

@@ -551,6 +551,50 @@ CI：`regression.yml`（ubuntu，有 Docker → 真跑）与 `windows-desktop.ym
 
 ---
 
-## Task 8 — Docker Compose intranet stack
+## Task 8 — Docker Compose intranet stack（2026-09-06，机器 B）
+
+### 8.1 做了什么
+
+| 文件 | 内容 |
+|---|---|
+| `dotnet/src/CabinetNC.Cloud.Api/Dockerfile` | 多阶段：`sdk:10.0` 先只拷 3 个 csproj 做 `restore`（层缓存），再拷源码 `publish`；运行阶段 `aspnet:10.0`，`USER $APP_UID`（非 root），`ASPNETCORE_HTTP_PORTS=8080`；`ARG SOURCE_REVISION` → `-p:SourceRevisionId` 让 InformationalVersion 带 git 版本。**不含 Compute.Core/Domain** |
+| `dotnet/src/CabinetNC.Cloud.Worker/Dockerfile` | 同上，运行阶段 `runtime:10.0`（无 ASP.NET）；这是唯一带排版引擎的云端镜像 |
+| 两个 Dockerfile 运行阶段 | `apt-get install libgssapi-krb5-2`：否则 Npgsql 启动时向 stderr 打 `libgssapi_krb5.so.2: cannot open shared object file`（无害但像错误） |
+| `.dockerignore`（仓库根） | 构建上下文是仓库根；排除 bin/obj、`.git`、`.handoff`、Desktop/ComputeWorker/测试/前端等与云端镜像无关的目录，以及 `deploy/intranet/.env*`（只放行 `.env.example`） |
+| `deploy/intranet/docker-compose.yml` | 5 个服务、2 个网络、4 个卷。`edge`（proxy↔api）固定网段 `172.28.100.0/24`；`backend`（api/worker↔postgres/minio）`internal: true`（无路由出主机）。只有 proxy 发布 443/80。所有服务有 healthcheck，`depends_on: condition: service_healthy` 串出 postgres/minio → api → worker/proxy 的启动顺序。API 的 healthcheck 用 bash `/dev/tcp` 探 `/api/v1/health`（aspnet 镜像没有 curl）；worker 探 PID 1 命令行；Caddy 探本机 admin API（不需要绕 TLS）。所有 secret 用 `${VAR:?...}` 强制来自 `.env` |
+| `deploy/intranet/Caddyfile` | `{$CABINETNC_PUBLIC_HOST:localhost}` 站点，`tls internal`（切换到车间 CA 只改一行）、HSTS、`-Server`、`nosniff`、body 4 MB、`reverse_proxy cabinetnc-api:8080`；`admin 127.0.0.1:2019`、`skip_install_trust` |
+| `deploy/intranet/.env.example` | 只有占位符（`CHANGE_ME_*`）与说明；JWT 占位符故意短于 32 bytes，不替换 API 就拒绝启动 |
+| `.gitignore` | 加 `!deploy/intranet/.env.example`（交接文档预告过的坑） |
+| `Cloud.Api/Http/TrustedProxies.cs` + `Program.cs` | `CABINETNC_TRUSTED_PROXY_CIDRS`（逗号分隔 CIDR/IP）→ `ForwardedHeadersOptions.KnownIPNetworks`，`UseForwardedHeaders` 放在 rate limiter 之前，只信任 proxy 网段的 `X-Forwarded-For`；未设置时不启用。3 个单元测试（空 → 不信任任何人；CIDR/单 IP/IPv6 解析；垃圾值报错不回显） |
+| `Program.cs`（API/Worker） | 日志过滤：`Microsoft.EntityFrameworkCore.Database.Command` → Warning（worker 每秒轮询会把 SQL 刷屏）；API 另把 `Microsoft.AspNetCore.DataProtection` → Error（API 无状态、从不使用 Data Protection，其"密钥不持久化"警告是噪音，注释已写明理由） |
+
+### 8.2 机器 B 实测（`.handoff/local-evidence/task8-*`）
+
+- `docker compose up -d --build`：**153 s**（含两次镜像编译），5/5 healthy；改 Dockerfile 后重建 api+worker 约 100 s（build 阶段缓存命中）。
+- 端口：`docker compose ps` 只有 reverse-proxy 发布 `0.0.0.0:80/443`；主机 `Test-NetConnection` 5432/9000/9001/8080 全部 False。
+- TLS：导出 Caddy 内部根证书（`CN=Caddy Local Authority - 2026 ECC Root`，2026-09-06 → 2036-07-15）；`curl --cacert root.crt --ssl-revoke-best-effort https://localhost/api/v1/health` → **200**，TLS 握手 22 ms，首个请求 47 ms，之后 10 次平均 12 ms；响应带 `Strict-Transport-Security`、`X-Correlation-Id`、无 `Server`。**不带 CA** → curl exit 60 `SEC_E_UNTRUSTED_ROOT`（校验确实在）。`http://` → **308** 跳 https。
+- Windows 特有：schannel 对无 CRL 的内部 CA 报 `CERT_TRUST_REVOCATION_STATUS_UNKNOWN`，需 `--ssl-revoke-best-effort`（只跳过吊销查询，不关校验）；已写进 runbook。
+- 经 proxy 的功能冒烟（`task8-smoke.ps1`，密码经环境变量传入、输出只有状态码/ID/哈希前缀）：login 200（admin、900 s / 2 592 000 s）→ 错密码 401 `invalid_credentials` → 无 token 提交 401 `unauthorized` → 提交 202 → 同 key 重提交 202 同 jobId → worker 领取并完成：**Succeeded，durationMs=40–42，wall ≈1.3 s**（含 250 ms 轮询）→ result 200：`engine=grouped_blf_v0`，**`engineVersion=CabinetNC.Compute.Core/1.0.0+ffb5bd52…`**（SOURCE_REVISION 生效），A/B 放置、BIG 未放，`inputSha256`/`resultSha256` 两次运行**完全相同**（确定性）→ 不存在的 job 404 `job_not_found` → logout 204 → 用已 logout 的 refresh 再刷 401 `refresh_invalid`。
+- 重建 api/worker 镜像并 `up -d`（postgres/minio/proxy 不动）后：API 在已有库上启动，migration no-op、bootstrap 跳过；重跑冒烟全部通过——这就是 Task 10 "API restart" 的一次实际演练。
+- 日志：修复后 api+worker 2 分钟内 0 条 stderr、只有 19 条 Information，worker 只在领取/完成时各记一行。首次空库启动仍有 1 条预期的 EF `Failed executing DbCommand ... __EFMigrationsHistory`（EF 探测迁移表的既有行为），runbook 已说明。
+- 验证结束后 `docker compose down -v` 清场，本地 `.env` 删除；镜像保留。
+- 顺带修了一个在高并发 Docker 负载下暴露的启动竞态：MinIO 在 healthcheck 通过后仍有一小段窗口对 S3 请求回 503 空 body，MinIO SDK 的错误解析器对空 body 抛 `NullReferenceException`（`MinioObjectStoreTests.Missing_key_is_not_found` 在全量回归里失败 1 次）。`MinioObjectStore.EnsureBucketAsync` 的首次 bucket 探测现在最多重试 6 次（250 ms 指数退避，只针对 `MinioException` / `NullReferenceException` / `HttpRequestException`）；凭据错误等真实问题在最后一次之后照常抛出。改后连续 3 次 Infrastructure 套件 + 1 次全量（**666 / 0 / 0**）在 compose 栈同时运行的负载下全绿。
+
+### 8.3 决策记录 / 待办
+
+1. **第二台 LAN 机器的 HTTPS 验证未做**（机器 B 只有一台机器）：runbook §4.5 给了命令与要记录的字段，运维执行后补到本节。
+2. Caddy 内部 CA 是 PoC 默认；正式部署建议用车间 CA 签发证书（Caddyfile 一行切换），否则每台 Desktop 都要装 Caddy 的根证书。
+3. Worker 多副本靠不同 `CABINETNC_WORKER_ID`；compose 里只定义了一个，runbook 给了 `docker compose run -d -e CABINETNC_WORKER_ID=worker-2 ...` 的临时加法。
+4. 限流现在按真实客户端 IP（proxy 网段可信）；若 proxy 网段变更必须同步 `CABINETNC_TRUSTED_PROXY_CIDRS`。
+5. 备份/恢复演练（pg_dump + MinIO 卷）留给 Task 10 的 reliability 套件。
+
+### 8.4 Task 8 Gate
+
+- 5 服务 healthy、持久卷、DB/MinIO 不暴露、HTTPS 经 proxy、CA 信任有文档且不关校验、`.env.example` 只有占位符——计划的 7 条要求逐条满足；经 proxy 的登录→提交→worker→结果全链路实测通过。**Gate 通过（第二台机器的验证记为运维 TODO），可进入 Task 9（Desktop 登录 / DPAPI / 远程 Nest gateway）。**
+- Commit：`build: add intranet cloud compose stack`。
+
+---
+
+## Task 9 — Desktop login, DPAPI, remote Nest gateway
 
 NOT STARTED。

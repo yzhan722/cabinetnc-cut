@@ -1,0 +1,152 @@
+# CabinetNC intranet PoC stack. Run from this directory:
+#   docker compose up -d --build
+# Secrets come from ./.env (copy .env.example and replace every placeholder). Only the reverse proxy
+# publishes ports; PostgreSQL and MinIO live on an internal network with no route off the host.
+
+name: cabinetnc-intranet
+
+x-datastore-env: &datastore-env
+  CABINETNC_DB_CONNECTION: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-cabinetnc};Username=${POSTGRES_USER:-cabinetnc};Password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+  CABINETNC_OBJECTSTORE_ENDPOINT: "minio:9000"
+  CABINETNC_OBJECTSTORE_ACCESS_KEY: "${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}"
+  CABINETNC_OBJECTSTORE_SECRET_KEY: "${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}"
+  CABINETNC_OBJECTSTORE_BUCKET: "${CABINETNC_OBJECTSTORE_BUCKET:-cabinetnc}"
+  CABINETNC_OBJECTSTORE_USE_SSL: "false"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-cabinetnc}"
+      POSTGRES_USER: "${POSTGRES_USER:-cabinetnc}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    networks: [backend]
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    networks: [backend]
+    # The MinIO console (9001) is intentionally not published. For maintenance use an SSH tunnel:
+    #   ssh -L 9001:127.0.0.1:9001 <server>   after temporarily adding "127.0.0.1:9001:9001" below.
+
+  cabinetnc-api:
+    build:
+      context: ../..
+      dockerfile: dotnet/src/CabinetNC.Cloud.Api/Dockerfile
+      args:
+        SOURCE_REVISION: "${SOURCE_REVISION:-}"
+    image: cabinetnc/cloud-api:${CABINETNC_IMAGE_TAG:-local}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      <<: *datastore-env
+      CABINETNC_JWT_SIGNING_KEY: "${CABINETNC_JWT_SIGNING_KEY:?set CABINETNC_JWT_SIGNING_KEY in .env}"
+      # Supply all three only for the very first start; remove them afterwards (see runbook §4).
+      CABINETNC_BOOTSTRAP_TENANT: "${CABINETNC_BOOTSTRAP_TENANT:-}"
+      CABINETNC_BOOTSTRAP_ADMIN_EMAIL: "${CABINETNC_BOOTSTRAP_ADMIN_EMAIL:-}"
+      CABINETNC_BOOTSTRAP_ADMIN_PASSWORD: "${CABINETNC_BOOTSTRAP_ADMIN_PASSWORD:-}"
+      # Only the reverse proxy's network may set X-Forwarded-For; keeps per-client rate limits honest.
+      CABINETNC_TRUSTED_PROXY_CIDRS: "172.28.100.0/24"
+      ASPNETCORE_HTTP_PORTS: "8080"
+    healthcheck:
+      # The aspnet image has no curl; bash's /dev/tcp is enough for a liveness probe of /api/v1/health.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /api/v1/health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -c 256 <&3 | grep -q '200 OK'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    networks:
+      backend: {}
+      edge: {}
+
+  cabinetnc-worker:
+    build:
+      context: ../..
+      dockerfile: dotnet/src/CabinetNC.Cloud.Worker/Dockerfile
+      args:
+        SOURCE_REVISION: "${SOURCE_REVISION:-}"
+    image: cabinetnc/cloud-worker:${CABINETNC_IMAGE_TAG:-local}
+    restart: unless-stopped
+    depends_on:
+      cabinetnc-api:
+        condition: service_healthy   # the API applies migrations; the worker never does
+    environment:
+      <<: *datastore-env
+      # Every worker replica needs its own id; inside a container the pid-based default is always 1.
+      CABINETNC_WORKER_ID: "${CABINETNC_WORKER_ID:-worker-1}"
+      CABINETNC_WORKER_LEASE_SECONDS: "${CABINETNC_WORKER_LEASE_SECONDS:-300}"
+      CABINETNC_WORKER_POLL_SECONDS: "${CABINETNC_WORKER_POLL_SECONDS:-1}"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "grep -q CabinetNC.Cloud.Worker.dll /proc/1/cmdline"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks: [backend]
+
+  reverse-proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      cabinetnc-api:
+        condition: service_healthy
+    environment:
+      CABINETNC_PUBLIC_HOST: "${CABINETNC_PUBLIC_HOST:-localhost}"
+    ports:
+      - "443:443"
+      - "80:80"   # only redirects to https
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    healthcheck:
+      # Caddy's admin API listens on 127.0.0.1 inside the container; no TLS bypass needed.
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      edge: {}
+
+networks:
+  # api <-> proxy. Fixed subnet so the API can trust X-Forwarded-For from exactly this range.
+  edge:
+    ipam:
+      config:
+        - subnet: 172.28.100.0/24
+  # api/worker <-> postgres/minio. "internal" = no route off the host at all.
+  backend:
+    internal: true
+
+volumes:
+  postgres-data:
+  minio-data:
+  caddy-data:
+  caddy-config:

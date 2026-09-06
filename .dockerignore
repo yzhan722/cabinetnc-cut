@@ -1,0 +1,32 @@
+# Docker build context is the repository root (see deploy/intranet/docker-compose.yml).
+# Keep the context small and free of local artefacts and secrets.
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/.idea/
+**/*.user
+.git/
+.handoff/
+.cursor/
+.tmp/
+dist/
+portable/
+logs/
+node_modules/
+dotnet/artifacts/
+dotnet/tests/
+dotnet/tools/
+dotnet/src/CabinetNC.Desktop/
+dotnet/src/CabinetNC.Desktop.Core/
+dotnet/src/CabinetNC.ComputeWorker/
+native/
+public/
+src/
+deploy/intranet/.env
+deploy/intranet/.env.*
+!deploy/intranet/.env.example
+deploy/intranet/certs/*
+!deploy/intranet/certs/.gitkeep
+*.zip
+*.log

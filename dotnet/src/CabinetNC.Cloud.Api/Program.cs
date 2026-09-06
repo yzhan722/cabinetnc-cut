@@ -10,6 +10,7 @@ using CabinetNC.Cloud.Infrastructure.Entities;
 using CabinetNC.Cloud.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -21,6 +22,11 @@ builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = 2 * 1024 * 1024);
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole();
+// SQL text per request is debugging output, not operations logging (spec §11 wants correlation/job events).
+builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Warning);
+// The API is stateless (JWT + opaque refresh tokens in PostgreSQL); the Data Protection key ring is
+// initialised eagerly by the framework but never used, so its ephemeral-key warnings are noise.
+builder.Logging.AddFilter("Microsoft.AspNetCore.DataProtection", LogLevel.Error);
 
 builder.Services.AddSingleton(_ => CloudApiOptions.FromEnvironment());
 builder.Services.AddCloudPersistence(provider =>
@@ -32,6 +38,17 @@ builder.Services.AddSingleton<AccessTokenIssuer>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<NestJobService>();
 builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
+
+var trustedProxies = TrustedProxies.FromEnvironment();
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardLimit = 1;
+    options.KnownProxies.Clear();
+    options.KnownIPNetworks.Clear();
+    foreach (var network in trustedProxies)
+        options.KnownIPNetworks.Add(network);
+});
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -109,6 +126,9 @@ builder.Services.AddRateLimiter(options =>
 var app = builder.Build();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<ApiExceptionMiddleware>();
+// Must precede the rate limiter so its per-client partition sees the real client behind the proxy.
+if (trustedProxies.Count > 0)
+    app.UseForwardedHeaders();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();

@@ -14,6 +14,8 @@ public static class Program
         var builder = Host.CreateApplicationBuilder(args);
         builder.Logging.ClearProviders();
         builder.Logging.AddJsonConsole();
+        // The poll loop issues SQL every second; per-command SQL logging would drown the job events.
+        builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Warning);
 
         // Secrets are environment-only, like the API. The worker never runs migrations; the API owns the schema.
         builder.Services.AddSingleton(_ => WorkerOptions.FromEnvironment());

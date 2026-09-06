@@ -6,6 +6,8 @@ portable/
 *.log
 .env
 .env.*
+# The compose template holds placeholders only; real values live in deploy/intranet/.env (ignored above).
+!deploy/intranet/.env.example
 
 # Native build outputs
 native/cabinetnc_core/build/

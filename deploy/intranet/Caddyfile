@@ -1,0 +1,36 @@
+{
+	# Admin API stays inside the container (used by the compose healthcheck).
+	admin 127.0.0.1:2019
+	# Do not try to install the internal root certificate into the container's trust store.
+	skip_install_trust
+}
+
+# CABINETNC_PUBLIC_HOST is the DNS name Desktop machines use, e.g. cabinetnc.shop.local.
+# Caddy also serves :80 purely to redirect to https.
+{$CABINETNC_PUBLIC_HOST:localhost} {
+	# Default for the PoC: Caddy's own internal CA. Its root certificate is generated on first start at
+	# /data/caddy/pki/authorities/local/root.crt and must be trusted on every Desktop (runbook §4).
+	# For a certificate issued by the shop's own CA, put the files in ./certs and replace this line with:
+	#   tls /certs/tls.crt /certs/tls.key
+	tls internal
+
+	encode zstd gzip
+
+	request_body {
+		max_size 4MB
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+	}
+
+	# Caddy adds X-Forwarded-For / X-Forwarded-Proto; the API trusts them only from the edge network.
+	reverse_proxy cabinetnc-api:8080 {
+		transport http {
+			read_timeout 60s
+		}
+	}
+}
