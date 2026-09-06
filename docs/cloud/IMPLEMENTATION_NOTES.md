@@ -144,6 +144,71 @@ dotnet/src/CabinetNC.ComputeWorker/Services/PostProcessorServiceImpl.cs:13  Post
 
 ---
 
-## Task 2 — Extract shared Nesting runner
+## Task 2 — Extract shared Nesting runner（2026-09-06，机器 B）
 
-NOT STARTED（交接点）。见 `docs/cloud/HANDOFF_2026-09-06.md` 的“下一步从这里开始”。
+### 2.1 做了什么
+
+新建 `CabinetNC.Compute.Core`（net10.0，只引用 `CabinetNC.Domain`）：
+
+| 文件 | 内容 |
+|---|---|
+| `Nesting/NestingInput.cs` | `NestingPartInput` / `NestingInput` record，字段与 proto `NestPartMsg` / `StartNestingRequest` 一一对应 |
+| `Nesting/NestingOutput.cs` | `NestingPlacementOutput` / `NestingWarningOutput` / `NestingOutput` record |
+| `Nesting/INestingRunner.cs` | `NestingOutput Run(NestingInput input)` |
+| `Nesting/NestingRunner.cs` | 原 `NestingServiceImpl.StartNesting` L14–119 的编排逐行搬入；默认值提成常量 `DefaultBorderMm=15 / DefaultSpacingMm=12 / DefaultSheetWidthMm=1220 / DefaultSheetLengthMm=2440 / EnginePreference="blf" / StockLabel="STOCK"`；算法仍是 Domain 的 `NestEngineRouter → GroupedBlfNester` + `NestValidator.FindAabbCollisions`，未重写任何算法 |
+
+新建 `CabinetNC.Compute.Core.Tests`（xunit 2.9.3 / Test.Sdk 17.14.1 / coverlet 6.0.4，与既有测试项目同一套），`NestingRunnerTests.cs` 7 个用例——先写测试，对着 `throw new NotImplementedException()` 的桩跑出 7 红，再搬实现跑出 7 绿：
+
+| 用例 | 锁定的行为 |
+|---|---|
+| `Run_places_two_rectangles_without_overlap` | 2 件同板、`grouped_blf_v0`、间距 ≥ spacing、四边不越 border、无 `aabb_gap` |
+| `Run_honors_no_rotation_part` | 300×1200 板上 1000×100：`MayRotate=true` → 90° 放入；`MayRotate=false` → `Unplaced=["R"]`、`SheetCount=0` |
+| `Run_returns_unplaced_for_oversized_part` | 3000×3000 进 `Unplaced`，同请求的 500×500 正常放置，`Ok=true`、`Error=null` |
+| `Run_preserves_material_and_thickness_behavior` | MDF·18 ×2 / MDF·25 / Plywood·12 → 3 张板、不同组不共板、同组共板（空白 STOCK 模板按组克隆） |
+| `Run_is_deterministic_for_same_input` | 24 件混合输入，同实例两次 + 新实例一次，placements / unplaced / warnings 全等 |
+| `Run_applies_legacy_worker_defaults_for_non_positive_dimensions` | sheet/spacing/border 传 0 → 1220×2440 / 15 边距：1190×2410 落在 (15,15)，1200×2410 不可转 → unplaced |
+| `Run_returns_error_instead_of_throwing` | 重复 PanelId 在 validator 里抛 `ArgumentException` → `Ok=false`、`Error` 非空、集合全空，不向上抛 |
+
+修改：
+
+| 文件 | 改动 |
+|---|---|
+| `dotnet/src/CabinetNC.ComputeWorker/Services/NestingServiceImpl.cs` | 变成 adapter：`ToInput(proto)` → `runner.Run` → `ToReply(output)`；构造函数注入 `INestingRunner`；失败路径仍返回 `Ok=false, Error=ex.Message`（`Engine=""`、集合空）。`OperationsServiceImpl` 未动 |
+| `dotnet/src/CabinetNC.ComputeWorker/Program.cs` | `builder.Services.AddSingleton<INestingRunner, NestingRunner>()` |
+| `dotnet/src/CabinetNC.ComputeWorker/CabinetNC.ComputeWorker.csproj` | 引用 `CabinetNC.Compute.Core` |
+| `dotnet/CabinetNC.slnx` | `/src/` 加 Compute.Core，`/tests/` 加 Compute.Core.Tests |
+| `.github/workflows/regression.yml`、`windows-desktop.yml` | 各加一步 `Compute.Core tests` |
+| `dotnet/scripts/smoke-worker.ps1` | 原来无条件把 `C:\Program Files\dotnet` 放到 PATH 最前，在机器 B 上会遮住用户级 SDK 导致 Debug 构建失败、exe 不存在；改为仅当 PATH 上没有 `dotnet` 时才追加。机器 A 行为不变 |
+
+### 2.2 Gate：本地 gRPC Nest 行为不变 — PASS
+
+1. **A/B 逐字节对比（最强证据）**：用 `3a5ef1c`（Task 2 之前）在独立 worktree 构建旧 Worker，与工作树的新 Worker 各起一次，用同一个一次性 gRPC 探针客户端（源码存 `.handoff/local-evidence/grpc-probe/`，未入库）通过 Named Pipe `cabinetnc.compute.v1` 发 11 个 `StartNesting` 请求，回复以 protobuf canonical JSON 落盘：`.handoff/local-evidence/task2-grpc-replies-{old,new}-worker.txt`。**两份文件完全一致（5837 字符 / 22 行）**。覆盖：全默认、需旋转（允许/锁定）、超尺寸、混合材质厚度、重复 ID 错误路径、24 件混合、显式 spacing 30 / border 20 / AllowRotation=false、空请求、零宽零件、恰好填满内框 + 超 10 mm。
+2. `dotnet test dotnet/CabinetNC.slnx -c Release`：**561 / 0 / 0**（Compute.Core.Tests 7 + Domain 431 + Package 40 + Infrastructure 11 + Desktop.Core 72）。日志 `.handoff/local-evidence/task2-dotnet-test-release.log`。
+3. `powershell -File dotnet\scripts\smoke-worker.ps1`：`OK worker-alive pid=… pipe=cabinetnc.compute.v1`（修脚本 PATH 前缀后）。
+4. `CabinetNC.ComputeWorker` Release 构建 0 警告 0 错误；`CabinetNC.Desktop` Release 构建成功（仍只有 6 条既有 `NU1701`），`CopyWorker` 目标按目录整体复制，`CabinetNC.Compute.Core.dll` 已出现在 `Desktop\bin\Release\net10.0-windows\` 和 `dist\CabinetNC-Cut\`（否则 Desktop 自带的 Worker 会因缺程序集起不来）。
+
+### 2.3 观察到的既有行为（原样保留，未修，供 Task 3 / 7 / 9 / 10 决策）
+
+这些在旧 Worker 和新 Worker 上完全一致，均由 A/B 回复文件佐证：
+
+1. **请求里的 `SpacingMm` / `AllowRotation` 不影响排版，只影响事后校验。** `GroupedBlfNester.Pack` 调 `NestStockOverrides.ForGroup(settings, stock)`，用 stock 模板的 `SpacingMm`（默认 12）和 `AllowRotation`（默认 true）覆盖全局 settings；而 Worker 构造的 `STOCK` 模板没有设这两个字段。R7（spacing 30、AllowRotation=false）实测：零件按 12 mm 间距摆放（B 在 x=20+500+12=532）、D 仍被转了 90°，然后 `NestValidator.FindAabbCollisions(…, 30)` 报出 4 条 `aabb_gap`。**边距 `BorderMm` 是生效的**（stock.BorderMm=border）。**每零件 `MayRotate=false` 是生效的**（走 `Panel.AllowedRotations=[0,180]`）。Task 3 定契约时要决定：是把 `SpacingMm`/`AllowRotation` 写进 stock 模板让它们真正生效（行为变化，需要走 parity 验收），还是在契约里明说这两个字段只用于校验。
+2. **`BlfNester.SplitFree` 只在已放零件的右侧/上方预留 gap。** R6（默认 spacing）实测 P01（转 90°，右边缘 x=559）与 P03（左边缘 x=560）只隔 1 mm，被 validator 报 `aabb_gap P03 × P01 on sheet 1`。这是 Domain 引擎的既有行为，属于制造语义，本 PoC 不改；但说明 Local/Server parity 断言必须包含 `warnings`，且 Task 10 的“可导出”判定不能只看 `Ok`。
+3. **宽或高 ≤ 0 的零件被 `BlfNester` 静默丢弃**（`Where(p => p.WidthMm > 0 && p.HeightMm > 0)`），既不在 `placements` 也不在 `unplaced`（R9）。Task 3 的 DTO 校验应在进入 runner 之前拒绝这类输入。
+4. 重复 `PanelId` 走异常路径：`Ok=false, Error="An item with the same key has already been added. Key: DUP"`（R5）。同样应由 Task 3 的输入校验提前拦截并给出可读错误。
+5. 空请求返回 `Ok=true, SheetCount=0`（R8）。
+
+### 2.4 本任务产出
+
+- 新项目 `CabinetNC.Compute.Core`、`CabinetNC.Compute.Core.Tests`；Worker 变 adapter；CI 两个 workflow 加 Compute.Core 测试步。
+- 证据（未入库，随交接目录）：`.handoff/local-evidence/task2-*`、`grpc-probe/`。
+- Commit：`refactor: extract transport-neutral nesting runner`。
+
+### 2.5 Task 2 Gate
+
+- 焦点测试 7/7、全量 561/561、smoke-worker PASS、A/B gRPC 回复逐字节一致、Desktop 打包含新 DLL。**Gate 通过，可进入 Task 3（`CabinetNC.Cloud.Contracts`）。**
+
+---
+
+## Task 3 — Cloud contracts
+
+NOT STARTED。

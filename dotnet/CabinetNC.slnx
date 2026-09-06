@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/CabinetNC.Application/CabinetNC.Application.csproj" />
     <Project Path="src/CabinetNC.Compute.Contracts/CabinetNC.Compute.Contracts.csproj" />
+    <Project Path="src/CabinetNC.Compute.Core/CabinetNC.Compute.Core.csproj" />
     <Project Path="src/CabinetNC.ComputeWorker/CabinetNC.ComputeWorker.csproj" />
     <Project Path="src/CabinetNC.Desktop.Core/CabinetNC.Desktop.Core.csproj" />
     <Project Path="src/CabinetNC.Desktop/CabinetNC.Desktop.csproj" />
@@ -10,6 +11,7 @@
     <Project Path="src/CabinetNC.Infrastructure/CabinetNC.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/CabinetNC.Compute.Core.Tests/CabinetNC.Compute.Core.Tests.csproj" />
     <Project Path="tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj" />
     <Project Path="tests/CabinetNC.Domain.Tests/CabinetNC.Domain.Tests.csproj" />
     <Project Path="tests/CabinetNC.Infrastructure.Tests/CabinetNC.Infrastructure.Tests.csproj" />

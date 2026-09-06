@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CabinetNC.Compute.Contracts\CabinetNC.Compute.Contracts.csproj" />
+    <ProjectReference Include="..\CabinetNC.Compute.Core\CabinetNC.Compute.Core.csproj" />
     <ProjectReference Include="..\CabinetNC.Domain\CabinetNC.Domain.csproj" />
   </ItemGroup>
 

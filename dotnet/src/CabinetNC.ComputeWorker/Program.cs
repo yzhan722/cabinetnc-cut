@@ -1,5 +1,6 @@
 using System.Net;
 using CabinetNC.Compute.Contracts;
+using CabinetNC.Compute.Core.Nesting;
 using CabinetNC.ComputeWorker.Services;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 
@@ -21,6 +22,7 @@ builder.Logging.AddSimpleConsole(o =>
 });
 
 builder.Services.AddGrpc();
+builder.Services.AddSingleton<INestingRunner, NestingRunner>();
 
 var app = builder.Build();
 app.MapGrpcService<WorkerHealthService>();

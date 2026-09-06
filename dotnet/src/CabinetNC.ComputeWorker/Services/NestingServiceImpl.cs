@@ -1,4 +1,5 @@
 using CabinetNC.Compute.Contracts;
+using CabinetNC.Compute.Core.Nesting;
 using CabinetNC.Domain.Geometry;
 using CabinetNC.Domain.Manufacturing;
 using CabinetNC.Domain.Nesting;
@@ -7,116 +8,64 @@ using Grpc.Core;
 
 namespace CabinetNC.ComputeWorker.Services;
 
-public sealed class NestingServiceImpl : Nesting.NestingBase
+/// <summary>
+/// Thin gRPC adapter: proto request → <see cref="NestingInput"/> → <see cref="INestingRunner"/> → proto reply.
+/// All nesting orchestration lives in <c>CabinetNC.Compute.Core</c> so the intranet worker shares it.
+/// </summary>
+public sealed class NestingServiceImpl(INestingRunner runner) : Nesting.NestingBase
 {
     public override Task<StartNestingReply> StartNesting(StartNestingRequest request, ServerCallContext context)
     {
-        try
-        {
-            var border = request.BorderMm > 0 ? request.BorderMm : 15;
-            var spacing = request.SpacingMm > 0 ? request.SpacingMm : 12;
-            var sheetW = request.SheetWidthMm > 0 ? request.SheetWidthMm : 1220;
-            var sheetL = request.SheetLengthMm > 0 ? request.SheetLengthMm : 2440;
+        var output = runner.Run(ToInput(request));
+        return Task.FromResult(ToReply(output));
+    }
 
-            // Reconstruct panels so Worker uses the same GroupedBlf path as Desktop (Day 13).
-            var panels = request.Parts.Select(p => new Panel
+    static NestingInput ToInput(StartNestingRequest request) =>
+        new(
+            Parts: request.Parts
+                .Select(p => new NestingPartInput(p.PanelId, p.WidthMm, p.HeightMm, p.MayRotate, p.Material, p.ThicknessMm))
+                .ToList(),
+            SheetWidthMm: request.SheetWidthMm,
+            SheetLengthMm: request.SheetLengthMm,
+            SpacingMm: request.SpacingMm,
+            BorderMm: request.BorderMm,
+            AllowRotation: request.AllowRotation);
+
+    static StartNestingReply ToReply(NestingOutput output)
+    {
+        if (!output.Ok)
+            return new StartNestingReply { Ok = false, Error = output.Error ?? "" };
+
+        var reply = new StartNestingReply
+        {
+            Ok = true,
+            Engine = output.Engine,
+            SheetCount = output.SheetCount,
+        };
+        reply.Unplaced.AddRange(output.Unplaced);
+        foreach (var p in output.Placements)
+        {
+            reply.Placements.Add(new NestPlacementMsg
             {
                 PanelId = p.PanelId,
-                Material = string.IsNullOrWhiteSpace(p.Material) ? null : p.Material,
-                ThicknessMm = p.ThicknessMm > 0 ? p.ThicknessMm : 0,
-                AllowedRotations = p.MayRotate ? null : new[] { 0, 180 },
-                Outline = new Outline
-                {
-                    Points =
-                    [
-                        new(0, 0),
-                        new(p.WidthMm, 0),
-                        new(p.WidthMm, p.HeightMm),
-                        new(0, p.HeightMm),
-                    ],
-                    Closed = true,
-                },
-            }).ToList();
-
-            var settings = new NestSettings
-            {
-                MarginMm = border,
-                ClearanceMm = spacing,
-                AllowRotation = request.AllowRotation,
-                GrainLock = true,
-            };
-            var stock = new[]
-            {
-                new NestSheetSpec
-                {
-                    WidthMm = sheetW,
-                    LengthMm = sheetL,
-                    BorderMm = border,
-                    Material = null,
-                    ThicknessMm = 0,
-                    Label = "STOCK",
-                },
-            };
-
-            var (packed, log) = new NestEngineRouter().Run(new NestEngineRequest
-            {
-                Panels = panels,
-                Settings = settings,
-                StockTemplates = stock,
-                SizeOf = GroupedBlfNester.SizeOfOutline,
-                EnginePreference = "blf",
+                SheetIndex = p.SheetIndex,
+                OffsetX = p.OffsetX,
+                OffsetY = p.OffsetY,
+                RotationDeg = p.RotationDeg,
             });
-
-            var aabbParts = panels.Select(p =>
-            {
-                var (w, h) = GroupedBlfNester.SizeOfOutline(p);
-                return new NestPart { PanelId = p.PanelId, WidthMm = w, HeightMm = h };
-            }).ToList();
-            var collisions = NestValidator.FindAabbCollisions(aabbParts, packed.Placements, spacing);
-
-            var reply = new StartNestingReply
-            {
-                Ok = true,
-                Engine = packed.Engine,
-                SheetCount = packed.SheetCount,
-            };
-            reply.Unplaced.AddRange(packed.Unplaced);
-            foreach (var p in packed.Placements)
-            {
-                reply.Placements.Add(new NestPlacementMsg
-                {
-                    PanelId = p.PanelId,
-                    SheetIndex = p.SheetIndex,
-                    OffsetX = p.OffsetX,
-                    OffsetY = p.OffsetY,
-                    RotationDeg = p.RotationDeg,
-                });
-            }
-            if (!string.IsNullOrWhiteSpace(log.FallbackReason))
-            {
-                reply.Warnings.Add(new NestWarningMsg
-                {
-                    Code = "engine_fallback",
-                    Message = log.FallbackReason,
-                });
-            }
-            foreach (var c in collisions)
-            {
-                reply.Warnings.Add(new NestWarningMsg
-                {
-                    Code = "aabb_gap",
-                    Message = $"spacing/collision {c.PanelIdA} × {c.PanelIdB} on sheet {c.SheetIndex}",
-                    PanelIdA = c.PanelIdA,
-                    PanelIdB = c.PanelIdB,
-                    SheetIndex = c.SheetIndex,
-                });
-            }
-            return Task.FromResult(reply);
         }
-        catch (Exception ex)
+        foreach (var w in output.Warnings)
         {
-            return Task.FromResult(new StartNestingReply { Ok = false, Error = ex.Message });
+            reply.Warnings.Add(new NestWarningMsg
+            {
+                Code = w.Code,
+                Message = w.Message,
+                PanelIdA = w.PanelIdA ?? "",
+                PanelIdB = w.PanelIdB ?? "",
+                SheetIndex = w.SheetIndex ?? 0,
+            });
         }
+        return reply;
     }
 }
 

@@ -1,6 +1,8 @@
 # Smoke: Worker named-pipe gRPC Ping (no UI).
 $ErrorActionPreference = "Stop"
-$env:Path = "C:\Program Files\dotnet;" + $env:Path
+# Only fall back to the machine-wide install when no dotnet is on PATH; forcing it first hides a
+# user-level SDK on machines where C:\Program Files\dotnet carries just the runtime.
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $env:Path = "C:\Program Files\dotnet;" + $env:Path }
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 if (-not (Test-Path (Join-Path $PSScriptRoot "..\src\CabinetNC.ComputeWorker"))) {
   $root = Resolve-Path (Join-Path $PSScriptRoot "..")
