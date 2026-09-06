@@ -40,6 +40,11 @@ jobs:
       - name: Cloud.Contracts tests
         run: dotnet test tests/CabinetNC.Cloud.Contracts.Tests/CabinetNC.Cloud.Contracts.Tests.csproj -c Release --verbosity minimal
 
+      # Job leasing against a real PostgreSQL started by Testcontainers (Docker is present on
+      # ubuntu-latest). Without a usable Docker these tests SKIP with a reason — never a fake pass.
+      - name: Cloud.Infrastructure tests (PostgreSQL via Testcontainers)
+        run: dotnet test tests/CabinetNC.Cloud.Infrastructure.Tests/CabinetNC.Cloud.Infrastructure.Tests.csproj -c Release --verbosity normal
+
       # WPF-free UI logic (status inference, viewport math, sim timeline, unsaved fingerprint…)
       - name: Desktop.Core tests
         run: dotnet test tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj -c Release --verbosity minimal

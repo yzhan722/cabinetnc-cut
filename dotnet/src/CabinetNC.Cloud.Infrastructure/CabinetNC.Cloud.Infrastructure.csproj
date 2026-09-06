@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- PostgreSQL persistence, job leasing and (Task 5) object storage for the intranet API/worker.
+       Never referenced by Desktop. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CabinetNC.Cloud.Contracts\CabinetNC.Cloud.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

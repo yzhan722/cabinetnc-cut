@@ -16,7 +16,7 @@ Plan: `docs/superpowers/plans/2026-09-05-intranet-cloud-implementation.md`
 | Windows 10/11 | Desktop 是 WPF (`net10.0-windows`) | UI smoke 只能在 Windows 交互式桌面会话跑 |
 | .NET SDK | 10.0.x（已验证 10.0.302） | `dotnet --version` |
 | git | 任意近期版本 | |
-| Docker Desktop / Docker Engine | Task 4/5/8 起需要（PostgreSQL、MinIO、compose） | Windows 上建议 Docker Desktop + WSL2 |
+| Docker Desktop / Docker Engine | Task 4/5/8 起需要（PostgreSQL、MinIO、compose） | Windows 上用 Docker Desktop + WSL 2。要求 Windows 10 22H2 (19045)+ 且 WSL ≥ 2.1.5：先 `wsl --version`，打出帮助文本说明是旧版 inbox WSL，跑 `wsl --update`（不需要管理员）。推荐**按用户模式**安装，不需要 UAC：`"Docker Desktop Installer.exe" install --user --quiet --accept-license --backend=wsl-2 [--installation-dir=D:\Docker\Program --wsl-default-data-root=D:\Docker\wsl]`，装完手动启动一次 Docker Desktop，`docker info` 有输出即可 |
 | PowerShell | Windows PowerShell 5.1 即可；有 pwsh 7 更好 | 没有 pwsh 时把计划里的 `pwsh xxx.ps1` 换成 `powershell -NoProfile -ExecutionPolicy Bypass -File xxx.ps1` |
 | ripgrep (`rg`) | 可选，计划里的搜索命令用到 | 没有就用 IDE 搜索 |
 
@@ -54,8 +54,14 @@ git log --oneline -3
 ## 2. 构建与回归 — READY
 
 ```powershell
-# 全量 .NET 回归（Release）。基线：554 tests / 0 failed
+# 全量 .NET 回归（Release）。基线 554 → Task 4 后 589 tests / 0 failed
 dotnet test dotnet/CabinetNC.slnx -c Release --verbosity minimal
+
+# CabinetNC.Cloud.Infrastructure.Tests 需要真实 PostgreSQL：
+#   - 默认由 Testcontainers 自动起 postgres:17-alpine（需要 Docker 在跑，且是 Linux 容器模式）
+#   - 或者指定现成的库：$env:CABINETNC_TEST_PG = "Host=...;Database=cabinetnc_test;Username=...;Password=..."
+#     （表会被 TRUNCATE，只能指向测试库）
+#   - 两者都没有 → 这些用例显式 SKIP 并打印原因，不算 PASS
 
 # UI smoke 需要 Release 版 Desktop + Worker
 dotnet build dotnet/src/CabinetNC.ComputeWorker/CabinetNC.ComputeWorker.csproj -c Release

@@ -45,7 +45,7 @@
 | OS | Windows 10 (10.0.19045) |
 | .NET SDK | 10.0.400（用户级安装 `%LOCALAPPDATA%\Microsoft\dotnet`；系统 PATH 里的 `C:\Program Files\dotnet` 只有 9.0.8 运行时、无 SDK，需把用户级目录放到 PATH 前面并把 `DOTNET_ROOT` 指向它，否则 `dotnet --version` 报 "No .NET SDKs were found"） |
 | git | 2.54.0.windows.1 |
-| Docker | **未安装**（Task 4/5/8 前需补装 Docker Desktop） |
+| Docker | 2026-09-06 15:00 安装 **Docker Desktop 4.89.0**（Engine 29.7.2，WSL 2 后端）。**按用户模式**（`install --user`，无需管理员、不装特权服务），程序在 `D:\Docker\Program`，WSL 数据盘在 `D:\Docker\wsl`。前置：机器自带的 inbox WSL 不满足 ≥ 2.1.5，先 `wsl --update`（无需提权）升到 WSL 2.7.13 / 内核 6.18。8 月 3 日的安装失败是因为当时系统还是 19042，现已 19045。 |
 | PowerShell | Windows PowerShell 5.1 + pwsh 7（WindowsApps） |
 | 仓库来源 | 交接包 `cabinetnc-cut.bundle`（`git bundle verify` = complete history）；`resume.ps1` 的 `git bundle verify` 需在某个 git 仓库目录内执行，父目录不是仓库时会报 `need a repository to verify a bundle` |
 | 基线核对 | `origin/sprint/14d-rc == 5e410d554e17ba77d2dbb8deb3ff1967154d0c67`，与计划基线一致，RC 仍未前进 |
@@ -257,6 +257,78 @@ dotnet/src/CabinetNC.ComputeWorker/Services/PostProcessorServiceImpl.cs:13  Post
 
 ---
 
-## Task 4 — PostgreSQL persistence + Job leasing
+## Task 4 — PostgreSQL persistence + Job leasing（2026-09-06，机器 B）
 
-NOT STARTED。BLOCKED_ENVIRONMENT：机器 B 无 Docker（见 §1.2 机器 B 表）。
+### 4.1 做了什么
+
+新建 `CabinetNC.Cloud.Infrastructure`（net10.0；引用 `Cloud.Contracts`；NuGet `Npgsql.EntityFrameworkCore.PostgreSQL 10.0.3`）：
+
+| 文件 | 内容 |
+|---|---|
+| `Entities/Entities.cs` | `TenantEntity` / `UserEntity` / `DeviceEntity` / `RefreshTokenEntity`（含 `FamilyId`，供 reuse 检测整族撤销）/ `ComputeJobEntity`（spec §8 全部字段 + `InputStoredAtUtc`）/ `AuditEventEntity`（`DetailsJson` 为 jsonb） |
+| `CloudDbContext.cs` | 表名 `Tenants / Users / Devices / RefreshTokens / ComputeJobs / AuditEvents`（EF 默认 PascalCase，带引号）。唯一索引：`Users(TenantId, Email)`、`Devices(TenantId, DeviceKey)`、`ComputeJobs(TenantId, UserId, IdempotencyKey)`、`RefreshTokens(TokenHash)`。`Status` 以字符串存（`Queued/Running/Succeeded/Failed`）。领取扫描索引 `(Status, LockedUntilUtc, CreatedAtUtc)` |
+| `Jobs/IJobRepository.cs` | `NewComputeJob` / `JobLease(Job, WorkerId, LockedUntilUtc)` / `JobCompletion`；接口 6 个方法：`CreateOrGetByIdempotencyKeyAsync`、`MarkInputStoredAsync`、`TryClaimNextAsync`、`MarkSucceededAsync`、`MarkFailedAsync`、`GetAsync` |
+| `Jobs/PostgresJobRepository.cs` | 见 §4.2 |
+| `ObjectKeys.cs` | `tenant/{tenantId}/jobs/{jobId}/input.json` / `result.json`（spec §10） |
+| `ServiceCollectionExtensions.cs` | `services.AddCloudPersistence(connectionString)`：DbContext + `IJobRepository` + `TimeProvider.System` |
+
+尚未生成 EF migration——按计划"Create initial migration after API startup project exists"，留给 Task 6；测试用 `EnsureCreatedAsync()`。
+
+### 4.2 状态机与并发设计
+
+每个状态迁移都是**一条带条件的 SQL**，两个 worker、或一个 worker 与自己的僵尸进程，不可能同时赢：
+
+| 操作 | SQL 形态 | 条件 / 效果 |
+|---|---|---|
+| CreateOrGet | EF `INSERT`，捕获 `23505` 后按 `(TenantId, UserId, IdempotencyKey)` 查回 | `Id = Guid.CreateVersion7()`（时间有序），`Status=Queued`，`InputObjectKey` 由 `ObjectKeys.JobInput` 生成，`InputStoredAtUtc=NULL` |
+| MarkInputStored | `UPDATE … SET InputStoredAtUtc = COALESCE(InputStoredAtUtc, now) WHERE Id=@id` | 幂等；只有存好输入的 Queued 才可被领取，worker 永远看不到半提交的 job |
+| TryClaimNext ①收尸 | `UPDATE … SET Status=Failed, ErrorCode=compute_failed, ErrorMessage='lease expired after 3 attempts…' WHERE Status=Running AND LockedUntilUtc<now AND AttemptCount>=3` | 连续崩 3 次的 job 不再被重试 |
+| TryClaimNext ②领取 | `UPDATE ComputeJobs j SET Status=Running, AttemptCount=j.AttemptCount+1, LockedBy=@w, LockedUntilUtc=@until, StartedAtUtc=COALESCE(StartedAtUtc,@now) FROM (SELECT Id … WHERE ((Queued AND InputStoredAtUtc IS NOT NULL) OR (Running AND LockedUntilUtc<@now)) AND AttemptCount<3 ORDER BY CreatedAtUtc, Id LIMIT 1 FOR UPDATE SKIP LOCKED) c WHERE j.Id=c.Id RETURNING j.Id` | 单语句原子；用 ADO.NET 直接执行（EF 的 `FromSql`/`SqlQuery` 会把语句包成子查询，而数据修改 CTE 不能在子查询里）；`command.Transaction` 挂到 `db.Database.CurrentTransaction`，调用方开了事务也能正确参与 |
+| MarkSucceeded | `UPDATE … WHERE Id=@id AND Status=Running AND LockedBy=@worker` | `LockedBy` 就是 fencing token：租约被别人接管后，晚到的 worker 写不进结果（返回 false） |
+| MarkFailed(retryable) | 先试 `… AND (NOT @retryable OR AttemptCount>=3)` → Failed；否则 `→ Queued, LockedBy=NULL` 立即可再领 | 返回 `Failed` / `Queued` / `null`（租约已丢） |
+
+`TimeProvider` 注入，测试用 `ManualClock` 推进时间验证租约过期，不 sleep。
+
+### 4.3 测试（先写、后实现）
+
+`CabinetNC.Cloud.Infrastructure.Tests`：`Testcontainers.PostgreSql 4.14.0` 自动起 `postgres:17-alpine`；设了 `CABINETNC_TEST_PG` 则直接用该库。**没有可用 Docker 时用自定义 `[PostgresFact]` 显式 SKIP 并给出原因**（探测顺序：环境变量 → `DOCKER_HOST` / `\\.\pipe\docker_engine` / `/var/run/docker.sock` → `docker info --format {{.OSType}}` 必须是 `linux`），绝不假 PASS。
+
+| 用例 | 对应计划要求 |
+|---|---|
+| `Duplicate_idempotency_key_returns_same_job` | duplicate idempotency key → same logical job（第二次用不同 payload hash，返回的是**原** hash，供 API 报 `idempotency_conflict`） |
+| `Same_idempotency_key_across_tenants_creates_separate_jobs` | same key across tenants → allowed |
+| `Two_simultaneous_workers_only_one_claims_the_job` | 8 个连接并发领同一 job，恰好 1 个拿到 |
+| `Claim_skips_rows_locked_by_an_uncommitted_transaction` | worker A 在**未提交事务**里领走 job1；worker B 不阻塞、跳过 job1 领到 job2；再领为 null；A 提交后 job1 是 A 的。这是 `SKIP LOCKED` 的直接证明（阻塞实现会撞 15 s 超时） |
+| `Expired_lease_is_reclaimable_and_the_old_worker_is_fenced_out` | expired lease → reclaimable（AttemptCount 2、LockedBy=B、StartedAtUtc 保留首次）；A 的 MarkSucceeded/MarkFailed 被拒；B 成功；成功不可重复 |
+| `Third_retryable_failure_marks_job_failed` | third retry → Failed（1、2 次 → Queued，3 次 → Failed，CompletedAtUtc/ErrorCode 落库，之后不可领） |
+| `Non_retryable_failure_fails_on_first_attempt` | 校验类失败立即 Failed |
+| `Job_without_stored_input_is_not_claimable` | 未 MarkInputStored 不可领；Mark 幂等；不存在的 job 返回 false |
+| `Worker_that_keeps_dying_is_failed_after_max_attempts` | 3 次租约过期无回报 → 第 4 次领取时被收尸为 Failed（compute_failed，"lease expired…"） |
+| `Claims_are_served_oldest_first` | FIFO |
+| `GetAsync_enforces_tenant_isolation` | 跨租户读 = 不存在 |
+| `Schema_enforces_the_planned_unique_constraints` | 4 组唯一约束都抛 `23505`；同 email / device key 换租户允许 |
+
+结果：**12 / 0 / 0**（真实 PostgreSQL 17，日志 `.handoff/local-evidence/task4-infra-tests.log`）；把 `DOCKER_HOST` 指向死端口复跑：**12 个全部 SKIP，0 通过 0 失败**，每条都带 "PostgreSQL unavailable: `docker info` failed…"（`task4-infra-tests-skip-when-no-docker.log`）。
+
+全量 `dotnet test dotnet/CabinetNC.slnx -c Release`：**589 / 0 / 0**（Cloud.Infrastructure 12 + Cloud.Contracts 16 + Compute.Core 7 + Package 40 + Domain 431 + Infrastructure 11 + Desktop.Core 72）。
+
+CI：`regression.yml`（ubuntu，有 Docker → 真跑）与 `windows-desktop.yml`（windows-latest 只有 Windows 容器 → 预期 SKIP，已在 step 名里注明）各加一步，用 `--verbosity normal` 让 skip 原因出现在日志里。
+
+### 4.4 决策记录（给 Task 6 / 7）
+
+1. Email 唯一索引大小写敏感——Task 6 存用户前必须 lower-case 归一化。
+2. 没有配置外键：PoC 阶段以 Guid 引用为主，避免 EF 级联删除误伤审计；Task 6 若需要可加。
+3. `CreateOrGetByIdempotencyKeyAsync` 的"捕获唯一冲突再查"路径在**调用方自己开的事务里**会让该事务进入 aborted 状态（PostgreSQL 语义）——API 提交 job 时不要包在外层事务里调它。
+4. `AuditEventEntity` 只建了表；写审计的服务留给 Task 6（auth.*）/ Task 7（job.*）。
+5. Task 7 的 worker 循环：`TryClaimNextAsync` → 跑 runner → `MarkSucceededAsync` 返回 false 时**丢弃结果并记 warning**（租约已被接管，结果对象可能已被别人写）。
+
+### 4.5 Task 4 Gate
+
+- 5 个计划必需用例 + 7 个补充用例全部在真实 PostgreSQL 上通过；无 Docker 时诚实 SKIP；全量 589 绿。**Gate 通过，可进入 Task 5（MinIO 对象存储）。**
+- Commit：`feat: add cloud persistence and job leasing`。
+
+---
+
+## Task 5 — MinIO object store
+
+NOT STARTED。

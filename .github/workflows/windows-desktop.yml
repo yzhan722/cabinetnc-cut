@@ -56,6 +56,12 @@ jobs:
         if: always()
         run: dotnet test tests/CabinetNC.Cloud.Contracts.Tests/CabinetNC.Cloud.Contracts.Tests.csproj -c Release --verbosity minimal
 
+      # windows-latest only runs Windows containers, so the PostgreSQL suite reports itself as
+      # skipped here; regression.yml (ubuntu) is where it actually executes.
+      - name: Cloud.Infrastructure tests (expected to skip on Windows runners)
+        if: always()
+        run: dotnet test tests/CabinetNC.Cloud.Infrastructure.Tests/CabinetNC.Cloud.Infrastructure.Tests.csproj -c Release --verbosity normal
+
       - name: Desktop.Core tests
         if: always()
         run: dotnet test tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj -c Release --verbosity minimal
