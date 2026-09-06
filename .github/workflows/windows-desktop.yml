@@ -52,6 +52,10 @@ jobs:
         if: always()
         run: dotnet test tests/CabinetNC.Compute.Core.Tests/CabinetNC.Compute.Core.Tests.csproj -c Release --verbosity minimal
 
+      - name: Cloud.Contracts tests
+        if: always()
+        run: dotnet test tests/CabinetNC.Cloud.Contracts.Tests/CabinetNC.Cloud.Contracts.Tests.csproj -c Release --verbosity minimal
+
       - name: Desktop.Core tests
         if: always()
         run: dotnet test tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj -c Release --verbosity minimal

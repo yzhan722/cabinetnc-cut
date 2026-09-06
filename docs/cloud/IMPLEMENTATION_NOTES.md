@@ -209,6 +209,54 @@ dotnet/src/CabinetNC.ComputeWorker/Services/PostProcessorServiceImpl.cs:13  Post
 
 ---
 
-## Task 3 — Cloud contracts
+## Task 3 — Cloud contracts（2026-09-06，机器 B）
 
-NOT STARTED。
+### 3.1 做了什么
+
+新建 `CabinetNC.Cloud.Contracts`（net10.0，**零项目引用、零 NuGet**——只用 BCL 的 System.Text.Json，这样 Task 12 的 customer build 可以带它而不带 Domain / Compute.Core）：
+
+| 文件 | 类型 | 说明 |
+|---|---|---|
+| `AuthContracts.cs` | `LoginRequest(Email, Password, DeviceId, DeviceName?)` / `LoginResponse(AccessToken, AccessTokenExpiresInSeconds, RefreshToken, RefreshTokenExpiresInSeconds, TenantId, UserId, DeviceId, Role)` / `RefreshRequest(RefreshToken, DeviceId)` / `RefreshResponse(AccessToken, AccessTokenExpiresInSeconds, RefreshToken, RefreshTokenExpiresInSeconds)` / `LogoutRequest(RefreshToken, DeviceId)` | 过期用**相对秒数**而不是绝对时间，Desktop 时钟偏差（spec §6 允许 ≤ 60 s）不影响“提前 60 s 刷新”的判断。登录标识用 Email，与 `CABINETNC_BOOTSTRAP_ADMIN_EMAIL` 一致 |
+| `JobContracts.cs` | `JobStatus { Queued, Running, Succeeded, Failed }` / `NestPartDto` / `SubmitNestJobRequest` / `SubmitNestJobResponse(JobId, Status, CorrelationId)` / `JobStatusResponse(JobId, JobType, Status, AttemptCount, CreatedAtUtc, StartedAtUtc?, CompletedAtUtc?, ErrorCode?, ErrorMessage?, DurationMs?, CorrelationId)` / `NestPlacementDto` / `NestWarningDto` / `NestJobResult(JobId, Engine, EngineVersion, Placements, SheetCount, Unplaced, Warnings, InputSha256, ResultSha256, DurationMs)` | `SubmitNestJobRequest` 字段 = spec §9 request = 本地 Worker `StartNestingRequest` = `Compute.Core.NestingInput`，一一对应；`NestJobResult` = spec §9 result + `JobId`。`JobId` 用 `Guid` |
+| `ApiError.cs` | `ApiError(Code, Message, CorrelationId)` + `ApiErrorCodes`（12 个常量 + `All`） | 与 spec §12 的 `{"code","message","correlationId"}` 逐字节一致 |
+| `ApiRoutes.cs` | `ApiRoutes`（7 条路径常量 + `ForJobStatus(Guid)` / `ForJobResult(Guid)`）、`ApiHeaders`（`Idempotency-Key`、`X-Correlation-ID`）、`JobTypes.Nest = "nest"` | API 和 Desktop 客户端共用同一组字符串 |
+| `CloudJson.cs` | `CloudJson.Options`（只读单例）+ `Serialize<T>` / `Deserialize<T>` | camelCase、声明顺序、显式写 null、enum 只接受/输出字符串（`allowIntegerValues:false`）、读时大小写不敏感、忽略未知字段（向前兼容）。`Deserialize` 对 `null` 正文抛 `JsonException` 而不是返回 null |
+
+`CloudJson.Options` 是 Task 7 计算 `inputSha256` 的规范化序列化配置——**改它就等于改所有哈希**，文件头注释已写明。
+
+新建 `CabinetNC.Cloud.Contracts.Tests`，`ContractJsonRoundTripTests.cs` 16 个用例（含 Theory 展开）。先写测试、后写类型（纯 DTO，红=编译失败）；第一版 `CloudJson` 用了无参 `MakeReadOnly()`，所有用例以 `TypeInitializationException` 失败（"must specify a TypeInfoResolver"），改为 `MakeReadOnly(populateMissingResolver: true)` 后 16/16 绿。关键断言：
+
+- `SubmitNestJobRequest_canonical_json_is_stable`：**整串 JSON 逐字符固定**（`{"parts":[{"panelId":"A","widthMm":600,…}],"sheetWidthMm":1220,…,"allowRotation":true}`），且 `Serialize(Deserialize(json)) == json`。
+- `JobStatus_serializes_as_spec_strings` ×4 + `JobStatus_rejects_unknown_and_numeric_values`（`"Cancelled"`、`2` 都抛）。
+- `ApiError_matches_spec_shape`：spec §12 示例原样反序列化再序列化得到同一串。
+- `ApiErrorCodes_cover_spec_list`：12 个 code 与 spec 顺序、内容、唯一性一致。
+- `NestJobResult_round_trips_with_nullable_warning_fields`：`engine_fallback` 的 `panelIdA/B/sheetIndex` 以 `null` 显式输出并回读。
+- `Deserialize_is_case_insensitive_and_ignores_unknown_properties`：旧 Desktop 能解析新增字段的响应。
+
+修改：`dotnet/CabinetNC.slnx`（`/src/` + `/tests/`）、`.github/workflows/regression.yml`、`windows-desktop.yml`（各加 `Cloud.Contracts tests` 步）。
+
+### 3.2 决策记录（给 Task 6 / 7 / 9）
+
+1. `NestJobResult` 是 **API 响应信封**（`GET …/result`），不是存进 MinIO 的对象格式。Task 7 存 `result.json` 时自行决定存什么（建议：不含 `ResultSha256` 的载荷），`ResultSha256` 从 Job 行读出来填进信封。Contracts 不约束存储格式。
+2. `SubmitNestJobRequest` 不带 tenant / user / device / correlationId——全部来自 token 与 header（spec §7：不能信任 Desktop 传入的 TenantId）。`Idempotency-Key` 是 header（`ApiHeaders.IdempotencyKey`），不在 body。
+3. Task 7 的输入校验（拒绝 0 零件、空/重复 PanelId、非正尺寸、负 spacing/border）应在 DTO → `NestingInput` 映射之前做，正好拦住 Task 2 §2.3 记录的“零宽零件被静默丢弃 / 重复 ID 走异常路径”两个 runner 既有行为。
+4. `DurationMs` 用 `long`；`AttemptCount` 用 `int`；时间戳用 `DateTimeOffset`（序列化为 ISO-8601 带偏移，如 `2026-09-06T06:30:00+00:00`）。
+5. 没有加 `HealthResponse` DTO：`GET /api/v1/health` 的正文由 Task 6 定义时再加进 Contracts。
+
+### 3.3 验证
+
+- 焦点：`dotnet test dotnet/tests/CabinetNC.Cloud.Contracts.Tests -c Release` → **16 / 0 / 0**。
+- 全量：`dotnet test dotnet/CabinetNC.slnx -c Release` → **577 / 0 / 0**（Cloud.Contracts 16 + Compute.Core 7 + Package 40 + Domain 431 + Infrastructure 11 + Desktop.Core 72）。日志 `.handoff/local-evidence/task3-*.log`。
+- Commit：`feat: add cloud api contracts`。
+
+### 3.4 Task 3 Gate
+
+- DTO 齐全（plan 要求的 7 组 + LogoutRequest / ApiErrorCodes / ApiRoutes / ApiHeaders / CloudJson），camelCase 与 canonical JSON 已被测试逐字节锁定，全量回归绿。**Gate 通过。**
+- **下一步 Task 4 需要真实 PostgreSQL（Docker）。机器 B 目前未安装 Docker——这是继续前必须由人处理的环境前置。**
+
+---
+
+## Task 4 — PostgreSQL persistence + Job leasing
+
+NOT STARTED。BLOCKED_ENVIRONMENT：机器 B 无 Docker（见 §1.2 机器 B 表）。

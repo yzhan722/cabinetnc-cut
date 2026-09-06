@@ -36,6 +36,10 @@ jobs:
       - name: Compute.Core tests
         run: dotnet test tests/CabinetNC.Compute.Core.Tests/CabinetNC.Compute.Core.Tests.csproj -c Release --verbosity minimal
 
+      # Desktop <-> intranet API wire contracts (camelCase JSON pinned byte-for-byte).
+      - name: Cloud.Contracts tests
+        run: dotnet test tests/CabinetNC.Cloud.Contracts.Tests/CabinetNC.Cloud.Contracts.Tests.csproj -c Release --verbosity minimal
+
       # WPF-free UI logic (status inference, viewport math, sim timeline, unsaved fingerprint…)
       - name: Desktop.Core tests
         run: dotnet test tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj -c Release --verbosity minimal
