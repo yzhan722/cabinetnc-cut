@@ -709,4 +709,40 @@ WPF 侧全部放在新文件里，`MainWindow.xaml.cs` 只改了 `RunNestAsync` 
 
 ## Task 11 — Migrate Operations/CAM, then Post
 
+**NOT STARTED（有意）。** 计划规定"Nest acceptance PASS 之后才开始"，且每个模块是独立的 commit/review gate。本轮把 Task 12/13 先做完，让 PoC 有完整、诚实的验收结论；CAM/Post 迁移作为下一轮的第一项，路线不变：characterization → 抽 `IOperationsRunner`/`IPostProcessorRunner` 进 Compute.Core → 本机 gRPC 变 adapter → 云 JobType → Local/Server parity（golden NC 不得为过关而归一化掉有意义的差异）。验收表里 CAM/Post 记 **NOT_RUN**。
+
+---
+
+## Task 12 — Customer build and code protection（2026-09-06，机器 B）
+
+### 12.1 做了什么
+
+| 项 | 内容 |
+|---|---|
+| `CabinetNC.Desktop.csproj` | `-p:CustomerBuild=true`：定义 `CUSTOMER_BUILD`；去掉 `CabinetNC.ComputeWorker` 引用（不构建、不复制）；跳过 `CopyWorker` 与 `CopyToDesktopLaunch`；`DebugType=none`；**独立输出** `bin\Customer\` + `obj\Customer\`——第一版没有隔离，客户版 publish 覆盖了 `bin\Release` 里的开发版，导致本机 UI smoke 跑的是客户版二进制（"Intranet mode is not configured"）；加隔离后开发版 smoke 恢复 5/5 |
+| `MainWindow.Cloud.cs` | `#if CUSTOMER_BUILD`：`ComputeModeSelected` 恒为 Intranet，下拉锁定「内网计算」并禁用；本机分支不可达 |
+| `dotnet/scripts/verify-customer-package.ps1` | 5 类检查：可部署计算组件（ComputeWorker.*、Compute.Core、Cloud.Api/Worker/Infrastructure、EF/Npgsql/Minio）；核心算法程序集（`CabinetNC.Domain.dll`，`-PoC` 时记 GAP 否则 FAIL）；PDB/源码/工程文件；服务端密钥（`.env*`、文本与二进制里的 `CABINETNC_JWT_SIGNING_KEY=`/`*_PASSWORD=`/连接串/AccessKey 模式）；产品本体。退出码 0/1 |
+| `dotnet/scripts/publish-customer.ps1` | publish + verify 一步 |
+| `tests/ui-smoke` | 新动词 `assert-disabled:AutomationId`；场景 `07-customer-intranet-only.txt`（下拉禁用 → 登录 → 重新密排 → `内网 job`）；`run-all.ps1` 用 `CABINETNC_SMOKE_CUSTOMER_BUILD=1` 切换：客户版只跑 `*customer*`，开发版跳过 `*customer*` |
+| `docs/security/CLIENT_CODE_PROTECTION.md` | 规则、验证结果、Domain 缺口与拆分路线、混淆评估（Obfuscar 2.2.50 MIT 支持 .NET 10 但维护者明确不支持完整 WPF/XAML；Eazfuscator.NET 2026.1 与 Dotfuscator Pro 7.5 支持 .NET 10 + WPF；Dotfuscator Community 不再随 VS 2026 附带；ConfuserEx 排除）、受保护构建的四项验收 |
+
+### 12.2 实测
+
+- `publish-customer.ps1` → `dist/CabinetNC-Cut-Customer`：77 个文件、137 MiB；程序集 = Application、Cloud.Contracts、Compute.Contracts、Desktop、Desktop.Core、**Domain**、FusionPackage、Infrastructure。
+- 严格验证：**FAIL（1）**——只因 `CabinetNC.Domain.dll`；其余 4 类全部 ok。`-PoC` 验证：PASS（1 个已知缺口）。
+- 字符串扫描：`Domain.dll`（540 KiB）与 `Desktop.dll`（789 KiB）里可见 `BlfNester / ClipperNfpNestingEngine / GuillotineCutPlanner / NcEmitter / NestEngineRouter / DeepnestPreviewNestingEngine`；`Desktop.Core.dll` 无。
+- 客户版功能：场景 07 通过（`task12-ui-smoke-customer.log`）——`ComputeModeCombo` 禁用、登录、`密排完成 … 内网 job`。客户版**只能**经内网排版。
+- 开发版回归：全量 735/735；UI smoke 5/5（06/07 因无 API 记 skipped）。
+
+### 12.3 结论（如实）
+
+- "No core compute engine in client"：**FAIL**——ComputeWorker/Compute.Core 已不在包内，但排版/CAM/Post 算法仍在 `CabinetNC.Domain.dll`（Desktop 的模型、校验、CAM 叠加、NC 预览都依赖它）。修复是结构性拆分 Domain.Model / Domain.Compute + Task 11 的迁移，不属于本 PoC。
+- "No embedded secrets"：**PASS**（脚本 + 人工检查：客户端不含任何 `CABINETNC_*` 服务端变量名或凭据；refresh token 只在运行时 DPAPI 文件中）。
+- 混淆：**NOT_RUN**（评估完成，未实施；计划禁止随手加过时工具，且在 Domain 拆分前意义有限）。
+- Commit：`build: add customer build and package verification`。
+
+---
+
+## Task 13 — Final acceptance document
+
 NOT STARTED。

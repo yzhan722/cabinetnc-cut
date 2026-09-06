@@ -1,0 +1,28 @@
+# Customer build (dotnet/scripts/publish-customer.ps1): Local compute is compiled out, so the mode selector is
+# locked to 内网计算 and the only way to nest is through the intranet service.
+# run-all.ps1 runs this only when CABINETNC_SMOKE_CUSTOMER_BUILD=1 (pass -Exe <customer exe>) and an API URL is set.
+assert-status:就绪
+invoke:打开示例
+wait:2500
+dismiss
+assert-status:已载入示例
+tab:3 密排
+wait:800
+assert-disabled:ComputeModeCombo
+assert-text:CloudStatusText=未登录
+shot:07a-customer-before-login.png
+invoke:内网登录…
+wait:1500
+type:CloudServerBox=%CABINETNC_SMOKE_API_URL%
+type:CloudTenantBox=%CABINETNC_SMOKE_TENANT%
+type:CloudEmailBox=%CABINETNC_SMOKE_EMAIL%
+type:CloudPasswordBox=%CABINETNC_SMOKE_PASSWORD%
+invoke:登录
+wait:4000
+assert-status:已登录内网
+invoke:重新密排
+wait:9000
+dismiss
+assert-status:密排完成
+assert-status:内网 job
+shot:07b-customer-intranet-nested.png

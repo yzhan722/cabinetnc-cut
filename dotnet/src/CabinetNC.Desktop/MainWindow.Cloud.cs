@@ -31,15 +31,27 @@ public partial class MainWindow
         Path.GetDirectoryName(WorkshopLibraryStore.DefaultPath()) ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CabinetNC");
 
+#if CUSTOMER_BUILD
+    /// <summary>Customer build: the compute engine is not shipped, so Intranet is the only mode.</summary>
+    ComputeMode ComputeModeSelected => ComputeMode.Intranet;
+#else
     ComputeMode ComputeModeSelected =>
         (ComputeModeCombo.SelectedItem as ComboBoxItem)?.Tag is "intranet" ? ComputeMode.Intranet : ComputeMode.Local;
+#endif
 
     void InitializeCloud()
     {
         _cloudSettingsStore = new CloudSettingsStore(CloudDataDirectory());
         _cloudSettings = _cloudSettingsStore.Load();
         _syncingComputeMode = true;
+#if CUSTOMER_BUILD
+        _cloudSettings = _cloudSettings with { Mode = ComputeMode.Intranet };
+        ComputeModeCombo.SelectedIndex = 1;
+        ComputeModeCombo.IsEnabled = false;
+        ComputeModeCombo.ToolTip = "客户版只支持内网计算：本机不包含排版引擎。";
+#else
         ComputeModeCombo.SelectedIndex = _cloudSettings.Mode == ComputeMode.Intranet ? 1 : 0;
+#endif
         _syncingComputeMode = false;
         if (!string.IsNullOrEmpty(_cloudSettings.ServerUrl) && !string.IsNullOrEmpty(_cloudSettings.Tenant))
         {

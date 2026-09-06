@@ -241,6 +241,11 @@ foreach ($s in $steps) {
                 try { $vp = $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern); if ($vp) { $t = $vp.Current.Value } } catch {}
                 if ($t -like "*$sub*") { Ok "$id contains '$sub'" } else { Fail "$id text '$t' does not contain '$sub'" }
             }
+            'assert-disabled' {
+                $el = Find-ById $arg
+                if ($null -eq $el) { Fail "element '$arg' not found"; continue }
+                if (-not $el.Current.IsEnabled) { Ok "$arg is disabled" } else { Fail "$arg is enabled" }
+            }
             'assert-file' {
                 $f = [Environment]::ExpandEnvironmentVariables($arg)
                 if (Test-Path $f) { Ok "file exists $f" } else { Fail "missing file $f" }

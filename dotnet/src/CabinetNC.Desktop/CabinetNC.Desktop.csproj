@@ -6,9 +6,25 @@
     <ProjectReference Include="..\CabinetNC.FusionPackage\CabinetNC.FusionPackage.csproj" />
     <ProjectReference Include="..\CabinetNC.Application\CabinetNC.Application.csproj" />
     <ProjectReference Include="..\CabinetNC.Desktop.Core\CabinetNC.Desktop.Core.csproj" />
-    <ProjectReference Include="..\CabinetNC.ComputeWorker\CabinetNC.ComputeWorker.csproj" ReferenceOutputAssembly="false" />
+    <!-- The local compute worker is a developer/A-B artefact; the customer build neither builds nor ships it. -->
+    <ProjectReference Include="..\CabinetNC.ComputeWorker\CabinetNC.ComputeWorker.csproj" ReferenceOutputAssembly="false"
+                      Condition="'$(CustomerBuild)' != 'true'" />
     <ProjectReference Include="..\CabinetNC.Infrastructure\CabinetNC.Infrastructure.csproj" />
   </ItemGroup>
+
+  <!-- Customer build: dotnet publish -c Release -p:CustomerBuild=true -p:DebugType=none -p:DebugSymbols=false
+       Intranet-only compute (Local mode compiled out), no worker copy, no dist/ launch folder, no PDBs.
+       Verified by dotnet/scripts/verify-customer-package.ps1. -->
+  <PropertyGroup Condition="'$(CustomerBuild)' == 'true'">
+    <DefineConstants>$(DefineConstants);CUSTOMER_BUILD</DefineConstants>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <AssemblyTitle>OmniCam (customer build, intranet compute)</AssemblyTitle>
+    <!-- Separate output so a customer publish can never overwrite the developer build in bin\Release
+         (which the UI smoke and the desktop launch folder are built from). -->
+    <OutputPath>bin\Customer\</OutputPath>
+    <IntermediateOutputPath>obj\Customer\</IntermediateOutputPath>
+  </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
@@ -33,7 +49,7 @@
   <!-- Copy ComputeWorker next to Desktop and into dist. MSBuild globs plus
        PublishDir-as-dest previously dropped CabinetNC.ComputeWorker.dll, so
        the desktop shortcut spawned an exe that exited immediately. -->
-  <Target Name="CopyWorker" AfterTargets="Build;Publish">
+  <Target Name="CopyWorker" AfterTargets="Build;Publish" Condition="'$(CustomerBuild)' != 'true'">
     <PropertyGroup>
       <_WorkerOut>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\CabinetNC.ComputeWorker\bin\$(Configuration)\net10.0'))</_WorkerOut>
       <_DesktopOut>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)$(OutputPath)'))</_DesktopOut>
@@ -56,7 +72,7 @@
 
   <!-- One user-facing build: desktop shortcut launches dist\CabinetNC-Cut. -->
   <Target Name="CopyToDesktopLaunch" AfterTargets="CopyWorker"
-          Condition="'$(Configuration)' == 'Release'">
+          Condition="'$(Configuration)' == 'Release' AND '$(CustomerBuild)' != 'true'">
     <PropertyGroup>
       <_DesktopLaunch>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\..\dist\CabinetNC-Cut\'))</_DesktopLaunch>
     </PropertyGroup>

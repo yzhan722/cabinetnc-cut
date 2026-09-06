@@ -31,6 +31,17 @@ foreach ($sc in $scenarios) {
         $skipped += $sc.BaseName
         continue
     }
+    # Customer-build scenarios only make sense against the customer executable (Local mode compiled out).
+    if ($sc.Name -like '*customer*' -and $env:CABINETNC_SMOKE_CUSTOMER_BUILD -ne '1') {
+        Write-Host 'skipped: CABINETNC_SMOKE_CUSTOMER_BUILD is not 1 (not a customer build)' -ForegroundColor Yellow
+        $skipped += $sc.BaseName
+        continue
+    }
+    if ($sc.Name -notlike '*customer*' -and $env:CABINETNC_SMOKE_CUSTOMER_BUILD -eq '1') {
+        Write-Host 'skipped: scenario assumes the developer build (Local mode / mode switch); customer build has neither' -ForegroundColor Yellow
+        $skipped += $sc.BaseName
+        continue
+    }
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $exportDir, $libDir | Out-Null
     $env:OMNICAM_LIBRARY_PATH = Join-Path $libDir 'library.json'
