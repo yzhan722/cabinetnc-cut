@@ -27,6 +27,8 @@
 
 ### 1.2 执行环境
 
+机器 A（2026-09-06 上午，Task 1 原始执行）：
+
 | 组件 | 版本 / 状态 |
 |---|---|
 | OS | Windows 10 (10.0.19045) |
@@ -35,6 +37,18 @@
 | gh | 2.97.0（已登录，pull-only） |
 | Docker | 29.7.2（本轮尚未使用） |
 | PowerShell | Windows PowerShell 5.1 —— **未安装 pwsh 7**。计划中 `pwsh dotnet/tests/ui-smoke/run-all.ps1` 改用 `powershell -NoProfile -ExecutionPolicy Bypass -File dotnet\tests\ui-smoke\run-all.ps1` 可运行（脚本本身兼容 5.1）。 |
+
+机器 B（2026-09-06 下午起，从交接包 bundle 还原，Task 2 起在此执行）：
+
+| 组件 | 版本 / 状态 |
+|---|---|
+| OS | Windows 10 (10.0.19045) |
+| .NET SDK | 10.0.400（用户级安装 `%LOCALAPPDATA%\Microsoft\dotnet`；系统 PATH 里的 `C:\Program Files\dotnet` 只有 9.0.8 运行时、无 SDK，需把用户级目录放到 PATH 前面并把 `DOTNET_ROOT` 指向它，否则 `dotnet --version` 报 "No .NET SDKs were found"） |
+| git | 2.54.0.windows.1 |
+| Docker | **未安装**（Task 4/5/8 前需补装 Docker Desktop） |
+| PowerShell | Windows PowerShell 5.1 + pwsh 7（WindowsApps） |
+| 仓库来源 | 交接包 `cabinetnc-cut.bundle`（`git bundle verify` = complete history）；`resume.ps1` 的 `git bundle verify` 需在某个 git 仓库目录内执行，父目录不是仓库时会报 `need a repository to verify a bundle` |
+| 基线核对 | `origin/sprint/14d-rc == 5e410d554e17ba77d2dbb8deb3ff1967154d0c67`，与计划基线一致，RC 仍未前进 |
 
 ### 1.3 .NET 回归基线 — PASS
 
@@ -50,10 +64,14 @@
 
 Release 构建 `CabinetNC.ComputeWorker` 与 `CabinetNC.Desktop`：成功。Desktop 有 6 条既有 `NU1701` 警告（SkiaSharp.Views.WPF / OpenTK 针对 .NETFramework 还原），基线即存在，非本轮引入。
 
-### 1.4 Windows UI smoke — PARTIAL（环境限制，不计 PASS）
+机器 B 复跑（2026-09-06，bundle 还原后未改任何代码）：同一命令 **554 / 0 / 0**（431 + 40 + 11 + 72），Worker 与 Desktop Release 构建成功，同样仅 6 条 `NU1701`。
+
+### 1.4 Windows UI smoke — PASS（机器 B 交互式桌面会话 5/5；机器 A 首跑为 PARTIAL）
 
 命令：`powershell -NoProfile -ExecutionPolicy Bypass -File dotnet\tests\ui-smoke\run-all.ps1`
 结果文件：`dotnet/artifacts/ui-smoke/results.json`（已 gitignore，副本随交接包附带）
+
+**第一次（机器 A，agent 驱动的 shell 会话）— PARTIAL：**
 
 | 场景 | 结果 | 说明 |
 |---|---|---|
@@ -63,7 +81,21 @@ Release 构建 `CabinetNC.ComputeWorker` 与 `CabinetNC.Desktop`：成功。Desk
 | 04-library-recovery | PASS | 含 2 张截图成功 |
 | 05-corrupt-project | PASS | 含 1 张截图成功 |
 
-判定：**3/5 PASS；01/02 归类为 `ENVIRONMENT`（截图 GDI 捕获在 agent 驱动的 shell 会话前两分钟内失败，随后场景截图恢复正常），未发现产品功能回归；但按规则不记为 PASS。** 交接后应在交互式桌面会话（或 GitHub Actions `windows-desktop.yml`）重跑一次以获得干净的 5/5。
+判定：3/5 PASS；01/02 归类为 `ENVIRONMENT`（截图 GDI 捕获在 agent 驱动的 shell 会话前两分钟内失败，随后场景截图恢复正常），未发现产品功能回归；按规则不记为 PASS。
+
+**第二次（机器 B，交互式桌面会话，基线代码未改）— PASS 5/5：**
+
+`results.json`（`schema: cabinetnc.ui-smoke`，`ranAt: 2026-09-06T14:14:47+08:00`，`passed: true`）：
+
+| 场景 | 结果 | failures |
+|---|---|---|
+| 01-demo-to-export | PASS | `[]`（20 步全部 ok，含 4 张截图、`Left_side.bmp` 导出） |
+| 02-stale-banner | PASS | `[]`（11 步全部 ok，含 2 张截图） |
+| 03-anc-reverse-recut | PASS | `[]`（18 步全部 ok，`NC_01.bmp` / `NC_02.bmp` 导出） |
+| 04-library-recovery | PASS | `[]`（7 步全部 ok，含从 `.bak` 恢复提示） |
+| 05-corrupt-project | PASS | `[]`（4 步全部 ok） |
+
+11 张截图（`01-empty.png` … `11-after-corrupt-project.png`）全部生成，退出码 0。这证实机器 A 的 01/02 失败确为会话环境问题，不是产品回归。
 
 ### 1.5 现有 compute 调用点（`rg -n "WorkerProcessHost|GetNestingClient|StartNesting|GenerateOperations|GenerateNc" dotnet/src`）
 
@@ -106,8 +138,8 @@ dotnet/src/CabinetNC.ComputeWorker/Services/PostProcessorServiceImpl.cs:13  Post
 
 ### 1.8 Task 1 Gate
 
-- .NET regression：PASS（554/554）
-- UI smoke：PARTIAL / ENVIRONMENT（3/5，失败仅截图步骤）→ 交接后需在交互式会话重跑
+- .NET regression：PASS（554/554，机器 A 与机器 B 各一次）
+- UI smoke：PASS（机器 B 交互式会话 5/5；机器 A 首跑 3/5 的失败已确认为会话环境问题）
 - 无未解释的基线失败。**Gate 通过，可进入 Task 2。**
 
 ---
