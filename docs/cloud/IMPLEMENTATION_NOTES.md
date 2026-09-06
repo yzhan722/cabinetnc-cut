@@ -743,6 +743,14 @@ WPF 侧全部放在新文件里，`MainWindow.xaml.cs` 只改了 `RunNestAsync` 
 
 ---
 
-## Task 13 — Final acceptance document
+## Task 13 — Final acceptance document（2026-09-06，机器 B）
 
-NOT STARTED。
+`docs/cloud/INTRANET_POC_ACCEPTANCE.md`：15 行验收矩阵（14 PASS、**1 FAIL**：Customer build / No core compute engine——`CabinetNC.Domain.dll` 仍在客户包内）、范围外与 NOT_RUN 清单（Task 11、第二台 LAN 机器、混淆、真实 CNC）、按计划模板写的 Cursor final report（含服务器实测）、以及"不宣称 Production Ready"的声明。
+
+### 收尾提醒（给下一位接手者）
+
+1. **本机环境是会话级的**：每个新 shell 要先 `$env:DOTNET_ROOT='C:\Users\alex\AppData\Local\Microsoft\dotnet'; $env:PATH="C:\Users\alex\AppData\Local\Microsoft\dotnet;D:\Docker\Program\resources\bin;$env:PATH"`，否则 `dotnet` 会解析到系统目录里只有 9.0 运行时的安装（"No .NET SDKs were found"）。用户级 `DOTNET_ROOT` 指向了错误目录，建议用户自行修正。
+2. git 身份只在会话环境变量里（`yzhan722 <58527051+yzhan722@users.noreply.github.com>`），没有写入任何 git config。
+3. **所有 commit 都只在本地**（`feature/intranet-cloud-poc`，`7079d18…828ec11` + 本 commit），没有 push、没有 PR——按 AGENTS.md 由人来决定。
+4. Docker Desktop 4.89.0 是本轮按用户要求装的（每用户安装 `D:\Docker\Program`，WSL2 后端）；`cabinetnc/cloud-api:local`、`cabinetnc/cloud-worker:local` 镜像仍在本机，compose 栈已 `down -v`，`deploy/intranet/.env` 已删除。
+5. `.handoff/` 目录（zip、bundle、`local-evidence/` 全部日志与截图）被 `.git/info/exclude` 排除，不在仓库里；交接时要单独拷走。
