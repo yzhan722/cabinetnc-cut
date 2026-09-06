@@ -46,6 +46,11 @@ jobs:
       - name: Cloud.Infrastructure tests (PostgreSQL + MinIO via Testcontainers)
         run: dotnet test tests/CabinetNC.Cloud.Infrastructure.Tests/CabinetNC.Cloud.Infrastructure.Tests.csproj -c Release --verbosity normal
 
+      # Full HTTP auth flow (bootstrap, JWT, rotating refresh/reuse, logout, rate limits) against
+      # another real PostgreSQL started by Testcontainers.
+      - name: Cloud.Api tests (PostgreSQL via Testcontainers)
+        run: dotnet test tests/CabinetNC.Cloud.Api.Tests/CabinetNC.Cloud.Api.Tests.csproj -c Release --verbosity normal
+
       # WPF-free UI logic (status inference, viewport math, sim timeline, unsaved fingerprint…)
       - name: Desktop.Core tests
         run: dotnet test tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj -c Release --verbosity minimal

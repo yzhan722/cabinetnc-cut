@@ -177,10 +177,10 @@ public class ContractJsonRoundTripTests
     [Fact]
     public void Auth_requests_and_responses_round_trip_with_camelCase_names()
     {
-        var login = new LoginRequest("admin@example.test", "correct horse battery staple", "3b6d8d38-1d1a-4a8e-9c1f-0f8a2c0f1e11", "SHOP-PC-01");
+        var login = new LoginRequest("shop-a", "admin@example.test", "correct horse battery staple", "3b6d8d38-1d1a-4a8e-9c1f-0f8a2c0f1e11", "SHOP-PC-01");
         var loginJson = CloudJson.Serialize(login);
         Assert.Equal(
-            "{\"email\":\"admin@example.test\",\"password\":\"correct horse battery staple\"," +
+            "{\"tenant\":\"shop-a\",\"email\":\"admin@example.test\",\"password\":\"correct horse battery staple\"," +
             "\"deviceId\":\"3b6d8d38-1d1a-4a8e-9c1f-0f8a2c0f1e11\",\"deviceName\":\"SHOP-PC-01\"}",
             loginJson);
         Assert.Equal(login, RoundTrip(login));
@@ -233,9 +233,22 @@ public class ContractJsonRoundTripTests
             "unauthorized", "invalid_request", "idempotency_conflict", "job_not_found", "job_not_ready",
             "compute_failed", "storage_failed",
         ];
+        // Added by the API on top of the spec minimum (HTTP 429 and 500 need a stable code too).
+        string[] additions = ["rate_limited", "internal_error"];
 
-        Assert.Equal(spec, ApiErrorCodes.All);
-        Assert.Equal(spec.Length, ApiErrorCodes.All.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal([.. spec, .. additions], ApiErrorCodes.All);
+        Assert.Equal(ApiErrorCodes.All.Count, ApiErrorCodes.All.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Fact]
+    public void HealthResponse_round_trips()
+    {
+        var health = new HealthResponse("ok", "cabinetnc-cloud-api", "0.1.0+abc", new DateTimeOffset(2026, 9, 6, 7, 0, 0, TimeSpan.Zero));
+
+        var json = CloudJson.Serialize(health);
+
+        Assert.Equal("{\"status\":\"ok\",\"service\":\"cabinetnc-cloud-api\",\"version\":\"0.1.0\\u002Babc\",\"timestampUtc\":\"2026-09-06T07:00:00+00:00\"}", json);
+        Assert.Equal(health, RoundTrip(health));
     }
 
     [Fact]

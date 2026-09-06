@@ -3,14 +3,20 @@ using Testcontainers.PostgreSql;
 
 namespace CabinetNC.Cloud.Infrastructure.Tests;
 
-/// <summary>One PostgreSQL per test class (external via CABINETNC_TEST_PG, else a Testcontainers instance); tables truncated between tests.</summary>
-public sealed class PostgresFixture : IAsyncLifetime
+/// <summary>
+/// One PostgreSQL per test class (external via CABINETNC_TEST_PG, else a Testcontainers instance); tables
+/// truncated between tests. Creates the schema with EnsureCreated; derive with <see cref="CreateSchema"/>
+/// = false when the system under test applies migrations itself.
+/// </summary>
+public class PostgresFixture : IAsyncLifetime
 {
     public const string Image = "postgres:17-alpine";
 
     PostgreSqlContainer? _container;
 
     public string ConnectionString { get; private set; } = "";
+
+    protected virtual bool CreateSchema => true;
 
     public async Task InitializeAsync()
     {
@@ -29,8 +35,11 @@ public sealed class PostgresFixture : IAsyncLifetime
             ConnectionString = _container.GetConnectionString();
         }
 
-        await using var db = CreateContext();
-        await db.Database.EnsureCreatedAsync();
+        if (CreateSchema)
+        {
+            await using var db = CreateContext();
+            await db.Database.EnsureCreatedAsync();
+        }
     }
 
     public async Task DisposeAsync()
@@ -42,12 +51,24 @@ public sealed class PostgresFixture : IAsyncLifetime
     public CloudDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<CloudDbContext>().UseNpgsql(ConnectionString).Options);
 
+    /// <summary>Empties every application table; the EF migrations history table is left alone.</summary>
     public async Task ResetAsync()
     {
         await using var db = CreateContext();
+        var schemaExists = await db.Database
+            .SqlQueryRaw<bool>("SELECT to_regclass('\"Tenants\"') IS NOT NULL AS \"Value\"")
+            .SingleAsync();
+        if (!schemaExists)
+            return;
         await db.Database.ExecuteSqlRawAsync(
             """TRUNCATE "ComputeJobs", "AuditEvents", "RefreshTokens", "Devices", "Users", "Tenants" RESTART IDENTITY CASCADE""");
     }
+}
+
+/// <summary>Bare database for hosts that run <c>Database.Migrate()</c> on startup (the Cloud API).</summary>
+public sealed class MigratedByAppPostgresFixture : PostgresFixture
+{
+    protected override bool CreateSchema => false;
 }
 
 /// <summary>Deterministic clock so lease expiry is tested without sleeping.</summary>

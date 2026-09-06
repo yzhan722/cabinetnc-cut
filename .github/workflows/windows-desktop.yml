@@ -62,6 +62,10 @@ jobs:
         if: always()
         run: dotnet test tests/CabinetNC.Cloud.Infrastructure.Tests/CabinetNC.Cloud.Infrastructure.Tests.csproj -c Release --verbosity normal
 
+      - name: Cloud.Api tests (expected to skip on Windows runners)
+        if: always()
+        run: dotnet test tests/CabinetNC.Cloud.Api.Tests/CabinetNC.Cloud.Api.Tests.csproj -c Release --verbosity normal
+
       - name: Desktop.Core tests
         if: always()
         run: dotnet test tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj -c Release --verbosity minimal

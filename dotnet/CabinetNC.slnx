@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/CabinetNC.Application/CabinetNC.Application.csproj" />
+    <Project Path="src/CabinetNC.Cloud.Api/CabinetNC.Cloud.Api.csproj" />
     <Project Path="src/CabinetNC.Cloud.Contracts/CabinetNC.Cloud.Contracts.csproj" />
     <Project Path="src/CabinetNC.Cloud.Infrastructure/CabinetNC.Cloud.Infrastructure.csproj" />
     <Project Path="src/CabinetNC.Compute.Contracts/CabinetNC.Compute.Contracts.csproj" />
@@ -13,6 +14,7 @@
     <Project Path="src/CabinetNC.Infrastructure/CabinetNC.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/CabinetNC.Cloud.Api.Tests/CabinetNC.Cloud.Api.Tests.csproj" />
     <Project Path="tests/CabinetNC.Cloud.Contracts.Tests/CabinetNC.Cloud.Contracts.Tests.csproj" />
     <Project Path="tests/CabinetNC.Cloud.Infrastructure.Tests/CabinetNC.Cloud.Infrastructure.Tests.csproj" />
     <Project Path="tests/CabinetNC.Compute.Core.Tests/CabinetNC.Compute.Core.Tests.csproj" />

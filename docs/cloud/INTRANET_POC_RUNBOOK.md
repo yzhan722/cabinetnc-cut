@@ -92,9 +92,31 @@ powershell -NoProfile -ExecutionPolicy Bypass -File dotnet\scripts\smoke-worker.
 
 将包含：Docker Compose（postgres / minio / cabinetnc-api / cabinetnc-worker / reverse-proxy）、持久卷、健康检查、内部 CA 与证书信任、`.env.example` 说明。**`.gitignore` 含 `.env.*`，提交 `.env.example` 前需加 `!deploy/intranet/.env.example`。**
 
-## 5. 首次初始化管理员 — TODO（Task 6）
+## 5. Cloud API 与首次初始化管理员 — READY（Task 6）
 
-只从环境变量读取：`CABINETNC_BOOTSTRAP_TENANT`、`CABINETNC_BOOTSTRAP_ADMIN_EMAIL`、`CABINETNC_BOOTSTRAP_ADMIN_PASSWORD`、`CABINETNC_JWT_SIGNING_KEY`。没有默认凭据；任何日志不得出现密码 / token / signing key。
+API 需要 PostgreSQL。先创建空数据库；正式部署通过服务管理器/secret store 注入变量。临时本机验证可用 `Read-Host`，让 secret 不进入 PowerShell 命令历史（输入仍会显示在当前控制台）：
+
+```powershell
+$env:CABINETNC_DB_CONNECTION = Read-Host 'Paste PostgreSQL connection string'
+$env:CABINETNC_JWT_SIGNING_KEY = Read-Host 'Paste random JWT key (32-4096 bytes; recommend 64)'
+
+# 只在首次创建 admin 时设置；三项必须全有或全无
+$env:CABINETNC_BOOTSTRAP_TENANT = 'shop'
+$env:CABINETNC_BOOTSTRAP_ADMIN_EMAIL = 'admin@example.internal'
+$env:CABINETNC_BOOTSTRAP_ADMIN_PASSWORD = Read-Host 'Paste bootstrap admin password (12-1024 chars)'
+
+dotnet tool restore
+dotnet run --project dotnet/src/CabinetNC.Cloud.Api/CabinetNC.Cloud.Api.csproj -c Release
+```
+
+启动时自动执行 EF migration，然后幂等创建 tenant/admin。看到 API 正常、确认能登录后，部署环境里删除三个 `CABINETNC_BOOTSTRAP_*` 变量（全部一起删），保留 DB/JWT 变量并重启。没设置 bootstrap 时**不会生成默认账号**。
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:<port>/api/v1/health
+# 每个响应 header 都有 X-Correlation-ID；客户端若自带，只允许单个标准 UUID
+```
+
+登录 body 需要 `tenant` slug + email/password/deviceId；slug 只用于查 tenant，JWT 的 `tenant_id` 仍来自数据库。Token 规则：Access 15 分钟；Refresh 30 天且每次使用都会轮换；旧 rotate token 被再次使用会撤销整个 family。DB 只存 refresh token 的 SHA-256，Desktop 只会收到明文一次。任何日志不得出现 password / access token / refresh token / signing key / DB password。
 
 ## 6. Desktop 切换 Intranet 模式 — TODO（Task 9）
 

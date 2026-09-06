@@ -1,10 +1,13 @@
 namespace CabinetNC.Cloud.Contracts;
 
 /// <summary>
-/// Password login is the initial authentication only. <c>DeviceId</c> is the Desktop's persistent
-/// GUID (never derived from hardware); <c>DeviceName</c> is a display label for the admin.
+/// Password login is the initial authentication only. <c>Tenant</c> is a human-entered server-side
+/// slug/name used to locate the tenant; it is not a trusted TenantId (the JWT claim comes from DB).
+/// <c>DeviceId</c> is the Desktop's persistent GUID (never derived from hardware);
+/// <c>DeviceName</c> is a display label for the admin.
 /// </summary>
 public sealed record LoginRequest(
+    string Tenant,
     string Email,
     string Password,
     string DeviceId,

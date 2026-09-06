@@ -217,7 +217,7 @@ dotnet/src/CabinetNC.ComputeWorker/Services/PostProcessorServiceImpl.cs:13  Post
 
 | 文件 | 类型 | 说明 |
 |---|---|---|
-| `AuthContracts.cs` | `LoginRequest(Email, Password, DeviceId, DeviceName?)` / `LoginResponse(AccessToken, AccessTokenExpiresInSeconds, RefreshToken, RefreshTokenExpiresInSeconds, TenantId, UserId, DeviceId, Role)` / `RefreshRequest(RefreshToken, DeviceId)` / `RefreshResponse(AccessToken, AccessTokenExpiresInSeconds, RefreshToken, RefreshTokenExpiresInSeconds)` / `LogoutRequest(RefreshToken, DeviceId)` | 过期用**相对秒数**而不是绝对时间，Desktop 时钟偏差（spec §6 允许 ≤ 60 s）不影响“提前 60 s 刷新”的判断。登录标识用 Email，与 `CABINETNC_BOOTSTRAP_ADMIN_EMAIL` 一致 |
+| `AuthContracts.cs` | `LoginRequest(Tenant, Email, Password, DeviceId, DeviceName?)` / `LoginResponse(AccessToken, AccessTokenExpiresInSeconds, RefreshToken, RefreshTokenExpiresInSeconds, TenantId, UserId, DeviceId, Role)` / `RefreshRequest(RefreshToken, DeviceId)` / `RefreshResponse(AccessToken, AccessTokenExpiresInSeconds, RefreshToken, RefreshTokenExpiresInSeconds)` / `LogoutRequest(RefreshToken, DeviceId)` | 过期用**相对秒数**而不是绝对时间，Desktop 时钟偏差（spec §6 允许 ≤ 60 s）不影响“提前 60 s 刷新”的判断。Task 6 给 LoginRequest 增加 tenant slug，用于在允许 `(TenantId, Email)` 重复的模型里定位 tenant；它不是客户端指定的可信 TenantId |
 | `JobContracts.cs` | `JobStatus { Queued, Running, Succeeded, Failed }` / `NestPartDto` / `SubmitNestJobRequest` / `SubmitNestJobResponse(JobId, Status, CorrelationId)` / `JobStatusResponse(JobId, JobType, Status, AttemptCount, CreatedAtUtc, StartedAtUtc?, CompletedAtUtc?, ErrorCode?, ErrorMessage?, DurationMs?, CorrelationId)` / `NestPlacementDto` / `NestWarningDto` / `NestJobResult(JobId, Engine, EngineVersion, Placements, SheetCount, Unplaced, Warnings, InputSha256, ResultSha256, DurationMs)` | `SubmitNestJobRequest` 字段 = spec §9 request = 本地 Worker `StartNestingRequest` = `Compute.Core.NestingInput`，一一对应；`NestJobResult` = spec §9 result + `JobId`。`JobId` 用 `Guid` |
 | `ApiError.cs` | `ApiError(Code, Message, CorrelationId)` + `ApiErrorCodes`（12 个常量 + `All`） | 与 spec §12 的 `{"code","message","correlationId"}` 逐字节一致 |
 | `ApiRoutes.cs` | `ApiRoutes`（7 条路径常量 + `ForJobStatus(Guid)` / `ForJobResult(Guid)`）、`ApiHeaders`（`Idempotency-Key`、`X-Correlation-ID`）、`JobTypes.Nest = "nest"` | API 和 Desktop 客户端共用同一组字符串 |
@@ -377,5 +377,73 @@ CI：`regression.yml`（ubuntu，有 Docker → 真跑）与 `windows-desktop.ym
 ---
 
 ## Task 6 — Cloud API shell, correlation, auth, dynamic Token
+
+### 6.1 做了什么（2026-09-06，机器 B）
+
+新建 `CabinetNC.Cloud.Api`（net10.0 Web）：
+
+| 区域 | 实现 |
+|---|---|
+| 启动配置 | 生产 `CloudApiOptions.FromEnvironment()` **直接**用 `Environment.GetEnvironmentVariable`，不会从 appsettings/命令行读 secret；只读 `CABINETNC_DB_CONNECTION`、`CABINETNC_JWT_SIGNING_KEY`、三个 bootstrap 变量。DB/JWT 缺失或 signing key 不在 32–4096 bytes 直接拒绝启动，错误只报变量名、不回显值；测试通过 DI 替换显式注入 test-only options |
+| 数据库 | 启动时 `Database.MigrateAsync()`；本 Task 用本地工具清单 `dotnet-tools.json`（`dotnet-ef 10.0.11`）生成 `InitialCloudPersistence` migration。`CloudDbContextFactory` 让 EF tool 只需 DB env、不需启动 API/JWT key。EF Core 显式统一到 10.0.11，避免 Design 私有依赖与 Npgsql 最低版本 10.0.4 在 API 项目里冲突 |
+| Bootstrap | 三个 bootstrap 变量必须全有或全无；密码 12–1024 字符、tenant 1–200、email ≤320；**先完成全部配置校验，再迁移 schema**；tenant/email trim + lower-case；首启创建 Tenant + admin，ASP.NET `PasswordHasher<UserEntity>` 存 hash；已有用户不覆盖密码；三项全不设则不创建任何默认账号。Tenant name 加唯一索引，bootstrap transaction 先取 PostgreSQL advisory lock，两个 API replica 同时首启也只建一个账号 |
+| Correlation | `CorrelationIdMiddleware`：只接受**单个标准 D 格式 UUID** 的 `X-Correlation-ID`，规范化为小写；多值、token/string/其他格式一律换成服务端 UUIDv7。这样 caller 不能把 password/refresh token 塞进 header 后借 `AuditEvents.CorrelationId` 明文落库；所有响应（含 204、401、429、500）都回 header，`ApiError.correlationId` 与之相同 |
+| 错误 | `ApiExceptionMiddleware` 把已知问题、坏 JSON、未知异常统一成 `ApiError`；500 日志只记 exception type + correlationId，不记 exception message/连接串；Kestrel request body 上限 2 MiB（Task 7 仍需按 parts 数做业务上限）；Contracts 增加 `rate_limited` / `internal_error`（spec 12 个 minimum 仍保留） |
+| JWT | HS256，issuer `cabinetnc-cloud`，audience `cabinetnc-desktop`，TTL 15 min，clock skew 60 s；claims：`sub / tenant_id / device_id / role / jti`；access token 只在响应里返回，不落 DB；401 保留标准 `WWW-Authenticate: Bearer`（过期为 `invalid_token`）；全局 fallback policy 默认要求认证，只有 health/login/refresh 显式 `AllowAnonymous` |
+| Login | `POST /api/v1/auth/login`；request 的 tenant slug trim + lower-case 后查 DB，权威 TenantId 只来自匹配的 DB row；密码只用于 PasswordHasher 校验；未知 tenant/email 也跑一个 dummy PBKDF2 verify，避免明显的账号枚举时间差；tenant ≤200、email ≤320、password ≤1024、deviceName ≤200，DeviceId 必须 GUID；用 `INSERT ... ON CONFLICT (TenantId, DeviceKey) DO UPDATE ... WHERE existing.UserId=excluded.UserId` 原子 upsert，同 device 并发登录不重复、不同 user 不能抢；发一个新的 refresh family；成功/失败写 audit |
+| Refresh | `POST /api/v1/auth/refresh`；48-byte CSPRNG → Base64Url，DB 只存 SHA-256 hex；事务先由 hash 查 family，再取 `pg_advisory_xact_lock(Int64(familyId))`，随后 `SELECT ... FOR UPDATE` 锁 token；每次成功 revoke old + 同 family 新 row；复用有 `ReplacedByTokenId` 的旧 token → revoke 同 family 全部 active token + `refresh_reuse_detected` |
+| Logout | `POST /api/v1/auth/logout`（JWT 必需）；按 token claims + request device key 双重匹配后 revoke 整个 family；幂等返回 204；写 `auth.logout` audit |
+| Rate limit | ASP.NET fixed-window，按 client IP：login 10/min、refresh 30/min、queue=0；429 返回 `rate_limited` + `Retry-After`。这是**单 API 进程内** limiter；Task 8 PoC 单 API replica 可用，多 replica 需 Redis/网关统一限流 |
+| Token response cache | login/refresh 在执行业务前就写 `Cache-Control: no-store` + `Pragma: no-cache`，成功与错误 token endpoint response 都不可缓存 |
+| Health | `GET /api/v1/health` → `HealthResponse(status/service/version/timestampUtc)`；liveness，不依赖 DB readiness |
+| Logging | JSON console；业务代码不记录 request body、password、access/refresh token、signing key。验证日志搜索测试 password/signing key/known token 均无命中 |
+
+`Cloud.Contracts` 同步新增 `HealthResponse`，`CloudJson` 的既有 canonical 配置不变。
+
+### 6.2 数据与并发语义
+
+1. Refresh rotate/reuse 在同一 PostgreSQL transaction 内按 family advisory lock 串行，再锁 hash 对应行。两个并发 refresh：第一个生成 successor 并提交；第二个醒来看到 old 已 revoked + `ReplacedByTokenId != null`，按 reuse 处理并撤销 successor，设备必须重新登录。family lock 也覆盖 logout，避免 old-token reuse 的 `UPDATE family` 与 successor refresh/insert 在 Read Committed 不同 statement snapshot 中错过新 token。
+2. Logout-revoked token 没有 `ReplacedByTokenId`，再次 refresh 返回 `refresh_invalid`，不会误报被攻击；rotate-revoked token 才是 `refresh_reuse_detected`。
+3. Audit details 只放 `{"reason":"<code>"}`，不放 email/password/token；未知 email/token 用 `TenantId=Guid.Empty`（模型当前无 FK，Task 4 的决策保持）。
+4. `LoginRequest.Tenant` 是人可读 slug/name，只用于查找 tenant row；请求不能提交 TenantId。JWT 的 `tenant_id` 始终取自 DB。两 tenant 可有同 email，测试证明 `Tenant` 能正确选到各自 user。
+5. API options 在 DI 中延迟解析；生产 factory 只读进程环境，`WebApplicationFactory` 则在 host build 时替换整个 options singleton，避免改全局环境变量造成测试串扰。
+6. Task 8 加 reverse proxy 时，必须在 rate limiter 前配置受信任 proxy/network 的 Forwarded Headers；否则所有客户端会按 proxy 的 IP 共用 10/min。不能无条件信任任意来源的 `X-Forwarded-For`。
+7. `InitialCloudPersistence` 假设目标是空库或已由 migration 管理的库；不要指向 Task 4 测试曾用 `EnsureCreated` 造出来、但没有 `__EFMigrationsHistory` 的临时库。
+8. Task 6 只完成应用层 auth；**在 Task 8 的 reverse proxy + 内部 CA/TLS 完成前，不能把 login/refresh HTTP 端点直接暴露给内网客户端**，否则密码和 bearer token 会以明文经过网络。
+
+### 6.3 测试
+
+`CabinetNC.Cloud.Api.Tests` 通过 `WebApplicationFactory<Program>` 启动真实 HTTP pipeline，连接一个由 `Testcontainers.PostgreSql` 创建的**空 PostgreSQL 17**；API 自己执行 migration + bootstrap。26 个测试覆盖：
+
+- health + 自动/回显 correlation id；
+- bootstrap 只来自配置、密码不明文、二次启动不重复；三项全省略时零默认 tenant/user；两个 API replica 并发 bootstrap 仍只有一份 tenant/admin；
+- login success / wrong password / unknown email / malformed device / same device not duplicated；同设备两个并发 login 都成功且仍只有一条 Device；同 email 在两个 tenant 时由 slug 精确隔离；
+- access TTL ≈15m、HS256、5 个必需 claims；
+- refresh rotate（old revoke、successor/family/link/30d expiry）；同一个 old token 两个并发 refresh 恰好 1 成功、1 reuse-detected；old reuse 与 successor refresh 并发后 family 无任何 active token；另一个测试先从独立 DB transaction 持有同一 advisory lock、观察 `pg_locks` 中未获锁 waiter、释放后 HTTP refresh 才完成，直接证明 API 确实等 family lock；
+- rotated token reuse → family 全撤销；unknown / expired / foreign-device refresh；
+- 手工制造 token/user/device tenant 不一致时 refresh 拒绝，不会把 Tenant-A refresh row 换成 Tenant-B JWT；
+- logout revoke；匿名 / expired / malformed access token 的统一 401 code；
+- raw refresh token 只有 64-char SHA-256 落库；用**真实 raw refresh token** 冒充 `X-Correlation-ID` 再触发 audit，服务端将它替换成 UUID；随后把六张表整行转 JSON 搜索，raw token 无命中；
+- malformed JSON、未知 route 也返回统一 `ApiError` + correlation id；token response 有 no-store/no-cache，401 有 WWW-Authenticate；
+- login 第 11 次 / refresh 第 31 次 → 429。
+- 3 个纯 options 测试锁定：只读指定环境变量名、无 DB/JWT 默认值、弱 key/超大 key 拒绝且错误不回显 secret。
+
+结果：
+
+- `Cloud.Api.Tests`：**26 / 0 / 0**（23 个真实 PostgreSQL HTTP 集成 + 3 个 options 单元；`.handoff/local-evidence/task6-api-tests.log`）。
+- 强制 `DOCKER_HOST=tcp://127.0.0.1:1`：3 个 options PASS、23 个 PostgreSQL用例 SKIP，证明 Windows CI/无 Docker 时不假 PASS。
+- `Cloud.Contracts.Tests`：**17 / 0 / 0**。
+- 全量 `dotnet test dotnet/CabinetNC.slnx -c Release`：**642 / 0 / 0**（API 26 + Cloud Infrastructure 38 + Contracts 17 + Compute Core 7 + 原有 554）。
+
+`regression.yml`（Ubuntu + Docker）真跑 API + PostgreSQL；`windows-desktop.yml` 的 Windows container daemon 下预期显式 SKIP。
+
+### 6.4 Task 6 Gate
+
+- Auth 计划中的 9 个必需测试 + health/correlation/bootstrap/rate-limit/error-shape 补充测试全部通过；migration 从空库启动验证通过；无默认凭据；日志证据无已知 secret。**Gate 通过，可进入 Task 7（Nest Job API + Cloud Worker）。**
+- Commit：`feat: add rotating cloud authentication`。
+
+---
+
+## Task 7 — Nest Job API + Cloud Worker
 
 NOT STARTED。

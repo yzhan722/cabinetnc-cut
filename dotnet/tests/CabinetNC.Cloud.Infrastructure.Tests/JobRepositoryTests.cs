@@ -87,7 +87,7 @@ public class JobRepositoryTests(PostgresFixture pg) : IClassFixture<PostgresFixt
             return await Repo(db).TryClaimNextAsync($"worker-{i}", Lease, CT);
         }));
 
-        var lease = Assert.Single(results.Where(r => r is not null))!;
+        var lease = Assert.Single(results, r => r is not null)!;
         Assert.Equal(job.Id, lease.Job.Id);
         Assert.Equal(JobStatus.Running, lease.Job.Status);
         Assert.Equal(1, lease.Job.AttemptCount);
@@ -295,6 +295,7 @@ public class JobRepositoryTests(PostgresFixture pg) : IClassFixture<PostgresFixt
         db.RefreshTokens.Add(new RefreshTokenEntity { Id = Guid.NewGuid(), TenantId = TenantA, UserId = UserA, DeviceId = DeviceA, FamilyId = Guid.NewGuid(), TokenHash = new string('f', 64), CreatedAtUtc = now, ExpiresAtUtc = now.AddDays(30) });
         await db.SaveChangesAsync(CT);
 
+        await AssertUniqueViolation(new TenantEntity { Id = Guid.NewGuid(), Name = "A", CreatedAtUtc = now });
         await AssertUniqueViolation(new UserEntity { Id = Guid.NewGuid(), TenantId = TenantA, Email = "op@a.test", PasswordHash = "h", Role = "operator", CreatedAtUtc = now });
         await AssertUniqueViolation(new DeviceEntity { Id = Guid.NewGuid(), TenantId = TenantA, UserId = UserA, DeviceKey = "dev-1", CreatedAtUtc = now });
         await AssertUniqueViolation(new RefreshTokenEntity { Id = Guid.NewGuid(), TenantId = TenantA, UserId = UserA, DeviceId = DeviceA, FamilyId = Guid.NewGuid(), TokenHash = new string('f', 64), CreatedAtUtc = now, ExpiresAtUtc = now.AddDays(30) });

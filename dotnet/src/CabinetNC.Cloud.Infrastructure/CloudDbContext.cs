@@ -19,6 +19,7 @@ public sealed class CloudDbContext(DbContextOptions<CloudDbContext> options) : D
             e.ToTable("Tenants");
             e.HasKey(x => x.Id);
             e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.HasIndex(x => x.Name).IsUnique();
         });
 
         modelBuilder.Entity<UserEntity>(e =>

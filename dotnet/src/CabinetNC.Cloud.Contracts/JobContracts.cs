@@ -1,5 +1,12 @@
 namespace CabinetNC.Cloud.Contracts;
 
+/// <summary>Body of <c>GET /api/v1/health</c>. Liveness only; it does not fail when the database is down.</summary>
+public sealed record HealthResponse(
+    string Status,
+    string Service,
+    string Version,
+    DateTimeOffset TimestampUtc);
+
 /// <summary>The only job states the spec allows. Serialized as these exact strings.</summary>
 public enum JobStatus
 {

@@ -9,9 +9,19 @@ namespace CabinetNC.Cloud.Infrastructure;
 public static class ServiceCollectionExtensions
 {
     /// <summary>Registers the PostgreSQL DbContext and the job repository. The API and the worker both call this.</summary>
-    public static IServiceCollection AddCloudPersistence(this IServiceCollection services, string connectionString)
+    public static IServiceCollection AddCloudPersistence(this IServiceCollection services, string connectionString) =>
+        services.AddCloudPersistence(_ => connectionString);
+
+    /// <summary>
+    /// Deferred variant for hosts whose final configuration is assembled at build time (including
+    /// WebApplicationFactory). The connection string is resolved when a DbContext scope is created.
+    /// </summary>
+    public static IServiceCollection AddCloudPersistence(
+        this IServiceCollection services,
+        Func<IServiceProvider, string> connectionString)
     {
-        services.AddDbContext<CloudDbContext>(options => options.UseNpgsql(connectionString));
+        services.AddDbContext<CloudDbContext>((provider, options) =>
+            options.UseNpgsql(connectionString(provider)));
         services.AddScoped<IJobRepository, PostgresJobRepository>();
         services.TryAddSingleton(TimeProvider.System);
         return services;

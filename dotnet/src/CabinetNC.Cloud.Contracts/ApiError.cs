@@ -18,6 +18,10 @@ public static class ApiErrorCodes
     public const string JobNotReady = "job_not_ready";
     public const string ComputeFailed = "compute_failed";
     public const string StorageFailed = "storage_failed";
+    /// <summary>Beyond the spec minimum: login/refresh rate limit hit (HTTP 429).</summary>
+    public const string RateLimited = "rate_limited";
+    /// <summary>Beyond the spec minimum: unhandled server error (HTTP 500); details stay in the server log under the correlation id.</summary>
+    public const string InternalError = "internal_error";
 
     public static IReadOnlyList<string> All { get; } =
     [
@@ -33,5 +37,7 @@ public static class ApiErrorCodes
         JobNotReady,
         ComputeFailed,
         StorageFailed,
+        RateLimited,
+        InternalError,
     ];
 }
