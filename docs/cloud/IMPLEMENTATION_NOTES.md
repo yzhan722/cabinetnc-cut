@@ -329,6 +329,53 @@ CI：`regression.yml`（ubuntu，有 Docker → 真跑）与 `windows-desktop.ym
 
 ---
 
-## Task 5 — MinIO object store
+## Task 5 — MinIO object store（2026-09-06，机器 B）
+
+### 5.1 做了什么
+
+在 `CabinetNC.Cloud.Infrastructure` 下新增 `Storage/`（NuGet `Minio 7.0.0`，官方 SDK，7.0.0 相对 6.0.5 仅修 bug、API 不变）：
+
+| 类型 | 说明 |
+|---|---|
+| `IObjectStore` | spec §10 的三个方法：`PutAsync(key, Stream, contentType)` / `OpenReadAsync(key)` / `ExistsAsync(key)` |
+| `ObjectStoreNotFoundException(Key)` | `OpenReadAsync` 找不到对象时抛；与 MinIO SDK 自己的 `ObjectNotFoundException` 区分命名 |
+| `ObjectStoreOptions` | `Endpoint`（host:port，无 scheme）/ `AccessKey` / `SecretKey` / `Bucket`（默认 `cabinetnc`）/ `UseSsl` / `Region?` |
+| `ObjectKeyRules.EnsureSafe(key)` | 拒绝：空/空白、长度 > 1024、前导 `/`、反斜杠、控制字符（< 0x20、0x7F）、任何 `.` 或 `..` 段、空段（`//`、结尾 `/`）。允许 `..input.json` 这类以点开头但不是 `..` 的段 |
+| `MinioObjectStore` | 首次使用时建 bucket（双检 + `MakeBucket` 冲突后复查，兼容多个进程同时首启）；`Put` 对不可 seek 的流先缓冲到内存以取得长度；`OpenRead` 用 `GetObjectAsync` 回调流复制到 `MemoryStream` 后返回（payload 是 KB～MB 级 JSON，不是媒体文件，注释已写明这个取舍）；三个方法都**先** `EnsureSafe` 再碰网络 |
+| `AddCloudObjectStore(options)` | 单例注册（MinIO client 线程安全、内部连接池） |
+
+### 5.2 测试（先写、后实现）
+
+`ObjectKeyRulesTests`（纯单元，21 个 case）：14 个非法 key 全部 `ArgumentException("key")`；超长；4 个合法 key；`ObjectKeys.JobInput/JobResult` 生成的 spec 布局 key 合法；以及 `Store_rejects_unsafe_keys_before_any_network_call`——把 store 指向 `127.0.0.1:1`（没人监听），非法 key 必须在校验阶段失败而不是连接失败。
+
+`MinioObjectStoreTests`（`[MinioFact]`，`Testcontainers.Minio 4.14.0` 起 `minio/minio:latest`，每个测试类一个随机 bucket；或用 `CABINETNC_TEST_MINIO_ENDPOINT/_ACCESS_KEY/_SECRET_KEY` 指向现成 MinIO；都没有则 SKIP 并给出原因）：
+
+| 用例 | 对应计划要求 |
+|---|---|
+| `Put_then_OpenRead_returns_the_exact_bytes_for_the_job_input_key` | **exact byte round trip** for `tenant/{tenantId}/jobs/{jobId}/input.json`：64 KB+17 字节随机内容嵌在 JSON 里，长度、字节序列、SHA-256 三重相等；写前 `Exists=false`、写后 `true` |
+| `Missing_key_is_not_found` | `Exists=false`，`OpenRead` 抛 `ObjectStoreNotFoundException` 且 `Key` 正确 |
+| `Put_overwrites_the_previous_object` | 同 key 二次写读到新内容 |
+| `Non_seekable_streams_are_stored_completely` | 只能前向读的流也完整落盘 |
+| `Two_stores_on_the_same_bucket_see_each_others_objects` | API 进程写、worker 进程读的形态 |
+
+`DockerProbe` 从 Task 4 的 `PostgresAvailability` 里抽出来供 PostgreSQL / MinIO 两套 `[…Fact]` 共用。
+
+结果：Infrastructure 套件 **38 / 0 / 0**（12 PostgreSQL + 5 MinIO + 21 key 规则，日志 `.handoff/local-evidence/task5-infra-tests.log`）；全量 `dotnet test dotnet/CabinetNC.slnx -c Release` **615 / 0 / 0**。CI 两个 workflow 的 step 名改为 "PostgreSQL + MinIO"。
+
+### 5.3 决策记录（给 Task 7 / 8）
+
+1. bucket 名默认 `cabinetnc`，Task 8 的 compose / `.env.example` 用 `CABINETNC_OBJECTSTORE_*` 之类的变量喂 `ObjectStoreOptions`；MinIO root 凭据不能进 Git。
+2. `PutAsync` 不做"存在即跳过"——同 key 重写是允许的（幂等重提交时 API 会重新上传同一份 input，字节相同）。
+3. `OpenReadAsync` 返回的是内存流，Task 7 的 result 端点直接把它写进 HTTP 响应即可；若将来要存大文件（NC/DXF/BMP，Task 11 之后），再把接口改为流式并加大小上限。
+4. MinIO SDK 的 `GetObjectAsync` 在 bucket 不存在时抛 `BucketNotFoundException`——store 在每个操作前 `EnsureBucketAsync`，所以只会遇到对象级 404。
+
+### 5.4 Task 5 Gate
+
+- 接口、key 校验、MinIO 实现、逐字节 round-trip 集成测试全部完成并通过；无 Docker 时 SKIP。**Gate 通过，可进入 Task 6（Cloud API：health / correlation / bootstrap admin / JWT / rotating refresh / rate limit）。**
+- Commit：`feat: add intranet object storage`。
+
+---
+
+## Task 6 — Cloud API shell, correlation, auth, dynamic Token
 
 NOT STARTED。

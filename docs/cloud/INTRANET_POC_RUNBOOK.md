@@ -57,11 +57,13 @@ git log --oneline -3
 # 全量 .NET 回归（Release）。基线 554 → Task 4 后 589 tests / 0 failed
 dotnet test dotnet/CabinetNC.slnx -c Release --verbosity minimal
 
-# CabinetNC.Cloud.Infrastructure.Tests 需要真实 PostgreSQL：
-#   - 默认由 Testcontainers 自动起 postgres:17-alpine（需要 Docker 在跑，且是 Linux 容器模式）
-#   - 或者指定现成的库：$env:CABINETNC_TEST_PG = "Host=...;Database=cabinetnc_test;Username=...;Password=..."
-#     （表会被 TRUNCATE，只能指向测试库）
-#   - 两者都没有 → 这些用例显式 SKIP 并打印原因，不算 PASS
+# CabinetNC.Cloud.Infrastructure.Tests 需要真实 PostgreSQL 和 MinIO：
+#   - 默认由 Testcontainers 自动起 postgres:17-alpine 与 minio/minio:latest（需要 Docker 在跑，且是 Linux 容器模式）
+#   - 或者指定现成的服务：
+#       $env:CABINETNC_TEST_PG = "Host=...;Database=cabinetnc_test;Username=...;Password=..."   （表会被 TRUNCATE，只能指向测试库）
+#       $env:CABINETNC_TEST_MINIO_ENDPOINT = "host:9000"; $env:CABINETNC_TEST_MINIO_ACCESS_KEY = ...; $env:CABINETNC_TEST_MINIO_SECRET_KEY = ...
+#       （每个测试类会新建一个 cabinetnc-test-* bucket，不会清理）
+#   - 都没有 → 这些用例显式 SKIP 并打印原因，不算 PASS
 
 # UI smoke 需要 Release 版 Desktop + Worker
 dotnet build dotnet/src/CabinetNC.ComputeWorker/CabinetNC.ComputeWorker.csproj -c Release
