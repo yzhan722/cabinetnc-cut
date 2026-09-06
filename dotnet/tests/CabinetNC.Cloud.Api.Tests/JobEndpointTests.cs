@@ -9,9 +9,12 @@ using CabinetNC.Cloud.Infrastructure;
 using CabinetNC.Cloud.Infrastructure.Entities;
 using CabinetNC.Cloud.Infrastructure.Jobs;
 using CabinetNC.Cloud.Infrastructure.Tests;
+using CabinetNC.Cloud.Worker;
+using CabinetNC.Compute.Core.Nesting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CabinetNC.Cloud.Api.Tests;
 
@@ -245,6 +248,101 @@ public class JobEndpointTests(MigratedByAppPostgresFixture pg) : IClassFixture<M
         var result = await GetAsAsync(ApiRoutes.ForJobResult(jobId), otherToken);
         Assert.Equal(HttpStatusCode.NotFound, result.StatusCode);
         Assert.Equal(ApiErrorCodes.JobNotFound, (await result.ReadErrorAsync()).Code);
+    }
+
+    [PostgresFact]
+    public async Task Submit_execute_and_fetch_result_end_to_end()
+    {
+        var body = ValidRequest();
+        var inputSha = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(CloudJson.Serialize(body))));
+        var jobId = (await (await SubmitAsync(body, "e2e-1")).ReadAsync<SubmitNestJobResponse>()).JobId;
+
+        Assert.True(await RunWorkerOnceAsync("e2e-worker"));
+
+        var status = await (await GetAsAsync(ApiRoutes.ForJobStatus(jobId), _login.AccessToken)).ReadAsync<JobStatusResponse>();
+        Assert.Equal(JobStatus.Succeeded, status.Status);
+        Assert.Equal(1, status.AttemptCount);
+        Assert.NotNull(status.StartedAtUtc);
+        Assert.Equal(_clock.Now, status.CompletedAtUtc);
+        Assert.NotNull(status.DurationMs);
+        Assert.Null(status.ErrorCode);
+
+        var response = await GetAsAsync(ApiRoutes.ForJobResult(jobId), _login.AccessToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var result = await response.ReadAsync<NestJobResult>();
+        Assert.Equal(jobId, result.JobId);
+        Assert.Equal("grouped_blf_v0", result.Engine);
+        Assert.Equal(EngineVersion.Current, result.EngineVersion);
+        Assert.Equal(inputSha, result.InputSha256);
+        Assert.Equal(status.DurationMs, result.DurationMs);
+        Assert.Equal(1, result.SheetCount);
+        Assert.Empty(result.Unplaced);
+        Assert.Equal(["A", "B"], result.Placements.Select(p => p.PanelId).Order().ToArray());
+
+        // The hash the API reports is the hash of the bytes actually sitting in the object store, and
+        // the placements are exactly what the shared runner produces for this request.
+        var storedResult = _factory.ObjectStore.Objects[ObjectKeys.JobResult(Guid.Parse(_login.TenantId), jobId)];
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(storedResult.Bytes)), result.ResultSha256);
+        var direct = new NestingRunner().Run(NestJobMapper.ToNestingInput(body));
+        Assert.Equal(
+            direct.Placements.Select(p => (p.PanelId, p.SheetIndex, p.OffsetX, p.OffsetY, p.RotationDeg)),
+            result.Placements.Select(p => (p.PanelId, p.SheetIndex, p.OffsetX, p.OffsetY, p.RotationDeg)));
+
+        await using var db = pg.CreateContext();
+        var events = await db.AuditEvents.Where(a => a.JobId == jobId).OrderBy(a => a.Id).Select(a => a.EventType).ToListAsync();
+        Assert.Equal(["job.submitted", "job.claimed", "job.started", "job.succeeded"], events);
+    }
+
+    [PostgresFact]
+    public async Task Result_endpoint_refuses_a_stored_result_whose_hash_no_longer_matches()
+    {
+        var jobId = (await (await SubmitAsync(ValidRequest(), "tamper-1")).ReadAsync<SubmitNestJobResponse>()).JobId;
+        Assert.True(await RunWorkerOnceAsync("e2e-worker"));
+        var key = ObjectKeys.JobResult(Guid.Parse(_login.TenantId), jobId);
+        var original = _factory.ObjectStore.Objects[key];
+        var tampered = original.Bytes.ToArray();
+        tampered[^2] ^= 0x01;
+        await _factory.ObjectStore.PutAsync(key, new MemoryStream(tampered), original.ContentType, CancellationToken.None);
+
+        var response = await GetAsAsync(ApiRoutes.ForJobResult(jobId), _login.AccessToken);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Equal(ApiErrorCodes.StorageFailed, (await response.ReadErrorAsync()).Code);
+    }
+
+    [PostgresFact]
+    public async Task Failed_job_reports_its_error_code_in_status_and_has_no_result()
+    {
+        var jobId = (await (await SubmitAsync(ValidRequest(), "fail-1")).ReadAsync<SubmitNestJobResponse>()).JobId;
+        _factory.ObjectStore.FailPutWhen = key => key.EndsWith("/result.json", StringComparison.Ordinal);
+        for (var i = 0; i < PostgresJobRepository.MaxAttempts; i++)
+            Assert.True(await RunWorkerOnceAsync("e2e-worker"));
+
+        var status = await (await GetAsAsync(ApiRoutes.ForJobStatus(jobId), _login.AccessToken)).ReadAsync<JobStatusResponse>();
+        Assert.Equal(JobStatus.Failed, status.Status);
+        Assert.Equal(PostgresJobRepository.MaxAttempts, status.AttemptCount);
+        Assert.Equal(ApiErrorCodes.StorageFailed, status.ErrorCode);
+        Assert.False(string.IsNullOrWhiteSpace(status.ErrorMessage));
+        Assert.DoesNotContain("   at ", status.ErrorMessage);
+        Assert.NotNull(status.CompletedAtUtc);
+
+        var result = await GetAsAsync(ApiRoutes.ForJobResult(jobId), _login.AccessToken);
+        Assert.Equal(HttpStatusCode.Conflict, result.StatusCode);
+        Assert.Equal(ApiErrorCodes.JobNotReady, (await result.ReadErrorAsync()).Code);
+    }
+
+    async Task<bool> RunWorkerOnceAsync(string workerId)
+    {
+        await using var db = pg.CreateContext();
+        var executor = new NestJobExecutor(
+            new PostgresJobRepository(db, _clock),
+            _factory.ObjectStore,
+            new NestingRunner(),
+            db,
+            _clock,
+            new WorkerOptions { WorkerId = workerId },
+            NullLogger<NestJobExecutor>.Instance);
+        return await executor.ExecuteOneAsync(CancellationToken.None);
     }
 
     [PostgresFact]

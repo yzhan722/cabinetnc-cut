@@ -123,6 +123,15 @@ Invoke-RestMethod http://127.0.0.1:<port>/api/v1/health
 # 每个响应 header 都有 X-Correlation-ID；客户端若自带，只允许单个标准 UUID
 ```
 
+Worker 与 API 使用同一组 `CABINETNC_DB_CONNECTION` / `CABINETNC_OBJECTSTORE_*` 变量，另外可选 `CABINETNC_WORKER_ID`（多实例必须各不相同；容器里 pid 恒为 1，默认值不够用）、`CABINETNC_WORKER_LEASE_SECONDS`（默认 300）、`CABINETNC_WORKER_POLL_SECONDS`（默认 1）。先启动 API（它负责 migration），再启动 worker：
+
+```powershell
+$env:CABINETNC_WORKER_ID = 'worker-1'
+dotnet run --project dotnet/src/CabinetNC.Cloud.Worker/CabinetNC.Cloud.Worker.csproj -c Release
+```
+
+一次 Nest 必须在租约时间内完成（PoC 无心跳续期）；worker 崩溃后 job 在租约到期时被其他 worker 重新领取，最多 3 次尝试。
+
 登录 body 需要 `tenant` slug + email/password/deviceId；slug 只用于查 tenant，JWT 的 `tenant_id` 仍来自数据库。Token 规则：Access 15 分钟；Refresh 30 天且每次使用都会轮换；旧 rotate token 被再次使用会撤销整个 family。DB 只存 refresh token 的 SHA-256，Desktop 只会收到明文一次。任何日志不得出现 password / access token / refresh token / signing key / DB password。
 
 ## 6. Desktop 切换 Intranet 模式 — TODO（Task 9）

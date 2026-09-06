@@ -51,6 +51,10 @@ jobs:
       - name: Cloud.Api tests (PostgreSQL via Testcontainers)
         run: dotnet test tests/CabinetNC.Cloud.Api.Tests/CabinetNC.Cloud.Api.Tests.csproj -c Release --verbosity normal
 
+      # Worker loop body: claim, verify input, run the shared runner, store result, fenced completion.
+      - name: Cloud.Worker tests (PostgreSQL via Testcontainers)
+        run: dotnet test tests/CabinetNC.Cloud.Worker.Tests/CabinetNC.Cloud.Worker.Tests.csproj -c Release --verbosity normal
+
       # WPF-free UI logic (status inference, viewport math, sim timeline, unsaved fingerprint…)
       - name: Desktop.Core tests
         run: dotnet test tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj -c Release --verbosity minimal

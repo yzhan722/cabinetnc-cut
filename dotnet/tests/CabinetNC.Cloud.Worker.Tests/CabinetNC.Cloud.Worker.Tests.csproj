@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
-    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.11" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
@@ -20,10 +19,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\CabinetNC.Cloud.Api\CabinetNC.Cloud.Api.csproj" />
-    <!-- End-to-end: submit over HTTP, execute with the real worker loop body, read the result over HTTP. -->
     <ProjectReference Include="..\..\src\CabinetNC.Cloud.Worker\CabinetNC.Cloud.Worker.csproj" />
-    <!-- Shares the PostgreSQL fixture, the Docker probe and the skip-aware [PostgresFact]. -->
+    <!-- PostgreSQL fixture, Docker probe, [PostgresFact], ManualClock and TestObjectStore. -->
     <ProjectReference Include="..\CabinetNC.Cloud.Infrastructure.Tests\CabinetNC.Cloud.Infrastructure.Tests.csproj" />
   </ItemGroup>
 

@@ -4,6 +4,7 @@
     <Project Path="src/CabinetNC.Cloud.Api/CabinetNC.Cloud.Api.csproj" />
     <Project Path="src/CabinetNC.Cloud.Contracts/CabinetNC.Cloud.Contracts.csproj" />
     <Project Path="src/CabinetNC.Cloud.Infrastructure/CabinetNC.Cloud.Infrastructure.csproj" />
+    <Project Path="src/CabinetNC.Cloud.Worker/CabinetNC.Cloud.Worker.csproj" />
     <Project Path="src/CabinetNC.Compute.Contracts/CabinetNC.Compute.Contracts.csproj" />
     <Project Path="src/CabinetNC.Compute.Core/CabinetNC.Compute.Core.csproj" />
     <Project Path="src/CabinetNC.ComputeWorker/CabinetNC.ComputeWorker.csproj" />
@@ -17,6 +18,7 @@
     <Project Path="tests/CabinetNC.Cloud.Api.Tests/CabinetNC.Cloud.Api.Tests.csproj" />
     <Project Path="tests/CabinetNC.Cloud.Contracts.Tests/CabinetNC.Cloud.Contracts.Tests.csproj" />
     <Project Path="tests/CabinetNC.Cloud.Infrastructure.Tests/CabinetNC.Cloud.Infrastructure.Tests.csproj" />
+    <Project Path="tests/CabinetNC.Cloud.Worker.Tests/CabinetNC.Cloud.Worker.Tests.csproj" />
     <Project Path="tests/CabinetNC.Compute.Core.Tests/CabinetNC.Compute.Core.Tests.csproj" />
     <Project Path="tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj" />
     <Project Path="tests/CabinetNC.Domain.Tests/CabinetNC.Domain.Tests.csproj" />

@@ -495,6 +495,62 @@ CI：`regression.yml`（ubuntu，有 Docker → 真跑）与 `windows-desktop.ym
 
 `feat: add nest job api`。
 
-### 7B — Cloud Worker
+### 7B.1 做了什么（2026-09-06，机器 B）
+
+新建 `CabinetNC.Cloud.Worker`（net10.0 console，`Microsoft.Extensions.Hosting 10.0.11`；引用 Contracts、Infrastructure、**Compute.Core**——这是云端唯一引用排版引擎的进程）：
+
+| 类型 | 说明 |
+|---|---|
+| `NestJobExecutor.ExecuteOneAsync(ct)` | 计划要求的可测试单步：`TryClaimNextAsync` → 没有可领的返回 **false** → audit `job.claimed`、`job.started` → 只支持 `JobType == "nest"`（其他 → 终态 `invalid_request`）→ 读 `input.json` 并**重算 SHA-256 与 `InputSha256` 比对**（不一致 → 终态 `storage_failed`，不重试）→ `CloudJson` 反序列化（坏 JSON → 终态 `invalid_request`）→ `NestJobMapper.ToNestingInput` → `Stopwatch` 包住 `INestingRunner.Run`（只计算法时间，不含 I/O）→ runner `Ok=false` → 终态 `compute_failed`、`ErrorMessage` 用 runner 的 `Error`；runner 抛异常 → **可重试** `compute_failed`，`ErrorMessage` 只有异常类型名 → 成功：`NestJobResultPayload` canonical bytes → SHA-256 → `PutAsync(result.json)`（失败 → 可重试 `storage_failed`）→ **然后才** `MarkSucceededAsync(resultKey, resultSha, EngineVersion, durationMs)` → 返回 false（租约被别人接管）→ 丢弃结果只记 warning → audit `job.succeeded` → 返回 **true** |
+| `FailAsync` | 统一走 `MarkFailedAsync(retryable)`；结果 `Queued` → audit `job.retry`，`Failed` → audit `job.failed`，`null`（租约丢失）→ 只记日志。存进 DB 的 `ErrorMessage` 永远不含堆栈或异常文本 |
+| `NestJobMapper` | `SubmitNestJobRequest → NestingInput`、`NestingOutput → NestJobResultPayload`，逐字段，不引入默认值或取整 |
+| `EngineVersion.Current` | `CabinetNC.Compute.Core/<AssemblyInformationalVersion>`；SDK 内建 SourceLink 会在仓库内构建时附加 git revision，所以每个结果都能追溯到具体的引擎构建 |
+| `WorkerOptions` | `CABINETNC_WORKER_ID`（默认 `机器名:pid`，≤200）、`CABINETNC_WORKER_LEASE_SECONDS`（默认 300，10–3600）、`CABINETNC_WORKER_POLL_SECONDS`（默认 1，0.1–60）；错误只报变量名 |
+| `NestJobWorkerHost` | `BackgroundService`：每轮一个 DI scope（一个 DbContext）→ `ExecuteOneAsync` → 有活立刻下一轮、没活 sleep `PollInterval`、异常（DB/MinIO 不可达）记类型名后 `ErrorBackoff` 5 s 再试，进程不退出 |
+| `Program` | `Host.CreateApplicationBuilder` + JSON console；`CABINETNC_DB_CONNECTION` + `CABINETNC_OBJECTSTORE_*` 环境变量；**worker 不跑 migration**，schema 归 API |
+
+### 7B.2 测试（先写、后实现）
+
+`CabinetNC.Cloud.Worker.Tests`（`[PostgresFact]`，真实 PostgreSQL 队列 + `TestObjectStore` + **真实 `NestingRunner`**）9 个用例：
+
+| 用例 | 对应计划要求 |
+|---|---|
+| `ExecuteOne_returns_false_when_nothing_is_claimable` | 空队列 → false |
+| `ExecuteOne_runs_a_queued_synthetic_nest_and_records_result_hash_version_and_duration` | worker executes queued synthetic Nest；`Succeeded`、`LockedBy` 清空、`ResultObjectKey` = spec 布局、**result object/hash exists**（`ResultSha256` = 存储字节的 SHA-256）、**engine version/duration recorded**、payload 里 A/B 放置、BIG 未放；audit 顺序 `job.claimed → job.started → job.succeeded` |
+| `Server_result_equals_running_the_shared_runner_directly` | Local/Server parity 的服务端一半：存进 MinIO 的 placements/warnings/unplaced/sheetCount 与直接调 `new NestingRunner().Run(...)` 完全相等 |
+| `Storage_failure_never_marks_succeeded_and_exhausts_the_retry_budget` | **storage failure never marks Succeeded**：注入 `result.json` 写失败，3 次尝试分别 Queued/Queued/Failed，`ErrorCode=storage_failed`，`ResultSha256` 始终为空，对象不存在，之后不可领；audit 2×`job.retry` + 1×`job.failed`、无 `job.succeeded` |
+| `Tampered_input_fails_immediately_without_retry_or_stack_trace` | 输入对象被改 → 一次即 Failed（`storage_failed`），消息无堆栈 |
+| `Unexpected_runner_exception_is_retryable_and_recorded_without_details` | runner 抛带路径的异常 → Queued（可重试）、`compute_failed`、消息只含异常类型名、不含 `secret`/堆栈；audit `job.retry` |
+| `Runner_reported_failure_is_final_and_keeps_the_runner_message` | runner `Ok=false` → 终态 Failed，`ErrorMessage` = runner 的 `Error` |
+| `Losing_the_lease_mid_run_discards_the_completion` | 慢 worker 的 runner 回调里把时钟推过租约并让另一个 worker 重新领取 → 慢 worker 的 `MarkSucceeded` 被 fencing 拒绝：job 仍是 `other-worker` 的 Running、`AttemptCount=2`、`ResultSha256` 空、无 `job.succeeded` |
+| `Unsupported_job_type_fails_without_retry` | `JobType="post"` → 终态 `invalid_request`（Task 11 之前不接 CAM/Post） |
+
+`Cloud.Api.Tests` 追加 3 个**端到端**用例（HTTP → DB → worker → HTTP）：
+
+- `Submit_execute_and_fetch_result_end_to_end`：`POST /jobs/nest` → `ExecuteOneAsync` → `GET /jobs/{id}` 为 Succeeded（attempt 1、duration、completedAt）→ `GET /jobs/{id}/result` 200：`JobId/Engine/EngineVersion/InputSha256/DurationMs` 与 DB 一致，`ResultSha256` = 对象存储里字节的 SHA-256，placements 与直接跑 runner 完全一致；audit `job.submitted → job.claimed → job.started → job.succeeded`。
+- `Result_endpoint_refuses_a_stored_result_whose_hash_no_longer_matches`：翻转 `result.json` 一个位 → 500 `storage_failed`，不把可疑结果交给 Desktop。
+- `Failed_job_reports_its_error_code_in_status_and_has_no_result`：3 次存储失败后 status 为 Failed + `storage_failed` + 可读消息、result 为 409 `job_not_ready`。
+
+`Worker.Program` 改为显式 `namespace CabinetNC.Cloud.Worker; public static class Program`，避免与 API 的顶级语句 `Program` 在同一测试程序集里冲突。
+
+结果：`Cloud.Worker.Tests` **9 / 0 / 0**；`Cloud.Api.Tests` **37 / 0 / 0**（26 auth + 11 job）；日志 `.handoff/local-evidence/task7-*.log`。
+
+### 7B.3 决策记录（给 Task 8 / 9 / 10）
+
+1. `DurationMs` 只计 `INestingRunner.Run` 的时间——这是 Task 10 性能表里"服务器计算耗时"的定义；端到端延迟由 Desktop 端另计。
+2. PoC 没有租约心跳/续期：一次 Nest 必须在 `LeaseDuration`（默认 5 min）内完成。500 panels 的 BLF 远低于此；若 Task 10 实测接近上限，加续期而不是把租约拉长。
+3. 同一 job 的 `result.json` key 是确定的；租约丢失时慢 worker 写下的对象会被接管者用**相同字节**覆盖（同一 runner、同一输入、确定性算法），所以丢弃完成不会留下脏数据。
+4. Worker 的 `ErrorMessage` 只含类型名或 runner 自己的 `Error` 字符串；API `GET /jobs/{id}` 直接透传给 Desktop，所以这里就是"public error never returns stack trace" 的执行点。
+5. Task 8 compose：worker 与 API 共用 `CABINETNC_DB_CONNECTION`、`CABINETNC_OBJECTSTORE_*`；多 worker replica 只需不同 `CABINETNC_WORKER_ID`（默认值已含 pid，但容器里 pid 都是 1，**compose 必须显式设置**）。
+6. Worker 启动不检查 schema；API 未先启动时第一轮 `TryClaimNextAsync` 会因表不存在抛异常 → 5 s backoff 重试，不崩。
+
+### 7B.4 Task 7 Gate
+
+- API 8 个 + 端到端 3 个 + Worker 9 个用例全部在真实 PostgreSQL 上通过；计划列出的 8 个 required tests（unauth 401 / missing idempotency 400 / duplicate same JobId / Tenant A 不能读 B / worker 执行合成 Nest / result object+hash / engine version+duration / storage failure never Succeeded）逐条有对应用例。**Gate 通过，可进入 Task 8（Docker Compose 内网栈）。**
+- Commits：`feat: add nest job api`（7A）、`feat: add cloud nest worker`（7B）。
+
+---
+
+## Task 8 — Docker Compose intranet stack
 
 NOT STARTED。
