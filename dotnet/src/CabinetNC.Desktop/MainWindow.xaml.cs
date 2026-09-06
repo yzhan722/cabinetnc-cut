@@ -25,6 +25,7 @@ using CabinetNC.Infrastructure.Diagnostics;
 using CabinetNC.Infrastructure.Library;
 using CabinetNC.Infrastructure.Projects;
 using CabinetNC.Desktop.Core;
+using CabinetNC.Desktop.Core.Cloud;
 using Microsoft.Win32;
 using SkiaSharp;
 using SkiaSharp.Views.Desktop;
@@ -227,6 +228,7 @@ public partial class MainWindow : Window
         BindOpsToolCombos();
         ApplyLibraryToSettingsUi();
         ApplyLibraryToNestBoxes();
+        InitializeCloud();
         StageTabs.SelectedIndex = 0;
         HighlightModule();
         ApplyModuleVisibility();
@@ -270,6 +272,7 @@ public partial class MainWindow : Window
             // Worker probing can take seconds; never let it overwrite a status the operator
             // has since produced by working.
             await RefreshWorkerAsync();
+            await RestoreCloudSessionAsync();
         };
         AllowDrop = true;
         PreviewDragOver += (_, e) =>
@@ -300,6 +303,7 @@ public partial class MainWindow : Window
                 _hwndSource = null;
             }
             await _worker.DisposeAsync();
+            DisposeCloud();
         };
     }
 
@@ -5278,11 +5282,15 @@ public partial class MainWindow : Window
         var cancelToken = _nestCts.Token;
         SetNestBusyUi(true);
         BeginNestProgress("密排准备中…");
+        var computeMode = ComputeModeSelected;
+        _lastCloudJobId = null;
+        _lastEngineVersion = null;
         UsageLog.LogActionStart("nest.run", new Dictionary<string, object?>
         {
             ["withNc"] = withNc,
             ["panelCount"] = _session.Package.Panels.Count,
             ["machineId"] = SelectedMachineId(),
+            ["computeMode"] = computeMode.ToString(),
         });
         try
         {
@@ -5322,19 +5330,29 @@ public partial class MainWindow : Window
                 ? TimeSpan.FromSeconds(45)
                 : TimeSpan.FromSeconds(25);
 
-            var packedPair = await Task.Run(() =>
-                new NestEngineRouter(advanced: advanced).Run(
-                    new NestEngineRequest
-                    {
-                        Panels = panels,
-                        Settings = settings,
-                        StockTemplates = sheets,
-                        SizeOf = SizeOf,
-                        EnginePreference = enginePreference,
-                        AdvancedTimeout = advancedTimeout,
-                        Progress = progress,
-                    },
-                    cancelToken)).ConfigureAwait(true);
+            (NestResult Result, NestEngineRunLog Log) packedPair;
+            List<NestWarningMsg> intranetWarnings = [];
+            if (computeMode == ComputeMode.Intranet)
+            {
+                // Server-side compute. Fails loudly on any problem; never quietly reverts to Local.
+                (packedPair, intranetWarnings) = await RunIntranetNestAsync(panels, settings, sheets, cancelToken);
+            }
+            else
+            {
+                packedPair = await Task.Run(() =>
+                    new NestEngineRouter(advanced: advanced).Run(
+                        new NestEngineRequest
+                        {
+                            Panels = panels,
+                            Settings = settings,
+                            StockTemplates = sheets,
+                            SizeOf = SizeOf,
+                            EnginePreference = enginePreference,
+                            AdvancedTimeout = advancedTimeout,
+                            Progress = progress,
+                        },
+                        cancelToken)).ConfigureAwait(true);
+            }
 
             var packed = packedPair.Result;
             var engineLog = packedPair.Log;
@@ -5373,6 +5391,7 @@ public partial class MainWindow : Window
                     Message = $"{engineLog.SelectedEngine} · {engineLog.ElapsedMs}ms · util~{engineLog.UtilizationHintPct:0.0}%",
                 });
             }
+            _nest.Warnings.AddRange(intranetWarnings);
             _partInPartSlots = packed.PartInPartSlots?.ToList() ?? [];
             if (_partInPartSlots.Count > 0)
             {
@@ -5511,13 +5530,14 @@ public partial class MainWindow : Window
 
             var warn = _nest.Warnings.Count;
             var hardWarnings = _nest.Warnings
-                .Where(w => w.Code is not ("engine" or "engine_fallback" or "parts_in_part" or "parts_in_part_none" or "group_report"))
+                .Where(w => w.Code is not ("engine" or "engine_fallback" or "parts_in_part" or "parts_in_part_none" or "group_report" or "intranet" or "intranet_contract"))
                 .ToList();
             var warnTxt = hardWarnings.Count == 0
                 ? " · 校验通过"
                 : $" · 警告 {hardWarnings.Count}: " + string.Join("; ", hardWarnings.Take(3).Select(w => w.Message));
+            var modeNote = _lastCloudJobId is { } cloudJobId ? $" · 内网 job {ShortId(cloudJobId)}" : "";
             SetStatus(
-                $"密排完成 · 已排 {_nest.Placements.Count} 件 · {_nest.SheetCount} 张大板 · 未排 {_nest.Unplaced.Count}{warnTxt}{opsNote}{ncNote}",
+                $"密排完成 · 已排 {_nest.Placements.Count} 件 · {_nest.SheetCount} 张大板 · 未排 {_nest.Unplaced.Count}{warnTxt}{opsNote}{ncNote}{modeNote}",
                 _nest.Unplaced.Count > 0 || hardWarnings.Count > 0 ? StatusKind.Warning : StatusKind.Success);
             if (_nest.Unplaced.Count > 0)
             {
@@ -5555,6 +5575,10 @@ public partial class MainWindow : Window
                 ["borderMm"] = border,
                 ["spacingMm"] = spacing,
                 ["machineId"] = SelectedMachineId(),
+                ["computeMode"] = computeMode.ToString(),
+                ["cloudJobId"] = _lastCloudJobId?.ToString("D"),
+                ["engineVersion"] = _lastEngineVersion,
+                ["engineMs"] = engineLog.ElapsedMs,
             });
             RefreshNestReport();
             RebuildOpsOverlay();
@@ -5571,7 +5595,40 @@ public partial class MainWindow : Window
                 ["ok"] = false,
                 ["withNc"] = withNc,
                 ["cancelled"] = true,
+                ["computeMode"] = computeMode.ToString(),
             });
+        }
+        catch (CloudAuthenticationRequiredException ex)
+        {
+            SetStatus("内网计算未登录 · " + ex.Message + " · 未自动改用本机", StatusKind.Error);
+            ShowToast("内网计算需要登录", "点「内网登录…」后重新密排。为了结果可追溯，不会悄悄改用本机计算。",
+                StatusKind.Error, "内网登录…", () => OnCloudLoginClick(this, new RoutedEventArgs()));
+            UsageLog.LogActionResult("nest.run", new Dictionary<string, object?>
+            {
+                ["ok"] = false,
+                ["withNc"] = withNc,
+                ["computeMode"] = computeMode.ToString(),
+                ["cloudError"] = "auth_required",
+            }, error: ex.Message);
+        }
+        catch (Exception ex) when (ex is ComputeUnavailableException or ComputeJobFailedException or ComputeJobTimeoutException or CloudApiException)
+        {
+            var code = ex switch
+            {
+                ComputeJobFailedException f => f.ErrorCode ?? "job_failed",
+                ComputeJobTimeoutException => "job_timeout",
+                CloudApiException a => a.Code ?? ((int)a.StatusCode).ToString(),
+                _ => "unavailable",
+            };
+            SetStatus($"内网计算失败 [{code}]: {ex.Message} · 未自动改用本机", StatusKind.Error);
+            UsageLog.LogActionResult("nest.run", new Dictionary<string, object?>
+            {
+                ["ok"] = false,
+                ["withNc"] = withNc,
+                ["computeMode"] = computeMode.ToString(),
+                ["cloudError"] = code,
+                ["cloudJobId"] = (ex as ComputeJobFailedException)?.JobId.ToString("D") ?? (ex as ComputeJobTimeoutException)?.JobId.ToString("D"),
+            }, error: ex.Message);
         }
         catch (Exception ex)
         {
@@ -5580,6 +5637,7 @@ public partial class MainWindow : Window
             {
                 ["ok"] = false,
                 ["withNc"] = withNc,
+                ["computeMode"] = computeMode.ToString(),
             }, error: ex.Message);
         }
         finally
@@ -6863,6 +6921,19 @@ public partial class MainWindow : Window
     /// </summary>
     async Task RefreshWorkerAsync(bool announce = false)
     {
+        if (ComputeModeSelected == ComputeMode.Intranet)
+        {
+            // The badge belongs to the server session in Intranet mode; the local worker is not needed.
+            UpdateCloudUi();
+            if (announce)
+            {
+                SetStatus(_cloud?.Session.IsAuthenticated == true
+                    ? $"计算引擎自检：内网 {_cloudSettings.ServerUrl} · 已登录 {_cloud.Session.Email} · 租户 {_cloudSettings.Tenant}"
+                    : "计算引擎自检：已选择内网计算但尚未登录", _cloud?.Session.IsAuthenticated == true ? StatusKind.Success : StatusKind.Warning);
+            }
+            return;
+        }
+
         var ok = await _worker.EnsureStartedAsync();
         if (!ok)
         {

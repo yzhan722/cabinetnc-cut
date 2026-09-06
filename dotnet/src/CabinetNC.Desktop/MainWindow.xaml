@@ -1158,6 +1158,19 @@
                       <ComboBoxItem Tag="blf" Content="快速矩形" />
                       <ComboBoxItem Tag="deepnest" Content="实验预览（较慢）" />
                     </ComboBox>
+                    <TextBlock Text="计算位置" FontSize="11" Foreground="#555" />
+                    <ComboBox x:Name="ComputeModeCombo" AutomationProperties.AutomationId="ComputeModeCombo"
+                              SelectedIndex="0" Margin="0,0,0,4" SelectionChanged="OnComputeModeChanged"
+                              ToolTip="本机：在这台电脑上排版。内网：提交到车间服务器计算（矩形契约，见「未排 / 警告」中的说明）。">
+                      <ComboBoxItem Tag="local" Content="本机计算" />
+                      <ComboBoxItem Tag="intranet" Content="内网计算" />
+                    </ComboBox>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                      <Button x:Name="CloudLoginButton" Content="内网登录…" Click="OnCloudLoginClick" FontSize="11" Padding="8,2" />
+                      <TextBlock x:Name="CloudStatusText" AutomationProperties.AutomationId="CloudStatusText" Text="未登录"
+                                 FontSize="11" Foreground="#666" Margin="8,0,0,0" VerticalAlignment="Center"
+                                 TextTrimming="CharacterEllipsis" MaxWidth="170" />
+                    </StackPanel>
                     <TextBlock Text="机型" FontSize="11" Foreground="#555" />
                     <ComboBox x:Name="MachineCombo" DisplayMemberPath="Name" SelectedValuePath="Id"
                               Margin="0,0,0,10" SelectionChanged="OnNestMachineChanged" />

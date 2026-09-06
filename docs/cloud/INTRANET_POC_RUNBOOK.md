@@ -161,6 +161,25 @@ curl.exe --cacert .\cabinetnc-root.crt --ssl-revoke-best-effort -w "http=%{http_
 
 记录 http 码、TLS 握手/总耗时、证书主题到 `IMPLEMENTATION_NOTES.md` §8。机器 B 只有一台机器，已记录 127.0.0.1 经 proxy 的数据。
 
+### 4.5b Desktop 侧配置（Task 9）
+
+1. 先按 §4.3 在这台 Windows 上信任内部 CA 根证书（车间 CA 签发的证书则无需此步）。
+2. 打开 OmniCam → 「3 密排」→ 「内网登录…」：服务器地址 `https://cabinetnc.shop.local`、租户 slug、邮箱、密码 → 登录。**地址必须是 https**；`http://` 只接受 `127.0.0.1` / `localhost`（开发与 UI smoke）。
+3. 「计算位置」选「内网计算」。此后「初始密排 / 重新密排」提交到服务器；状态栏显示 `排队中 / 计算中 … job xxxxxxxx`，完成后 `密排完成 · … · 内网 job xxxxxxxx`，「未排 / 警告」里列出服务器 job id、引擎版本、哈希，以及**矩形契约降级说明**（异形按外接矩形、只用第一种大板、忽略禁排区/按边余量、无 parts-in-part）。
+4. 服务器不可用、job 失败或未登录时状态栏报 `内网计算失败 [code]` / `内网计算未登录`，**不会自动改用本机**；要用本机就把「计算位置」切回「本机计算」。
+5. 本机状态：`%LocalAppData%\CabinetNC\cloud.json`（模式/地址/租户/邮箱，无密钥）、`cloud.token`（DPAPI 加密的刷新令牌，仅本 Windows 账号可读）、`device-id`（首次随机生成的设备号）。「退出内网登录」会撤销服务端的刷新令牌并删除 `cloud.token`。
+
+UI smoke 的内网场景（`dotnet/tests/ui-smoke/scenarios/06-intranet-nest.txt`）需要一个可达的 API：
+
+```powershell
+# 开发机：用叠加文件把 API 发布到 loopback，Desktop 走 http://127.0.0.1:8080
+docker compose -f docker-compose.yml -f docker-compose.smoke.yml up -d --build
+$env:CABINETNC_SMOKE_API_URL = 'http://127.0.0.1:8080'
+$env:CABINETNC_SMOKE_TENANT = 'shop'; $env:CABINETNC_SMOKE_EMAIL = 'admin@example.internal'
+$env:CABINETNC_SMOKE_PASSWORD = Read-Host 'bootstrap admin password'
+pwsh dotnet/tests/ui-smoke/run-all.ps1            # 不设 CABINETNC_SMOKE_API_URL 时 06 场景记为 skipped
+```
+
 ### 4.6 日常运维
 
 ```bash

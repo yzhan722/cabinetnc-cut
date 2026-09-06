@@ -1,0 +1,7 @@
+# Developer / UI-smoke overlay: additionally publishes the API on loopback so a Desktop on the same
+# machine can talk plain HTTP without trusting the internal CA. Never use on a shared server.
+#   docker compose -f docker-compose.yml -f docker-compose.smoke.yml up -d --build
+services:
+  cabinetnc-api:
+    ports:
+      - "127.0.0.1:8080:8080"

@@ -1,0 +1,38 @@
+# Intranet compute mode: sign in → demo package nested on the cloud API → result rendered.
+# Needs a running API; run-all.ps1 skips this scenario unless CABINETNC_SMOKE_API_URL is set:
+#   CABINETNC_SMOKE_API_URL   e.g. http://127.0.0.1:8080 (loopback http) or https://cabinetnc.shop.local
+#   CABINETNC_SMOKE_TENANT / CABINETNC_SMOKE_EMAIL / CABINETNC_SMOKE_PASSWORD
+# The private library dir set by run-all.ps1 also isolates cloud.json / cloud.token from the operator's.
+assert-status:就绪
+invoke:打开示例
+wait:2500
+dismiss
+assert-status:已载入示例
+# The compute-mode controls live on the nest pane.
+tab:3 密排
+wait:800
+assert-text:CloudStatusText=未登录
+shot:06a-before-login.png
+invoke:内网登录…
+wait:1500
+type:CloudServerBox=%CABINETNC_SMOKE_API_URL%
+type:CloudTenantBox=%CABINETNC_SMOKE_TENANT%
+type:CloudEmailBox=%CABINETNC_SMOKE_EMAIL%
+type:CloudPasswordBox=%CABINETNC_SMOKE_PASSWORD%
+shot:06b-login-dialog.png
+invoke:登录
+wait:4000
+assert-status:已登录内网
+assert-text:CloudStatusText=已登录
+select:ComputeModeCombo=内网计算
+wait:500
+invoke:重新密排
+wait:9000
+dismiss
+assert-status:密排完成
+assert-status:内网 job
+shot:06c-intranet-nested.png
+invoke:退出内网登录
+wait:1500
+assert-status:已退出内网登录
+assert-text:CloudStatusText=未登录

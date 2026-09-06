@@ -1,0 +1,37 @@
+<Window x:Class="CabinetNC.Desktop.CloudLoginWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="内网登录"
+        Width="440"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="#F7F7F7"
+        FontFamily="Segoe UI">
+  <StackPanel Margin="18,16,18,16">
+    <TextBlock Text="登录车间内网计算服务" FontWeight="SemiBold" Foreground="#12314F" Margin="0,0,0,4" />
+    <TextBlock Text="排版将提交到内网服务器计算；本机不再需要计算引擎。密码不会保存，只保存登录凭据的刷新令牌（DPAPI 加密，仅本 Windows 账号可读）。"
+               Foreground="#666" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,12" />
+
+    <TextBlock Text="服务器地址" FontSize="11" Foreground="#555" />
+    <TextBox x:Name="ServerBox" AutomationProperties.AutomationId="CloudServerBox" Margin="0,2,0,8"
+             ToolTip="例如 https://cabinetnc.shop.local；证书由车间内部 CA 签发，需先在本机信任其根证书" />
+
+    <TextBlock Text="租户（车间代号）" FontSize="11" Foreground="#555" />
+    <TextBox x:Name="TenantBox" AutomationProperties.AutomationId="CloudTenantBox" Margin="0,2,0,8" />
+
+    <TextBlock Text="邮箱" FontSize="11" Foreground="#555" />
+    <TextBox x:Name="EmailBox" AutomationProperties.AutomationId="CloudEmailBox" Margin="0,2,0,8" />
+
+    <TextBlock Text="密码" FontSize="11" Foreground="#555" />
+    <PasswordBox x:Name="PasswordBox" AutomationProperties.AutomationId="CloudPasswordBox" Margin="0,2,0,8" />
+
+    <TextBlock x:Name="ErrorText" AutomationProperties.AutomationId="CloudLoginError" Foreground="#B3261E" FontSize="11"
+               TextWrapping="Wrap" Visibility="Collapsed" Margin="0,0,0,8" />
+
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+      <Button Content="取消" IsCancel="True" Width="84" Margin="0,0,8,0" Click="OnCancel" />
+      <Button x:Name="LoginButton" Content="登录" IsDefault="True" Width="84" FontWeight="SemiBold" Click="OnLogin" />
+    </StackPanel>
+  </StackPanel>
+</Window>

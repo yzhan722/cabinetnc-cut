@@ -95,10 +95,35 @@ function Cond([string]$name, $type) {
         (New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::NameProperty, $name)),
         (New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::ControlTypeProperty, $type)))
 }
+# Elements of secondary windows (login dialog, etc.) are not descendants of the main window handle,
+# so fall back to a process-wide search after the main window has been tried.
+function ProcessCond($inner) {
+    New-Object System.Windows.Automation.AndCondition (
+        $inner,
+        (New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $p.Id)))
+}
 function Find-ByName([string]$name, $type, [int]$timeoutMs = 6000) {
     $until = (Get-Date).AddMilliseconds($timeoutMs)
     do {
         $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (Cond $name $type))
+        if ($null -eq $el) {
+            $el = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+                [System.Windows.Automation.TreeScope]::Descendants, (ProcessCond (Cond $name $type)))
+        }
+        if ($null -ne $el) { return $el }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $until)
+    return $null
+}
+function Find-ById([string]$id, [int]$timeoutMs = 6000) {
+    $c = New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $id.Trim())
+    $until = (Get-Date).AddMilliseconds($timeoutMs)
+    do {
+        $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c)
+        if ($null -eq $el) {
+            $el = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+                [System.Windows.Automation.TreeScope]::Descendants, (ProcessCond $c))
+        }
         if ($null -ne $el) { return $el }
         Start-Sleep -Milliseconds 250
     } while ((Get-Date) -lt $until)
@@ -164,6 +189,29 @@ foreach ($s in $steps) {
                 $mi.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 700; Ok "ctx $arg"
             }
             'wait' { Start-Sleep -Milliseconds ([int]$arg) }
+            'type' {
+                # type:AutomationId=text  — %ENV% is expanded so secrets stay out of scenario files.
+                $id, $text = $arg -split '=', 2
+                $text = [Environment]::ExpandEnvironmentVariables($text)
+                $el = Find-ById $id
+                if ($null -eq $el) { Fail "input '$id' not found"; continue }
+                $el.SetFocus(); Start-Sleep -Milliseconds 150
+                $el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($text); Start-Sleep -Milliseconds 200
+                Ok "type $id"
+            }
+            'select' {
+                # select:AutomationId=Item text  — picks a ComboBox item by its visible text.
+                $id, $item = $arg -split '=', 2
+                $combo = Find-ById $id
+                if ($null -eq $combo) { Fail "combo '$id' not found"; continue }
+                $combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand(); Start-Sleep -Milliseconds 500
+                $li = $combo.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (Cond $item.Trim() ([System.Windows.Automation.ControlType]::ListItem)))
+                if ($null -eq $li) { $li = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (ProcessCond (Cond $item.Trim() ([System.Windows.Automation.ControlType]::ListItem)))) }
+                if ($null -eq $li) { Fail "combo item '$item' not found"; try { $combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Collapse() } catch {}; continue }
+                $li.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select(); Start-Sleep -Milliseconds 400
+                try { $combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Collapse() } catch {}
+                Ok "select $arg"
+            }
             'dismiss' {
                 $dc = New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Window)
                 foreach ($d in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $dc)) { try { $d.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() } catch {} }

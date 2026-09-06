@@ -635,6 +635,43 @@ CI：`regression.yml`（ubuntu，有 Docker → 真跑）与 `windows-desktop.ym
 
 `feat: add desktop intranet client core`。
 
-### 9B — WPF 接线
+### 9B.1 做了什么（2026-09-06，机器 B）
+
+WPF 侧全部放在新文件里，`MainWindow.xaml.cs` 只改了 `RunNestAsync` 的计算块和两条 catch，没有重写：
+
+| 文件 | 内容 |
+|---|---|
+| `CloudLoginWindow.xaml(.cs)` | 服务器 / 租户 / 邮箱 / 密码（`PasswordBox`）；`CloudClientOptions.TryParseServerUrl` 校验（**https 任意主机；http 只允许 127.0.0.1/localhost**——凭据不走明文 LAN）；用新建的 `CloudApiClient` 登录成功后把 client 交回主窗口；错误码翻译成人话（`invalid_credentials`/`rate_limited`/连不上 → 提示检查地址、网络、根证书）；密码不离开该窗口 |
+| `MainWindow.Cloud.cs`（partial） | `InitializeCloud()`：读 `cloud.json`（目录 = library.json 所在目录，所以 UI smoke 的私有库目录也隔离了 cloud 状态）→ 设置下拉 → 有 server+tenant 就建 client；`RestoreCloudSessionAsync()`（Loaded 时用 DPAPI 里的 refresh token 恢复登录）；`OnComputeModeChanged`（持久化 + 提示未登录）；`OnCloudLoginClick`（登录 / 退出二合一按钮；退出 = 服务端撤销 + 本地清盘）；`UpdateCloudUi()`（`CloudStatusText` + 顶部 `WorkerBadge` 在内网模式下描述服务器会话）；`RunIntranetNestAsync()`：`NestRequestBuilder.Build` → `ComputeGatewayFactory.Create(Intranet)`（未登录直接抛）→ 进度写状态栏（排队中/计算中 + 秒数 + job 短 id）→ `NestResultMapper.ToLocal` → 附加 3 类警告：`intranet`（job id、EngineVersion、服务器耗时、input/result 哈希前缀）、`intranet_contract`（每一条矩形契约降级）、服务器返回的 `aabb_gap` 等 |
+| `MainWindow.xaml` | 密排面板「排版方式」下新增「计算位置」下拉（`ComputeModeCombo`：本机计算 / 内网计算）+ `内网登录…` 按钮 + `CloudStatusText` |
+| `MainWindow.xaml.cs` | ① 记录 `computeMode`；② 计算块：`Intranet` → `RunIntranetNestAsync`，否则原样 `NestEngineRouter`（**Local 路径一行未改**）；③ `_nest.Warnings.AddRange(intranetWarnings)`；④ 完成状态尾部加 ` · 内网 job xxxxxxxx`；⑤ 新增 catch：`CloudAuthenticationRequiredException` → 错误状态 + toast「内网登录…」；`ComputeUnavailable/JobFailed/JobTimeout/CloudApi` → `内网计算失败 [code]: … · 未自动改用本机`；⑥ `UsageLog` 的 nest.run 增加 `computeMode / cloudJobId / engineVersion / engineMs / cloudError`；⑦ `RefreshWorkerAsync` 在内网模式下不再探测本机 worker、不覆盖徽标（自检菜单改为报告内网会话） |
+| `ui-smoke.ps1` | 新动词 `type:AutomationId=%ENV%`（ValuePattern，密码经环境变量传入，不进脚本文件）、`select:ComboId=项文本`；`Find-ByName/Find-ById` 找不到时退回**按进程**全局查找（登录对话框不是主窗口的后代） |
+| `scenarios/06-intranet-nest.txt` | 打开示例 → 3 密排 → 未登录 → 内网登录…（填 4 项）→ 登录 → 状态"已登录内网" → 选「内网计算」→ 重新密排 → 状态含"密排完成"与"内网 job" → 退出内网登录 → "未登录" |
+| `run-all.ps1` | 文件名含 `intranet` 的场景在没有 `CABINETNC_SMOKE_API_URL` 时**跳过并计入 `skipped`**（Windows CI 无 Docker），不假装通过 |
+| `deploy/intranet/docker-compose.smoke.yml` | 仅开发/冒烟用的叠加：把 API 额外发布到 `127.0.0.1:8080`，Desktop 走 loopback http 不必往用户证书库装 Caddy 根证书 |
+
+### 9B.2 实测（`.handoff/local-evidence/task9b-*`）
+
+- 本机 UI smoke（无 API）：**5/5 通过，1 跳过**（06 明确报 skipped）。
+- 内网 UI smoke：`docker compose -f docker-compose.yml -f docker-compose.smoke.yml up`，设置 4 个 `CABINETNC_SMOKE_*` 环境变量后 `run-all.ps1`：**6/6 通过**（`task9b-ui-smoke-all.log`，截图 `06a/06b/06c`）。06c 截图：计算位置=内网计算、`已登录 admin@example.internal`、板件按服务器结果落位、状态栏 `密排完成 · 已排 1 件 · 1 张大板 · 未排 0 · 校验通过 · 内网 job 01a0763a`、右上徽标 `计算引擎 · 内网 · admin@example.internal`。
+- 服务端核对（`task9b-audit-query.txt`）：两个 job 均 `Succeeded`，`EngineVersion = CabinetNC.Compute.Core/1.0.0+cd933b1…`，两次 **input/result 哈希完全相同**（确定性）；审计链 `job.submitted → job.claimed → job.started → job.succeeded` 带用户邮箱与设备名 `ALEX`；两次 smoke 各注册了一个不同的 device id（私有目录 → 新 GUID，证明隔离）；登出后 refresh token **2/2 已撤销**。这就是验收 Gate E"只凭 JobId 可查"的 Desktop 端实证。
+- 第一次运行暴露的两个问题已修：登录控件在密排面板而非板材页（场景改为 `tab:3 密排`）；`RefreshWorkerAsync` 在内网模式下会把徽标改回本机 worker（已让它转交 `UpdateCloudUi`）。
+
+### 9B.3 决策记录 / 待办
+
+1. **矩形契约在 UI 里是显式的**：每次内网排版都在「未排 / 警告」列出 `intranet_contract` 条目（异形→外接矩形、只用第一种大板、忽略禁排区/按边余量、无 parts-in-part）。验收文档（Task 13）要原文引用这份清单。
+2. 内网模式失败**不回退本机**：状态栏与日志都写"未自动改用本机"，`cloudError` 记录错误码；操作员手动切回「本机计算」即可。
+3. Desktop 信任内网 CA 的方式是 Windows 证书库（runbook §4.3），代码里没有任何跳过校验的开关；`http://` 只在 loopback 可用，用于本机开发与 smoke。
+4. `cloud.json` 与 `cloud.token`（DPAPI）与 `device-id` 都在 library.json 同目录；`OMNICAM_LIBRARY_PATH` 重定向时一并重定向。
+5. Task 12 客户版：Desktop 仍引用 `Compute.Contracts`（gRPC 面）与 `CabinetNC.Domain`（本机 NFP）；去掉本机计算要在 Task 12 处理引用与 `ComputeModeCombo` 的可见性。
+
+### 9B.4 Task 9 Gate
+
+- 登录 / DPAPI / 显式模式 / 无静默回退 / submit→poll→result / UI smoke（本机不退化 + 内网通过）——计划要求逐条满足。**Gate 通过，可进入 Task 10（诊断、性能、可靠性套件）。**
+- Commits：`feat: add desktop intranet client core`（9A）、`feat: add desktop intranet compute mode`（9B）。
+
+---
+
+## Task 10 — Diagnostics, performance, reliability
 
 NOT STARTED。
