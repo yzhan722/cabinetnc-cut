@@ -21,6 +21,13 @@ public sealed class ObjectStoreNotFoundException(string key) : Exception($"Objec
 
 public sealed record ObjectStoreOptions
 {
+    public const string EndpointVariable = "CABINETNC_OBJECTSTORE_ENDPOINT";
+    public const string AccessKeyVariable = "CABINETNC_OBJECTSTORE_ACCESS_KEY";
+    public const string SecretKeyVariable = "CABINETNC_OBJECTSTORE_SECRET_KEY";
+    public const string BucketVariable = "CABINETNC_OBJECTSTORE_BUCKET";
+    public const string UseSslVariable = "CABINETNC_OBJECTSTORE_USE_SSL";
+    public const string RegionVariable = "CABINETNC_OBJECTSTORE_REGION";
+
     /// <summary>host[:port] without scheme, e.g. <c>minio:9000</c>.</summary>
     public required string Endpoint { get; init; }
     public required string AccessKey { get; init; }
@@ -28,6 +35,34 @@ public sealed record ObjectStoreOptions
     public string Bucket { get; init; } = "cabinetnc";
     public bool UseSsl { get; init; }
     public string? Region { get; init; }
+
+    /// <summary>Production credentials are environment-only; errors name variables but never values.</summary>
+    public static ObjectStoreOptions FromEnvironment()
+    {
+        var endpoint = Environment.GetEnvironmentVariable(EndpointVariable);
+        var accessKey = Environment.GetEnvironmentVariable(AccessKeyVariable);
+        var secretKey = Environment.GetEnvironmentVariable(SecretKeyVariable);
+        if (string.IsNullOrWhiteSpace(endpoint))
+            throw new InvalidOperationException($"{EndpointVariable} is required.");
+        if (string.IsNullOrWhiteSpace(accessKey))
+            throw new InvalidOperationException($"{AccessKeyVariable} is required.");
+        if (string.IsNullOrWhiteSpace(secretKey))
+            throw new InvalidOperationException($"{SecretKeyVariable} is required.");
+
+        var sslText = Environment.GetEnvironmentVariable(UseSslVariable);
+        if (!string.IsNullOrWhiteSpace(sslText) && !bool.TryParse(sslText, out _))
+            throw new InvalidOperationException($"{UseSslVariable} must be true or false.");
+
+        return new ObjectStoreOptions
+        {
+            Endpoint = endpoint,
+            AccessKey = accessKey,
+            SecretKey = secretKey,
+            Bucket = Environment.GetEnvironmentVariable(BucketVariable) ?? "cabinetnc",
+            UseSsl = bool.TryParse(sslText, out var useSsl) && useSsl,
+            Region = Environment.GetEnvironmentVariable(RegionVariable),
+        };
+    }
 }
 
 /// <summary>Rejects anything that is not a plain, relative, slash-separated key.</summary>

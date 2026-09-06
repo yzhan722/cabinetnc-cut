@@ -175,6 +175,30 @@ public class ContractJsonRoundTripTests
     }
 
     [Fact]
+    public void NestJobResultPayload_canonical_json_is_stable()
+    {
+        // The worker hashes exactly these bytes into ResultSha256, so the layout is pinned.
+        var payload = new NestJobResultPayload(
+            Engine: "grouped_blf_v0",
+            Placements: [new NestPlacementDto("A", 0, 15, 15, 0), new NestPlacementDto("B", 0, 627, 15, 90)],
+            SheetCount: 1,
+            Unplaced: [],
+            Warnings: [new NestWarningDto("aabb_gap", "spacing/collision A x B on sheet 0", "A", "B", 0)]);
+
+        var json = CloudJson.Serialize(payload);
+
+        Assert.Equal(
+            "{\"engine\":\"grouped_blf_v0\",\"placements\":[" +
+            "{\"panelId\":\"A\",\"sheetIndex\":0,\"offsetX\":15,\"offsetY\":15,\"rotationDeg\":0}," +
+            "{\"panelId\":\"B\",\"sheetIndex\":0,\"offsetX\":627,\"offsetY\":15,\"rotationDeg\":90}" +
+            "],\"sheetCount\":1,\"unplaced\":[],\"warnings\":[" +
+            "{\"code\":\"aabb_gap\",\"message\":\"spacing/collision A x B on sheet 0\",\"panelIdA\":\"A\",\"panelIdB\":\"B\",\"sheetIndex\":0}" +
+            "]}",
+            json);
+        Assert.Equal(json, CloudJson.Serialize(CloudJson.Deserialize<NestJobResultPayload>(json)));
+    }
+
+    [Fact]
     public void Auth_requests_and_responses_round_trip_with_camelCase_names()
     {
         var login = new LoginRequest("shop-a", "admin@example.test", "correct horse battery staple", "3b6d8d38-1d1a-4a8e-9c1f-0f8a2c0f1e11", "SHOP-PC-01");

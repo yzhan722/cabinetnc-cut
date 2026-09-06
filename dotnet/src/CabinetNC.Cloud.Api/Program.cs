@@ -3,9 +3,11 @@ using System.Threading.RateLimiting;
 using CabinetNC.Cloud.Api;
 using CabinetNC.Cloud.Api.Auth;
 using CabinetNC.Cloud.Api.Http;
+using CabinetNC.Cloud.Api.Jobs;
 using CabinetNC.Cloud.Contracts;
 using CabinetNC.Cloud.Infrastructure;
 using CabinetNC.Cloud.Infrastructure.Entities;
+using CabinetNC.Cloud.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
@@ -23,10 +25,12 @@ builder.Logging.AddJsonConsole();
 builder.Services.AddSingleton(_ => CloudApiOptions.FromEnvironment());
 builder.Services.AddCloudPersistence(provider =>
     provider.GetRequiredService<CloudApiOptions>().DbConnection);
+builder.Services.AddCloudObjectStore(_ => ObjectStoreOptions.FromEnvironment());
 builder.Services.AddSingleton<IPasswordHasher<UserEntity>, PasswordHasher<UserEntity>>();
 builder.Services.AddSingleton<PasswordVerifier>();
 builder.Services.AddSingleton<AccessTokenIssuer>();
 builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<NestJobService>();
 builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
 
 builder.Services
@@ -161,6 +165,8 @@ app.MapPost(ApiRoutes.AuthLogout, async (
     .WithMetadata(new RequestSizeLimitAttribute(16 * 1024))
     .RequireRateLimiting("logout")
     .RequireAuthorization();
+
+app.MapNestJobEndpoints();
 
 app.MapFallback((HttpContext context) =>
         Results.Json(

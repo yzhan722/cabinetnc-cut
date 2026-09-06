@@ -94,11 +94,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File dotnet\scripts\smoke-worker.
 
 ## 5. Cloud API 与首次初始化管理员 — READY（Task 6）
 
-API 需要 PostgreSQL。先创建空数据库；正式部署通过服务管理器/secret store 注入变量。临时本机验证可用 `Read-Host`，让 secret 不进入 PowerShell 命令历史（输入仍会显示在当前控制台）：
+API 需要 PostgreSQL 和 MinIO（Task 7 起，job 输入/结果对象存 MinIO）。先创建空数据库；正式部署通过服务管理器/secret store 注入变量。临时本机验证可用 `Read-Host`，让 secret 不进入 PowerShell 命令历史（输入仍会显示在当前控制台）：
 
 ```powershell
 $env:CABINETNC_DB_CONNECTION = Read-Host 'Paste PostgreSQL connection string'
 $env:CABINETNC_JWT_SIGNING_KEY = Read-Host 'Paste random JWT key (32-4096 bytes; recommend 64)'
+
+# 对象存储（MinIO / 任意 S3 兼容）；bucket 不存在时首次使用自动创建
+$env:CABINETNC_OBJECTSTORE_ENDPOINT = 'minio.intranet:9000'      # host:port，不带 scheme
+$env:CABINETNC_OBJECTSTORE_ACCESS_KEY = Read-Host 'Paste object store access key'
+$env:CABINETNC_OBJECTSTORE_SECRET_KEY = Read-Host 'Paste object store secret key'
+$env:CABINETNC_OBJECTSTORE_BUCKET = 'cabinetnc'                   # 可省略，默认 cabinetnc
+$env:CABINETNC_OBJECTSTORE_USE_SSL = 'false'                      # 内网 TLS 由 Task 8 反向代理/内部 CA 决定
 
 # 只在首次创建 admin 时设置；三项必须全有或全无
 $env:CABINETNC_BOOTSTRAP_TENANT = 'shop'

@@ -19,36 +19,27 @@ public sealed class PostgresJobRepository(CloudDbContext db, TimeProvider clock)
     public async Task<ComputeJobEntity> CreateOrGetByIdempotencyKeyAsync(NewComputeJob job, CancellationToken ct)
     {
         var id = Guid.CreateVersion7();
-        var entity = new ComputeJobEntity
-        {
-            Id = id,
-            TenantId = job.TenantId,
-            UserId = job.UserId,
-            DeviceId = job.DeviceId,
-            JobType = job.JobType,
-            Status = JobStatus.Queued,
-            IdempotencyKey = job.IdempotencyKey,
-            CorrelationId = job.CorrelationId,
-            InputObjectKey = ObjectKeys.JobInput(job.TenantId, id),
-            InputSha256 = job.InputSha256,
-            AttemptCount = 0,
-            CreatedAtUtc = clock.GetUtcNow(),
-        };
+        var createdAt = clock.GetUtcNow();
+        var inputObjectKey = ObjectKeys.JobInput(job.TenantId, id);
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "ComputeJobs"
+                ("Id", "TenantId", "UserId", "DeviceId", "JobType", "Status",
+                 "IdempotencyKey", "CorrelationId", "InputObjectKey", "InputSha256",
+                 "AttemptCount", "CreatedAtUtc")
+            VALUES
+                ({id}, {job.TenantId}, {job.UserId}, {job.DeviceId}, {job.JobType},
+                 {nameof(JobStatus.Queued)}, {job.IdempotencyKey}, {job.CorrelationId},
+                 {inputObjectKey}, {job.InputSha256}, 0, {createdAt})
+            ON CONFLICT ("TenantId", "UserId", "IdempotencyKey") DO NOTHING
+            """, ct);
 
-        db.ComputeJobs.Add(entity);
-        try
-        {
-            await db.SaveChangesAsync(ct);
-            db.Entry(entity).State = EntityState.Detached;
-            return entity;
-        }
-        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
-        {
-            // Lost the race (or a genuine retry): the unique index guarantees exactly one row exists.
-            db.Entry(entity).State = EntityState.Detached;
-            return await db.ComputeJobs.AsNoTracking().SingleAsync(
-                j => j.TenantId == job.TenantId && j.UserId == job.UserId && j.IdempotencyKey == job.IdempotencyKey, ct);
-        }
+        // ON CONFLICT waits for a concurrent insert of the same key to commit, then the new SELECT
+        // sees exactly one logical job. No expected duplicate request is logged as an EF ERROR.
+        return await db.ComputeJobs.AsNoTracking().SingleAsync(
+            j => j.TenantId == job.TenantId
+                 && j.UserId == job.UserId
+                 && j.IdempotencyKey == job.IdempotencyKey,
+            ct);
     }
 
     public async Task<bool> MarkInputStoredAsync(Guid jobId, CancellationToken ct)

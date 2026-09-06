@@ -76,6 +76,17 @@ public sealed record NestWarningDto(
     int? SheetIndex);
 
 /// <summary>
+/// Canonical object stored in MinIO. JobId/hashes/version/duration stay in PostgreSQL and are added
+/// by the result endpoint, avoiding a circular ResultSha256 field inside the bytes being hashed.
+/// </summary>
+public sealed record NestJobResultPayload(
+    string Engine,
+    IReadOnlyList<NestPlacementDto> Placements,
+    int SheetCount,
+    IReadOnlyList<string> Unplaced,
+    IReadOnlyList<NestWarningDto> Warnings);
+
+/// <summary>
 /// Body of <c>GET /api/v1/jobs/{jobId}/result</c>, available only once the job Succeeded
 /// (<c>job_not_ready</c> before that). Hashes are hex SHA-256 of the stored input/result objects.
 /// </summary>

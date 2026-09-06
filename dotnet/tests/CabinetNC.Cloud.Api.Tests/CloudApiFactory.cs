@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using CabinetNC.Cloud.Contracts;
+using CabinetNC.Cloud.Infrastructure.Storage;
 using CabinetNC.Cloud.Infrastructure.Tests;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -24,6 +25,8 @@ public sealed class CloudApiFactory(
     public const string AdminPassword = "Correct-Horse-Battery-Staple-42";
     public const string SigningKey = "test-only-signing-key-0123456789abcdef0123456789abcdef-not-for-production";
 
+    public TestObjectStore ObjectStore { get; } = new();
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
@@ -38,6 +41,7 @@ public sealed class CloudApiFactory(
                 BootstrapAdminPassword = includeBootstrap ? AdminPassword : null,
             }));
             services.Replace(ServiceDescriptor.Singleton<TimeProvider>(clock));
+            services.Replace(ServiceDescriptor.Singleton<IObjectStore>(ObjectStore));
         });
     }
 }

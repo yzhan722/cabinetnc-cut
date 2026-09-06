@@ -446,4 +446,55 @@ CI：`regression.yml`（ubuntu，有 Docker → 真跑）与 `windows-desktop.ym
 
 ## Task 7 — Nest Job API + Cloud Worker
 
+按计划拆成两个 commit：7A API（本节），7B Worker（下节）。
+
+### 7A.1 做了什么（2026-09-06，机器 B）
+
+`CabinetNC.Cloud.Api` 新增 `Jobs/`：
+
+| 类型 | 说明 |
+|---|---|
+| `NestJobValidator` | API 边界校验，在任何对象落盘、任何 runner 代码之前：parts 1–1000（`MaxParts`，PoC 性能目标 500 留余量）、sheet 尺寸有限且 > 0、spacing/border 有限且 ≥ 0、`border*2 < sheet`、PanelId 非空/≤200/不重复、零件宽高 > 0、厚度 ≥ 0、material ≤ 200、所有数值 ≤ 100 000 mm 且非 NaN/Inf。这正好拦住 Task 2 §2.3 记录的两个 runner 既有行为（零宽零件被静默丢弃、重复 ID 走异常路径） |
+| `NestJobService.SubmitAsync` | validate → `Idempotency-Key`（恰好一个、非空、≤200）→ 从 JWT claims 取 tenant/user/device（**不信任 body**）→ `CloudJson.Serialize(request)` 的 UTF-8 bytes 就是存储对象，`SHA-256` = `InputSha256` → `IJobRepository.CreateOrGetByIdempotencyKeyAsync` → 已有 job 的 `InputSha256` 不同 → **409 `idempotency_conflict`** → 若 `InputStoredAtUtc` 为空：`PutAsync(input.json)` → `MarkInputStoredAsync`（此后 worker 才能领取）→ audit `job.submitted` → **202** `SubmitNestJobResponse(jobId, Queued, correlationId)` |
+| `NestJobService.GetStatusAsync` | `GetAsync(jobId, tenantId-from-token)` → 不属于本 tenant 与不存在同样是 **404 `job_not_found`** |
+| `NestJobService.GetResultAsync` | 非 `Succeeded` → **409 `job_not_ready`**；读 `result.json` → 重算 SHA-256 与 `ResultSha256` 不一致 / 对象缺失 / JSON 坏 → **500 `storage_failed`**（不把可疑结果给 Desktop）；正常则把 payload + DB 里的 `EngineVersion/InputSha256/ResultSha256/DurationMs` 组成 `NestJobResult` |
+| `NestJobEndpoints` | `POST /api/v1/jobs/nest`（body 上限 2 MiB）、`GET /api/v1/jobs/{jobId}`、`GET /api/v1/jobs/{jobId}/result`，全部 `RequireAuthorization` |
+
+`Cloud.Contracts` 新增 `NestJobResultPayload(Engine, Placements, SheetCount, Unplaced, Warnings)`——这是**存进 MinIO 的对象**；`JobId/EngineVersion/InputSha256/ResultSha256/DurationMs` 留在 PostgreSQL、由 result 端点拼装，避免 `ResultSha256` 出现在被哈希的字节里（Task 3 §3.2 决策 1 的落地）。Canonical JSON 已被 Contracts 测试逐字节钉死。
+
+`Cloud.Infrastructure` 配套：
+
+- `ObjectStoreOptions.FromEnvironment()`：`CABINETNC_OBJECTSTORE_ENDPOINT / _ACCESS_KEY / _SECRET_KEY`（必填）、`_BUCKET`（默认 `cabinetnc`）、`_USE_SSL`（true/false）、`_REGION`；错误只报变量名。`AddCloudObjectStore(Func<IServiceProvider, ObjectStoreOptions>)` 延迟解析，API 启动时注册。
+- `PostgresJobRepository.CreateOrGetByIdempotencyKeyAsync` 从 "EF INSERT + 捕获 23505" 改为 `INSERT ... ON CONFLICT ("TenantId","UserId","IdempotencyKey") DO NOTHING` + SELECT：重复提交是**正常路径**，不该在日志里留下 EF `Update` ERROR 堆栈；同时解决了 Task 4 §4.4 决策 3 的"调用方事务被 abort"问题。API 测试日志里 `23505` 出现次数：0。
+
+### 7A.2 测试（先写、后实现）
+
+`JobEndpointTests`（`[PostgresFact]`，真实 API + 真实 PostgreSQL，对象存储用 `TestObjectStore` 内存双件——可注入 put/read 失败）。第一次运行 8 个全部因端点不存在 404 而红；实现后全绿：
+
+| 用例 | 对应计划要求 |
+|---|---|
+| `Submit_requires_authentication` | unauth submit → 401，且不产生 job 行 |
+| `Submit_requires_one_nonempty_idempotency_key` | missing idempotency → 400（缺失、空白） |
+| `Submit_rejects_invalid_or_oversized_requests` | 10 种非法输入（零件为空、空 ID、重复 ID、零宽、负厚度、sheet 0/负、负 spacing/border、1001 个零件）全部 400，且零 job 行 |
+| `Submit_stores_canonical_input_hash_then_marks_the_job_claimable` | 202；DB 行的 tenant/user/device 来自 token；`InputSha256` = 客户端可独立复算的 canonical SHA-256；`input.json` 字节与之完全一致、content-type `application/json`；`InputStoredAtUtc` 已设；audit `job.submitted`；随后 `TryClaimNextAsync` 真能领到它 |
+| `Duplicate_submit_returns_the_same_job_and_changed_payload_conflicts` | duplicate submit → same JobId；同 key 不同 payload → 409 `idempotency_conflict`；DB 只有 1 行 |
+| `Status_returns_metadata_and_result_is_not_ready_while_queued` | status 200 + 元数据；result → 409 `job_not_ready` |
+| `A_tenant_cannot_read_another_tenants_job` | Tenant B 的 JWT 读 Tenant A 的 job：status/result 都是 404 `job_not_found` |
+| `Storage_failure_does_not_make_the_job_claimable` | 注入 `PutAsync` 失败 → 500 `storage_failed`；job 行存在但 `InputStoredAtUtc` 为空；worker 领不到 |
+
+结果：`Cloud.Api.Tests` **34 / 0 / 0**（26 auth + 8 job）；`Cloud.Contracts.Tests` **18 / 0 / 0**；`Cloud.Infrastructure.Tests` **38 / 0 / 0**。
+
+### 7A.3 决策记录（给 7B / Task 9 / Task 10）
+
+1. 幂等重提交在 `PutAsync` 失败后可以**自愈**：job 行已存在但 `InputStoredAtUtc` 为空，Desktop 用同一 `Idempotency-Key` 重发，API 重新上传并标记。Task 9 的客户端重试应复用同一个 key。
+2. `GET .../result` 每次都重算并比对 `ResultSha256`；这是 Task 10 "input/output hash" 验收的服务端一半。
+3. 对 POST 只路由 GET 等方法不匹配时 ASP.NET 返回空 body 405，不是 `ApiError`；Desktop 客户端不会发这种请求，记为 Task 10 收尾项。
+4. `TestObjectStore` 放在 `Cloud.Infrastructure.Tests` 供 API/Worker 测试共用；真实 MinIO 的字节 round-trip 由 Task 5 的集成测试覆盖。
+
+### 7A.4 Commit
+
+`feat: add nest job api`。
+
+### 7B — Cloud Worker
+
 NOT STARTED。

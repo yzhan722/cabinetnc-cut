@@ -28,10 +28,17 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>Registers the MinIO-backed <see cref="IObjectStore"/> as a singleton (the client is thread-safe and pools connections).</summary>
-    public static IServiceCollection AddCloudObjectStore(this IServiceCollection services, ObjectStoreOptions options)
+    public static IServiceCollection AddCloudObjectStore(
+        this IServiceCollection services,
+        ObjectStoreOptions options) =>
+        services.AddCloudObjectStore(_ => options);
+
+    public static IServiceCollection AddCloudObjectStore(
+        this IServiceCollection services,
+        Func<IServiceProvider, ObjectStoreOptions> options)
     {
-        services.AddSingleton(options);
-        services.AddSingleton<IObjectStore>(_ => new MinioObjectStore(options));
+        services.AddSingleton<IObjectStore>(provider =>
+            new MinioObjectStore(options(provider)));
         return services;
     }
 }
