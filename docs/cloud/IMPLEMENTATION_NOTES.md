@@ -597,4 +597,44 @@ CI：`regression.yml`（ubuntu，有 Docker → 真跑）与 `windows-desktop.ym
 
 ## Task 9 — Desktop login, DPAPI, remote Nest gateway
 
+拆成两个 commit：9A 无 WPF 的客户端内核（`CabinetNC.Desktop.Core/Cloud/`，Linux CI 可测），9B WPF 接线。
+
+### 9A.1 做了什么（2026-09-06，机器 B）
+
+`Desktop.Core` 新增引用 `Cloud.Contracts`（纯 DTO）与 `Compute.Contracts`（本机 gRPC 客户端面）以及 `System.Security.Cryptography.ProtectedData 10.0.11`；`NoWpfDependencyTests` 仍通过（没有 WPF 泄漏）。
+
+| 类型 | 说明 |
+|---|---|
+| `ComputeMode` | `Local` / `Intranet`，由操作员显式选择 |
+| `CloudClientOptions` | spec §13 的数字：connect 5 s、request 15 s、poll 1 s→2 s→…≤5 s、`JobTimeout` 10 min、`NetworkGrace` 60 s、`RefreshLeadTime` 60 s；`BaseAddress` + tenant slug |
+| `CloudSettingsStore` | `%LocalAppData%\CabinetNC\cloud.json`：mode / serverUrl / tenant / email，**无 secret**；坏文件回默认（Local） |
+| `DeviceIdentityStore` | `device-id` 文件里一个首次使用时随机生成的 GUID；**不从硬件推导**，重装即变；坏文件重生成 |
+| `ITokenStore` / `WindowsTokenStore` | 只持久化 **refresh token + 所属 device/tenant/email/过期时间**；DPAPI `CurrentUser` + 固定 entropy（防止把别的 CabinetNC blob 拿来重放）；解密失败/被改动 → 视为不存在；access token 只在内存 |
+| `AuthSession` | `LoginAsync`（deviceId 来自 store、deviceName = 机器名）、`TryRestoreAsync`（启动时从磁盘恢复：校验 device/tenant/过期 → 立刻 refresh 拿 access token；离线时保留待重试）、`GetAccessTokenAsync`（剩余 < 60 s 主动 refresh）、`ForceRefreshAsync(rejectedToken)`（401 后；若已有人换过 token 则不再刷）、`LogoutAsync`（服务端撤销失败也本地清空）。所有 refresh 走一个 `SemaphoreSlim` **single-flight**；refresh 被 401 → 清 session + 清盘 → `CloudAuthenticationRequiredException`；网络错误 → 保留 session → `ComputeUnavailableException` |
+| `AuthenticatedHttpHandler` | 附 bearer；401 且错误码是 `token_expired`/`unauthorized` → `ForceRefreshAsync` 一次 → **重放一次**（body 已缓冲）；第二次 401 直接抛，不循环 |
+| `CloudApiClient` | health / login / refresh / logout 匿名；jobs 走 handler；`CloudJson` 序列化；非 2xx → `CloudApiException(status, ApiError)`；`HttpRequestException`/超时 → `ComputeUnavailableException`。TLS 校验是平台默认，**没有任何绕过开关**（内网根证书装进 Windows 证书库，见 runbook §4.3） |
+| `IComputeGateway` / `IntranetComputeGateway` | `submit → JobId → poll → result`；每次运行新 `Idempotency-Key`；轮询间隔 1,2,4,5,5…；传输失败在 `NetworkGrace` 内重试（submit 复用同一 key 所以不会造出第二个 job）；`Failed` → `ComputeJobFailedException(code,message)`；超时 → `ComputeJobTimeoutException`；未登录 → `CloudAuthenticationRequiredException`，**不回退本机** |
+| `LocalComputeGateway` | 同一契约走本机 gRPC worker（A/B 用），像服务端一样算 `InputSha256`/`ResultSha256`，`EngineVersion = local-grpc/<worker version>` |
+| `ComputeGatewayFactory` | `Create(mode)`；Intranet 未登录直接抛，没有静默回退 |
+| `NestRequestBuilder` | **矩形契约降级**：AABB（`sizeOf`）、`settings.PanelMayRotate90(panel)`（与本机引擎相同的纹理锁规则）、只用第一种大板、统一边距；并列出每一项降级：`true_shape_to_aabb`（N 件）、`extra_sheets_ignored`、`keepouts_ignored`、`insets_ignored`、`parts_in_part_disabled`、`default_sheet`——UI 要显示，验收文档要写 |
+| `NestResultMapper` | `NestJobResult → (NestResult, NestEngineRunLog)`，`SheetsUsed` = 主大板 × SheetCount，SheetCount 不低于最高使用的 sheet index+1；`AttemptedEngine = "intranet"` |
+
+### 9A.2 测试（先写、后实现；`Desktop.Core.Tests` 72 → **117**）
+
+`FakeCloudApiHandler`：内存版 API，忠实于线上契约（rotating refresh + reuse detection、access token 过期、幂等提交、每个 job 一条状态序列、可注入断网次数/过滤器、可拒绝 refresh）。
+
+| 组 | 用例 |
+|---|---|
+| Stores（10） | device-id 生成/稳定/两台不同/坏文件重生成；cloud.json 默认/round-trip 无 secret/坏文件回默认；DPAPI round-trip 且磁盘上无明文、Clear 删文件、改动 blob 视为不存在、无文件为 null（DPAPI 3 个用 `[WindowsFact]`，非 Windows 跳过） |
+| AuthSession（11） | 登录只把 refresh 落盘；错密码 → `invalid_credentials` 且未登录；839 s 时不刷、841 s 时刷一次并落盘新 refresh；12 个并发只刷 1 次；`ForceRefresh` 旧 token 不重复刷；refresh 被拒 → 登出 + 清盘；refresh 断网 → 保留 session，之后成功；从磁盘恢复 → 立刻 refresh、身份恢复、不重新 login；无存储/死 token 恢复失败且干净；别的 device 的 token 不用、不发请求；logout → 服务端 1 次 + 本地清空 + `Changed` |
+| HTTP 管线（7） | 带 token；未登录不碰网络；服务端过期 → 1 次 refresh + 重放 1 次；8 个并发过期请求共用 1 次 refresh；第二次 401 不再重试且登出；非 auth 错误带 code/correlationId；health 匿名 |
+| Gateway（9） | 状态序列 Q,Q,R,R,R,S → 间隔 **[1,2,4,5,5]** s、结果正确、progress 覆盖 Q/R/S；两次运行两个 key、两个 job；Failed → code+message；30 s 超时不挂死、间隔 1–5 s；轮询断 3 次仍拿到结果；submit 断 2 次同 key 重试只造 1 个 job；持续断网到 grace 后抛 `ComputeUnavailableException`；取消立即停；未登录拒绝运行 |
+| 契约（8） | 矩形 1:1 无降级；纹理锁逐件；L 形 → AABB + 降级"2 件"；多大板/禁排区/按边余量/parts-in-part 全部披露；无大板 → 默认 + 披露；混合材料披露；结果映射；SheetCount 不低于最高 sheet |
+
+### 9A.3 Commit
+
+`feat: add desktop intranet client core`。
+
+### 9B — WPF 接线
+
 NOT STARTED。

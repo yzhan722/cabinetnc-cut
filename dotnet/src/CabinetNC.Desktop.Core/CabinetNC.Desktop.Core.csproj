@@ -7,6 +7,14 @@
   <ItemGroup>
     <ProjectReference Include="..\CabinetNC.Domain\CabinetNC.Domain.csproj" />
     <ProjectReference Include="..\CabinetNC.Infrastructure\CabinetNC.Infrastructure.csproj" />
+    <!-- Cloud/ : intranet client. Contracts are DTOs only; Compute.Contracts is the local gRPC worker surface. -->
+    <ProjectReference Include="..\CabinetNC.Cloud.Contracts\CabinetNC.Cloud.Contracts.csproj" />
+    <ProjectReference Include="..\CabinetNC.Compute.Contracts\CabinetNC.Compute.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- DPAPI for the refresh token at rest (Windows only; guarded with SupportedOSPlatform). -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.11" />
   </ItemGroup>
 
   <PropertyGroup>
