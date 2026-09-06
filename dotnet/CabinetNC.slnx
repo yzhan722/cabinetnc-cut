@@ -25,4 +25,7 @@
     <Project Path="tests/CabinetNC.Infrastructure.Tests/CabinetNC.Infrastructure.Tests.csproj" />
     <Project Path="tests/CabinetNC.Package.Tests/CabinetNC.Package.Tests.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/CabinetNC.Cloud.PerfHarness/CabinetNC.Cloud.PerfHarness.csproj" />
+  </Folder>
 </Solution>

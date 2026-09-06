@@ -12,6 +12,10 @@ public static class ApiRoutes
 
     public static string ForJobStatus(Guid jobId) => $"/api/v1/jobs/{jobId:D}";
     public static string ForJobResult(Guid jobId) => $"/api/v1/jobs/{jobId:D}/result";
+
+    /// <summary>Admin-only: everything known about a job, so support can work from a JobId alone.</summary>
+    public const string AdminJobDiagnosticsTemplate = "/api/v1/admin/jobs/{jobId}/diagnostics";
+    public static string ForAdminJobDiagnostics(Guid jobId) => $"/api/v1/admin/jobs/{jobId:D}/diagnostics";
 }
 
 public static class ApiHeaders

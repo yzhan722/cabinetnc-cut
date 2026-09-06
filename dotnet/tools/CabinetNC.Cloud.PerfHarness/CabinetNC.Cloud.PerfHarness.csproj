@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Task 10 performance harness: deterministic SYNTHETIC nest cases pushed through the real Desktop
+       client against a running intranet stack. Prints observed numbers only; see docs/cloud/PERFORMANCE_RESULTS.md. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CabinetNC.Cloud.Contracts\CabinetNC.Cloud.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\CabinetNC.Desktop.Core\CabinetNC.Desktop.Core.csproj" />
+  </ItemGroup>
+
+</Project>

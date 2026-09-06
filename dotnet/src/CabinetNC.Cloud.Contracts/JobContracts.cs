@@ -79,6 +79,48 @@ public sealed record NestWarningDto(
 /// Canonical object stored in MinIO. JobId/hashes/version/duration stay in PostgreSQL and are added
 /// by the result endpoint, avoiding a circular ResultSha256 field inside the bytes being hashed.
 /// </summary>
+/// <summary>One audit row as exposed to administrators. Details are the JSON the server recorded.</summary>
+public sealed record AuditEventDto(
+    long Id,
+    string EventType,
+    DateTimeOffset CreatedAtUtc,
+    string? CorrelationId,
+    string? DetailsJson);
+
+/// <summary>
+/// Admin diagnostics for a job: identity, state, hashes, engine, timings, error, audit trail.
+/// Deliberately contains no credential material of any kind.
+/// </summary>
+public sealed record JobDiagnosticsResponse(
+    Guid JobId,
+    Guid TenantId,
+    string TenantName,
+    Guid UserId,
+    string UserEmail,
+    Guid DeviceId,
+    string DeviceKey,
+    string? DeviceName,
+    string JobType,
+    JobStatus Status,
+    string CorrelationId,
+    string IdempotencyKey,
+    string InputObjectKey,
+    string InputSha256,
+    string? ResultObjectKey,
+    string? ResultSha256,
+    string? EngineVersion,
+    int AttemptCount,
+    string? LockedBy,
+    DateTimeOffset? LockedUntilUtc,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? InputStoredAtUtc,
+    DateTimeOffset? StartedAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    long? DurationMs,
+    string? ErrorCode,
+    string? ErrorMessage,
+    IReadOnlyList<AuditEventDto> AuditEvents);
+
 public sealed record NestJobResultPayload(
     string Engine,
     IReadOnlyList<NestPlacementDto> Placements,

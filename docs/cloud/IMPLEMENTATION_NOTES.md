@@ -672,6 +672,41 @@ WPF 侧全部放在新文件里，`MainWindow.xaml.cs` 只改了 `RunNestAsync` 
 
 ---
 
-## Task 10 — Diagnostics, performance, reliability
+## Task 10 — Diagnostics, performance, reliability（2026-09-06，机器 B）
+
+### 10.1 诊断端点
+
+`GET /api/v1/admin/jobs/{jobId}/diagnostics`（`Jobs/AdminEndpoints.cs`，`RequireAuthorization(RequireRole("admin"))`，**tenant 作用域**来自 JWT）。返回 `JobDiagnosticsResponse`：JobId、tenant（id+name）、user（id+email）、device（id+key+name）、jobType、状态、correlationId、idempotencyKey、input/result object key 与 SHA-256、EngineVersion、attemptCount、lockedBy/lockedUntil、created/inputStored/started/completed、durationMs、errorCode/errorMessage、全部 `AuditEvents`（id、类型、时间、correlationId、detailsJson）。响应逐字段拼装，**任何实体都不直接序列化**，所以 `PasswordHash`/`TokenHash` 不可能出现。
+
+`AdminDiagnosticsTests`（5）：admin 从 JobId 拿到全部字段与 `job.submitted→claimed→started→succeeded` 审计链，且响应 JSON 里没有 admin 的密码哈希、任何 refresh token 哈希、access/refresh token 原文、也没有 `passwordHash`/`tokenHash` 字样；operator → **403** `unauthorized`；别的 tenant 的 admin → **404** `job_not_found`；不存在的 job 404、无 token 401；Running 时暴露 `lockedBy/lockedUntil`，Failed 时暴露 `errorCode/errorMessage`。
+
+### 10.2 失败套件（`ReliabilitySuiteTests`，7 个，全部用**真实 Desktop 客户端**驱动真实 API + PostgreSQL + worker 执行体；只有对象存储是可注入故障的内存双件）
+
+| 计划场景 | 用例 | 关键断言 |
+|---|---|---|
+| duplicate submission → one job | `Duplicate_submission_yields_exactly_one_job` | 同 key 顺序 2 次 + 并发 6 次 → 同 JobId，`ComputeJobs` 1 行 |
+| worker crash after claim → lease recovery | `Worker_crash_after_claim_is_recovered_through_lease_expiry` | 第 1 次轮询：`crashed-worker` 领取后消失；第 2 次：时钟 +6 min；第 3 次：健康 worker 重新领取（`AttemptCount = 2`）并完成；Desktop 的同一个 `RunNestingAsync` 调用拿到结果；审计只有健康 worker 的 claimed/started/succeeded（死掉的 worker 什么都没来得及写——这正是"崩溃"的含义） |
+| API restart → job persists | `Api_restart_keeps_jobs_and_sessions` | 提交后销毁整个 API 宿主，在同一库上新建；新客户端用 DPAPI 里的 refresh token `TryRestoreAsync` 成功；job 仍 Queued；worker 完成后可取结果 |
+| MinIO unavailable → not Succeeded | `Object_store_outage_never_produces_a_success` | 输入落盘失败 → 提交 500 `storage_failed`、不可领取、恢复后同 key 自愈；结果落盘失败 → 3 次尝试后 `Failed/storage_failed`，`ResultSha256` 空，库里 0 个 Succeeded |
+| token expiry during polling → auto refresh | `Access_token_expiry_during_polling_is_refreshed_transparently` | 轮询中时钟 +16 min；API 用 **`LifetimeValidator` 按注入的 `TimeProvider`** 判过期 → 401 `token_expired` → 客户端刷新一次并重放 → job 完成；库里 2 个 refresh token、1 个已撤销 |
+| cross-tenant read → blocked | `Cross_tenant_reads_are_blocked_for_the_client_too` | tenant-b 的 operator 用自己的密码登录后读 tenant-a 的 job：status/result 都是 404 `job_not_found` |
+| client disconnect after JobId → reconnect | `Client_disconnect_after_submit_reconnects_to_the_same_job` | 客户端销毁，worker 照常完成；新客户端恢复会话 → 同 JobId 的 status/result；用同一 Idempotency-Key 重提交也返回同一 job，库里仍 1 行 |
+
+顺带的产品修正：JWT 过期判定改为 `TokenValidationParameters.LifetimeValidator`（用注入的 `TimeProvider`，抛 `SecurityTokenExpiredException` 以保留 `token_expired` 码）。此前 IdentityModel 默认用 `DateTime.UtcNow`，与签发端和 refresh 校验用的时钟不一致，也无法在测试里推进。生产环境 `TimeProvider.System`，行为不变；`AuthEndpointTests` 23/23 仍通过。
+
+### 10.3 性能
+
+`dotnet/tools/CabinetNC.Cloud.PerfHarness`（slnx 新 `/tools/` 目录）：确定性合成用例 50/100/300/500 件（种子固定，同尺寸同哈希）、每尺寸 5 次顺序 + 2 与 5 路并发（100 件）；用真实 `CloudApiClient` + `IntranetComputeGateway`；服务端指标取自 status 响应（`StartedAtUtc−CreatedAtUtc` = queue wait、`DurationMs` = compute、`CompletedAtUtc−CreatedAtUtc` = server e2e），客户端 e2e 用 Stopwatch；worker CPU/峰值内存用 `docker exec` 读 cgroup v2 `cpu.stat`/`memory.peak`。密码只经 `CABINETNC_PERF_PASSWORD` 环境变量。
+
+实测写在 **`docs/cloud/PERFORMANCE_RESULTS.md`**（只有观测值）。要点：30 + 30 个 job 全部 Succeeded；**计算中位 0–4 ms**（500 件 2–4 ms，最大值都是首个 job 的 JIT）；server e2e 中位 770–910 ms（worker 轮询 1 s）→ **294–376 ms**（轮询 0.2 s）；worker 峰值内存 72–88 MiB；5 路并发 1 个 worker 1.4 s 内全完；sheet 数与哈希两轮完全一致。建议：worker 2 vCPU / 1 GiB × 2 副本、`CABINETNC_WORKER_POLL_SECONDS=0.2`、Desktop `PollInitial` 250 ms；spec §6 的 8 vCPU / 32 GB 对 Nest 明显过剩（保留给 DB/MinIO/CAM-Post）。**未测**：第二台 LAN 机器的往返、真实工单的异形排版。
+
+### 10.4 Gate
+
+- 诊断（只凭 JobId → user/device/time/hash/engine/duration/result/correlation）✓；7 个失败场景自动化 ✓；50/100/300/500 + 2/5 并发实测 ✓ 且只记录观测值。**Task 10 通过。**
+- Commit：`test: add intranet reliability and performance validation`。
+
+---
+
+## Task 11 — Migrate Operations/CAM, then Post
 
 NOT STARTED。

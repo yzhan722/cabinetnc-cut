@@ -55,7 +55,7 @@ builder.Services
     .AddJwtBearer();
 builder.Services
     .AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
-    .Configure<CloudApiOptions>((options, apiOptions) =>
+    .Configure<CloudApiOptions, TimeProvider>((options, apiOptions, clock) =>
     {
         options.MapInboundClaims = false;
         options.TokenValidationParameters = new TokenValidationParameters
@@ -72,6 +72,19 @@ builder.Services
             ClockSkew = apiOptions.ClockSkew,
             NameClaimType = "sub",
             RoleClaimType = "role",
+            // Lifetime follows the application clock (the issuer's clock), so expiry is testable and
+            // consistent with the refresh-token checks instead of silently using DateTime.UtcNow.
+            LifetimeValidator = (notBefore, expires, _, parameters) =>
+            {
+                var now = clock.GetUtcNow().UtcDateTime;
+                if (expires is null)
+                    throw new SecurityTokenNoExpirationException("The token has no expiration.");
+                if (notBefore is { } nbf && nbf > now.Add(parameters.ClockSkew))
+                    throw new SecurityTokenNotYetValidException("The token is not yet valid.");
+                if (expires.Value.Add(parameters.ClockSkew) < now)
+                    throw new SecurityTokenExpiredException("The token has expired.");
+                return true;
+            },
         };
         options.Events = new JwtBearerEvents
         {
@@ -187,6 +200,7 @@ app.MapPost(ApiRoutes.AuthLogout, async (
     .RequireAuthorization();
 
 app.MapNestJobEndpoints();
+app.MapAdminEndpoints();
 
 app.MapFallback((HttpContext context) =>
         Results.Json(

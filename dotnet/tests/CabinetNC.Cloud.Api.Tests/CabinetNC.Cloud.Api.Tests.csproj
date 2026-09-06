@@ -23,6 +23,8 @@
     <ProjectReference Include="..\..\src\CabinetNC.Cloud.Api\CabinetNC.Cloud.Api.csproj" />
     <!-- End-to-end: submit over HTTP, execute with the real worker loop body, read the result over HTTP. -->
     <ProjectReference Include="..\..\src\CabinetNC.Cloud.Worker\CabinetNC.Cloud.Worker.csproj" />
+    <!-- Reliability suite drives the real Desktop client (session, bearer handler, polling gateway). -->
+    <ProjectReference Include="..\..\src\CabinetNC.Desktop.Core\CabinetNC.Desktop.Core.csproj" />
     <!-- Shares the PostgreSQL fixture, the Docker probe and the skip-aware [PostgresFact]. -->
     <ProjectReference Include="..\CabinetNC.Cloud.Infrastructure.Tests\CabinetNC.Cloud.Infrastructure.Tests.csproj" />
   </ItemGroup>
