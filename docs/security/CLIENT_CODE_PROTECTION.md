@@ -84,7 +84,13 @@ Desktop 需要 `CabinetNC.Domain` 的模型（`Panel`、`Outline`、包/工程�
 
 - Obfuscar 只做重命名与字符串隐藏，**没有控制流混淆、反调试、反篡改**；字符串隐藏可被运行时调试还原。它把"复制粘贴即可复用"变成"必须逆向工程"，不是"不可能"。
 - 仍以明文存在的：公共 API 名（模型属性、契约 DTO、`Desktop.Core` 公共方法）——这是 STJ/XAML 的硬约束；`CabinetNC.Desktop.dll`（WPF 界面）未混淆。
-- 更强的选项（按性价比）：① 商业混淆器（Eazfuscator.NET 2026.1 / Dotfuscator Pro 7.5 / ArmDot）加控制流混淆、字符串加密、反篡改，需采购；② worker **Native AOT**（无 IL 可反编译，只剩机器码）——worker 是控制台程序，技术上可行，但 EF Core 需编译模型、MinIO SDK 反射兼容性需验证，NOT_RUN；③ 把 worker 移出客户现场（公有云托管算法），超出内网 PoC 范围。
+- 更强的选项（按性价比）：① 商业混淆器（Eazfuscator.NET 2026.1 / Dotfuscator Pro 7.5 / ArmDot）加控制流混淆、字符串加密、反篡改，需采购；② worker **Native AOT**（无 IL 可反编译，只剩机器码）；③ 把 worker 移出客户现场（公有云托管算法），超出内网 PoC 范围。
+
+### 4.4 Native AOT 可行性探测（2026-09-08，`p2-7-aot-probe.log`）
+
+`dotnet publish -r win-x64 -p:PublishAot=true` 对 worker 做 AOT 分析：**我们自己的代码只有 15 条 IL2xxx/IL3xxx 警告**——`CloudJson.cs` 7（反射式 STJ → 改为 source-generated `JsonSerializerContext`，顺带提速）、`SheetBundleBuilder.cs` 4（Domain 里的 STJ，worker 不用，可 `RequiresUnreferencedCode` 标注或拆出）、`NestJobExecutor.cs` 2（审计字典序列化 → 同一 context）、`CloudDbContext.cs` 2（EF Core 动态模型 → `dotnet ef dbcontext optimize` 编译模型，或 worker 改用 Npgsql 直连——它的 SQL 本来就是手写的）。构建在"Platform linker not found"处失败，是本机缺 VS C++ 工具链，不是代码问题；Linux 镜像内需 `clang zlib1g-dev`。未验证项：MinIO SDK 在 AOT 下的反射行为（若不兼容，用 SigV4 直签的最小 S3 客户端替代，worker 只用 Put/Get/Exists 三个操作）。
+
+结论：worker Native AOT 是 **1–2 天量级** 的确定性工作，完成后服务器侧算法只以机器码存在，比任何 IL 混淆都强；建议作为 P2-7b 立项。
 
 ## 4b. 混淆评估（历史记录：实施前的评估）
 
