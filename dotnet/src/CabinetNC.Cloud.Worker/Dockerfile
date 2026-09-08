@@ -9,6 +9,7 @@ WORKDIR /src
 COPY dotnet/src/CabinetNC.Domain/CabinetNC.Domain.csproj dotnet/src/CabinetNC.Domain/
 COPY dotnet/src/CabinetNC.Compute.Core/CabinetNC.Compute.Core.csproj dotnet/src/CabinetNC.Compute.Core/
 COPY dotnet/src/CabinetNC.Cloud.Contracts/CabinetNC.Cloud.Contracts.csproj dotnet/src/CabinetNC.Cloud.Contracts/
+COPY dotnet/src/CabinetNC.Cloud.NestContract/CabinetNC.Cloud.NestContract.csproj dotnet/src/CabinetNC.Cloud.NestContract/
 COPY dotnet/src/CabinetNC.Cloud.Infrastructure/CabinetNC.Cloud.Infrastructure.csproj dotnet/src/CabinetNC.Cloud.Infrastructure/
 COPY dotnet/src/CabinetNC.Cloud.Worker/CabinetNC.Cloud.Worker.csproj dotnet/src/CabinetNC.Cloud.Worker/
 RUN dotnet restore dotnet/src/CabinetNC.Cloud.Worker/CabinetNC.Cloud.Worker.csproj
@@ -16,6 +17,7 @@ RUN dotnet restore dotnet/src/CabinetNC.Cloud.Worker/CabinetNC.Cloud.Worker.cspr
 COPY dotnet/src/CabinetNC.Domain/ dotnet/src/CabinetNC.Domain/
 COPY dotnet/src/CabinetNC.Compute.Core/ dotnet/src/CabinetNC.Compute.Core/
 COPY dotnet/src/CabinetNC.Cloud.Contracts/ dotnet/src/CabinetNC.Cloud.Contracts/
+COPY dotnet/src/CabinetNC.Cloud.NestContract/ dotnet/src/CabinetNC.Cloud.NestContract/
 COPY dotnet/src/CabinetNC.Cloud.Infrastructure/ dotnet/src/CabinetNC.Cloud.Infrastructure/
 COPY dotnet/src/CabinetNC.Cloud.Worker/ dotnet/src/CabinetNC.Cloud.Worker/
 RUN dotnet publish dotnet/src/CabinetNC.Cloud.Worker/CabinetNC.Cloud.Worker.csproj \

@@ -82,6 +82,13 @@
 - Real CNC validation: NOT RUN (not authorized; out of PoC scope)
 ```
 
+## 3b. Phase 2 更新（商业可用阶段，见 `COMMERCIAL_READINESS_PLAN.md`）
+
+| 日期 | 项 | 变化 |
+|---|---|---|
+| 2026-09-06 | P2-1 管理 API | 新增 gate G1：管理员建号/停用/重置/吊销设备、操作员改密——**PASS**（`AdminUserTests` 8/8） |
+| 2026-09-06 | P2-2 Nest 契约 v2 | "Nest · Local/server parity" 由 **PASS（限矩形契约）** 升级为 **PASS（真形）**：服务器与本机运行同一 `NestEngineRouter`，`NestingRunnerV2Tests` 在 blf/nfp 下逐字段相等；Desktop 内网模式不再有 `intranet_contract` 降级 |
+
 ## 4. 声明
 
 以上全部来自自动化测试与本机（机器 B）实测；**不因此宣称 Production Ready**。进入客户现场前至少还需要：第二台机器的 HTTPS 验证、备份/恢复演练、双 worker 长时间运行、Domain 拆分后的客户包严格验证、以及 Task 11 的 CAM/Post 迁移与 golden 对比。

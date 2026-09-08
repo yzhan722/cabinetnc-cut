@@ -9,8 +9,12 @@ using CabinetNC.Cloud.Infrastructure;
 using CabinetNC.Cloud.Infrastructure.Entities;
 using CabinetNC.Cloud.Infrastructure.Jobs;
 using CabinetNC.Cloud.Infrastructure.Tests;
+using CabinetNC.Cloud.NestContract;
 using CabinetNC.Cloud.Worker;
 using CabinetNC.Compute.Core.Nesting;
+using CabinetNC.Domain.Geometry;
+using CabinetNC.Domain.Nesting;
+using CabinetNC.Domain.Parts;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -291,6 +295,68 @@ public class JobEndpointTests(MigratedByAppPostgresFixture pg) : IClassFixture<M
         await using var db = pg.CreateContext();
         var events = await db.AuditEvents.Where(a => a.JobId == jobId).OrderBy(a => a.Id).Select(a => a.EventType).ToListAsync();
         Assert.Equal(["job.submitted", "job.claimed", "job.started", "job.succeeded"], events);
+    }
+
+    [PostgresFact]
+    public async Task V2_submit_execute_and_fetch_true_shape_result_end_to_end()
+    {
+        var request = NestContractV2Mapper.ToRequest(
+            [
+                new Panel { PanelId = "L", Material = "MDF", ThicknessMm = 18, Outline = new Outline { Points = [new(0, 0), new(700, 0), new(700, 250), new(300, 250), new(300, 500), new(0, 500)] } },
+                new Panel { PanelId = "R", Material = "MDF", ThicknessMm = 18, Outline = new Outline { Points = [new(0, 0), new(600, 0), new(600, 400), new(0, 400)] } },
+            ],
+            new NestSettings { MarginMm = 15, ClearanceMm = 12, AllowRotation = true, GrainLock = true },
+            [new NestSheetSpec { WidthMm = 1220, LengthMm = 2440, BorderMm = 15, SpacingMm = 12, Label = "full", Material = "MDF", ThicknessMm = 18 }],
+            "nfp",
+            TimeSpan.FromSeconds(20));
+        var inputSha = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(CloudJson.Serialize(request))));
+
+        using var submitMessage = new HttpRequestMessage(HttpMethod.Post, ApiRoutes.JobsNestV2)
+        {
+            Content = new StringContent(CloudJson.Serialize(request), Encoding.UTF8, "application/json"),
+        };
+        submitMessage.Headers.TryAddWithoutValidation(ApiHeaders.IdempotencyKey, "v2-e2e-1");
+        submitMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _login.AccessToken);
+        var submit = await _client.SendAsync(submitMessage);
+        Assert.Equal(HttpStatusCode.Accepted, submit.StatusCode);
+        var jobId = (await submit.ReadAsync<SubmitNestJobResponse>()).JobId;
+        Assert.Equal(JobTypes.NestV2, (await (await GetAsAsync(ApiRoutes.ForJobStatus(jobId), _login.AccessToken)).ReadAsync<JobStatusResponse>()).JobType);
+
+        Assert.True(await RunWorkerOnceAsync("v2-worker"));
+
+        var response = await GetAsAsync(ApiRoutes.ForJobResult(jobId), _login.AccessToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var result = await response.ReadAsync<NestJobResultV2>();
+        Assert.Equal(jobId, result.JobId);
+        Assert.Equal(inputSha, result.InputSha256);
+        Assert.Equal(EngineVersion.Current, result.EngineVersion);
+        Assert.Equal(["L", "R"], result.Result.Placements.Select(p => p.PanelId).Order());
+        Assert.Empty(result.Result.Unplaced);
+        Assert.Single(result.Result.SheetsUsed);
+        Assert.NotEmpty(result.Result.GroupReports);
+        Assert.False(string.IsNullOrEmpty(result.Result.Log.SelectedEngine));
+
+        // Same request through the local router gives the same placements: the parity the shop cares about.
+        var (local, _) = NestingRunner.RunRouter(
+            request.Panels.Select(NestContractV2Mapper.ToPanel).ToList(), NestContractV2Mapper.ToSettings(request.Settings),
+            request.Sheets.Select(NestContractV2Mapper.ToSheet).ToList(), "nfp", TimeSpan.FromSeconds(20));
+        Assert.Equal(local.Placements.Select(p => (p.PanelId, p.SheetIndex, p.OffsetX, p.OffsetY, p.RotationDeg)),
+                     result.Result.Placements.Select(p => (p.PanelId, p.SheetIndex, p.OffsetX, p.OffsetY, p.RotationDeg)));
+
+        // The v1 shape is not returned for a v2 job (the client deserializes by the type it submitted).
+        var invalid = request with { Panels = [] };
+        using var bad = new HttpRequestMessage(HttpMethod.Post, ApiRoutes.JobsNestV2) { Content = new StringContent(CloudJson.Serialize(invalid), Encoding.UTF8, "application/json") };
+        bad.Headers.TryAddWithoutValidation(ApiHeaders.IdempotencyKey, "v2-e2e-bad");
+        bad.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _login.AccessToken);
+        var badResponse = await _client.SendAsync(bad);
+        Assert.Equal(HttpStatusCode.BadRequest, badResponse.StatusCode);
+
+        // Reusing a v1 key for a v2 body is an idempotency conflict, not a silent type change.
+        await SubmitAsync(ValidRequest(), "v2-e2e-mixed");
+        using var mixed = new HttpRequestMessage(HttpMethod.Post, ApiRoutes.JobsNestV2) { Content = new StringContent(CloudJson.Serialize(request), Encoding.UTF8, "application/json") };
+        mixed.Headers.TryAddWithoutValidation(ApiHeaders.IdempotencyKey, "v2-e2e-mixed");
+        mixed.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _login.AccessToken);
+        Assert.Equal(HttpStatusCode.Conflict, (await _client.SendAsync(mixed)).StatusCode);
     }
 
     [PostgresFact]

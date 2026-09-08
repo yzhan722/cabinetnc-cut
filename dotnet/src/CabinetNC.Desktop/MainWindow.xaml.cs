@@ -5334,8 +5334,9 @@ public partial class MainWindow : Window
             List<NestWarningMsg> intranetWarnings = [];
             if (computeMode == ComputeMode.Intranet)
             {
-                // Server-side compute. Fails loudly on any problem; never quietly reverts to Local.
-                (packedPair, intranetWarnings) = await RunIntranetNestAsync(panels, settings, sheets, cancelToken);
+                // Server-side compute with the same engine preference and timeout as the local branch.
+                // Fails loudly on any problem; never quietly reverts to Local.
+                (packedPair, intranetWarnings) = await RunIntranetNestAsync(panels, settings, sheets, enginePreference, advancedTimeout, cancelToken);
             }
             else
             {

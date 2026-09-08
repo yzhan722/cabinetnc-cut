@@ -13,7 +13,12 @@ public sealed record ComputeProgress(Guid JobId, JobStatus Status, int AttemptCo
 public interface IComputeGateway
 {
     ComputeMode Mode { get; }
+
+    /// <summary>v1 rectangular contract (kept for A/B and the PoC tests).</summary>
     Task<NestJobResult> RunNestingAsync(SubmitNestJobRequest request, IProgress<ComputeProgress>? progress, CancellationToken ct);
+
+    /// <summary>v2 true-shape contract: what the Desktop actually uses in Intranet mode.</summary>
+    Task<NestJobResultV2> RunNestingV2Async(SubmitNestJobRequestV2 request, IProgress<ComputeProgress>? progress, CancellationToken ct);
 }
 
 /// <summary>
@@ -32,12 +37,22 @@ public sealed class IntranetComputeGateway(
 
     public ComputeMode Mode => ComputeMode.Intranet;
 
-    public async Task<NestJobResult> RunNestingAsync(SubmitNestJobRequest request, IProgress<ComputeProgress>? progress, CancellationToken ct)
+    public Task<NestJobResult> RunNestingAsync(SubmitNestJobRequest request, IProgress<ComputeProgress>? progress, CancellationToken ct) =>
+        RunAsync(key => api.SubmitNestJobAsync(request, key, ct), jobId => api.GetJobResultAsync(jobId, ct), progress, ct);
+
+    public Task<NestJobResultV2> RunNestingV2Async(SubmitNestJobRequestV2 request, IProgress<ComputeProgress>? progress, CancellationToken ct) =>
+        RunAsync(key => api.SubmitNestJobV2Async(request, key, ct), jobId => api.GetJobResultV2Async(jobId, ct), progress, ct);
+
+    async Task<TResult> RunAsync<TResult>(
+        Func<string, Task<SubmitNestJobResponse>> submit,
+        Func<Guid, Task<TResult>> fetchResult,
+        IProgress<ComputeProgress>? progress,
+        CancellationToken ct)
     {
         var idempotencyKey = Guid.NewGuid().ToString("D");
         var started = _clock.GetUtcNow();
 
-        var submitted = await WithNetworkGraceAsync(() => api.SubmitNestJobAsync(request, idempotencyKey, ct), ct);
+        var submitted = await WithNetworkGraceAsync(() => submit(idempotencyKey), ct);
         var jobId = submitted.JobId;
         progress?.Report(new ComputeProgress(jobId, submitted.Status, 0, TimeSpan.Zero));
 
@@ -51,7 +66,7 @@ public sealed class IntranetComputeGateway(
             switch (status.Status)
             {
                 case JobStatus.Succeeded:
-                    return await WithNetworkGraceAsync(() => api.GetJobResultAsync(jobId, ct), ct);
+                    return await WithNetworkGraceAsync(() => fetchResult(jobId), ct);
                 case JobStatus.Failed:
                     throw new ComputeJobFailedException(jobId, status.ErrorCode,
                         $"{status.ErrorMessage ?? "The server could not compute this nest."} [{status.ErrorCode ?? "failed"}]");
@@ -96,6 +111,10 @@ public sealed class IntranetComputeGateway(
 public sealed class LocalComputeGateway(Func<Nesting.NestingClient> clientFactory, string workerVersion) : IComputeGateway
 {
     public ComputeMode Mode => ComputeMode.Local;
+
+    /// <summary>The local gRPC worker speaks the rectangular contract only; Local true-shape nesting runs in-process in the Desktop.</summary>
+    public Task<NestJobResultV2> RunNestingV2Async(SubmitNestJobRequestV2 request, IProgress<ComputeProgress>? progress, CancellationToken ct) =>
+        throw new NotSupportedException("The local gRPC worker only implements the rectangular (v1) contract.");
 
     public async Task<NestJobResult> RunNestingAsync(SubmitNestJobRequest request, IProgress<ComputeProgress>? progress, CancellationToken ct)
     {

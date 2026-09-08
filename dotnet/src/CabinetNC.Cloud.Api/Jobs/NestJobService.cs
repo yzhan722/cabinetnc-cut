@@ -18,7 +18,7 @@ public sealed class NestJobService(
     IObjectStore objects,
     TimeProvider clock)
 {
-    public async Task<SubmitNestJobResponse> SubmitAsync(
+    public Task<SubmitNestJobResponse> SubmitAsync(
         SubmitNestJobRequest request,
         string idempotencyKey,
         ClaimsPrincipal principal,
@@ -26,22 +26,52 @@ public sealed class NestJobService(
         CancellationToken ct)
     {
         NestJobValidator.Validate(request);
+        return SubmitCoreAsync(JobTypes.Nest, Encoding.UTF8.GetBytes(CloudJson.Serialize(request)), idempotencyKey, principal, correlationId, ct);
+    }
+
+    /// <summary>True-shape contract; the canonical request bytes are what the worker hashes and executes.</summary>
+    public Task<SubmitNestJobResponse> SubmitV2Async(
+        SubmitNestJobRequestV2 request,
+        string idempotencyKey,
+        ClaimsPrincipal principal,
+        string correlationId,
+        CancellationToken ct)
+    {
+        if (NestRequestV2Rules.Validate(request) is { } violation)
+            Invalid(violation);
+        return SubmitCoreAsync(JobTypes.NestV2, Encoding.UTF8.GetBytes(CloudJson.Serialize(request)), idempotencyKey, principal, correlationId, ct);
+    }
+
+    async Task<SubmitNestJobResponse> SubmitCoreAsync(
+        string jobType,
+        byte[] inputBytes,
+        string idempotencyKey,
+        ClaimsPrincipal principal,
+        string correlationId,
+        CancellationToken ct)
+    {
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 200)
             Invalid("Exactly one nonempty Idempotency-Key of at most 200 characters is required.");
         var identity = RequestIdentity.From(principal);
 
-        var inputBytes = Encoding.UTF8.GetBytes(CloudJson.Serialize(request));
         var inputSha256 = Sha256(inputBytes);
         var job = await jobs.CreateOrGetByIdempotencyKeyAsync(
             new NewComputeJob(
                 identity.TenantId,
                 identity.UserId,
                 identity.DeviceId,
-                JobTypes.Nest,
+                jobType,
                 idempotencyKey,
                 correlationId,
                 inputSha256),
             ct);
+        if (!string.Equals(job.JobType, jobType, StringComparison.Ordinal))
+        {
+            throw new ApiProblemException(
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.IdempotencyConflict,
+                "The Idempotency-Key was already used for a different job type.");
+        }
 
         if (!string.Equals(job.InputSha256, inputSha256, StringComparison.Ordinal))
         {
@@ -118,7 +148,10 @@ public sealed class NestJobService(
             job.CorrelationId);
     }
 
-    public async Task<NestJobResult> GetResultAsync(
+    /// <summary>Either a v1 or a v2 envelope, depending on how the job was submitted.</summary>
+    public sealed record ResultEnvelope(NestJobResult? V1, NestJobResultV2? V2);
+
+    public async Task<ResultEnvelope> GetResultAsync(
         Guid jobId,
         ClaimsPrincipal principal,
         CancellationToken ct)
@@ -140,10 +173,33 @@ public sealed class NestJobService(
             throw StorageFailed();
         }
 
+        var bytes = await ReadVerifiedResultAsync(job, ct);
+        try
+        {
+            if (string.Equals(job.JobType, JobTypes.NestV2, StringComparison.Ordinal))
+            {
+                var v2 = CloudJson.Deserialize<NestJobResultPayloadV2>(Encoding.UTF8.GetString(bytes));
+                return new ResultEnvelope(null, new NestJobResultV2(job.Id, v2, job.EngineVersion, job.InputSha256, job.ResultSha256, job.DurationMs.Value));
+            }
+            var payload = CloudJson.Deserialize<NestJobResultPayload>(Encoding.UTF8.GetString(bytes));
+            return new ResultEnvelope(
+                new NestJobResult(
+                    job.Id, payload.Engine, job.EngineVersion, payload.Placements, payload.SheetCount, payload.Unplaced, payload.Warnings,
+                    job.InputSha256, job.ResultSha256, job.DurationMs.Value),
+                null);
+        }
+        catch (JsonException)
+        {
+            throw StorageFailed();
+        }
+    }
+
+    async Task<byte[]> ReadVerifiedResultAsync(ComputeJobEntity job, CancellationToken ct)
+    {
         byte[] bytes;
         try
         {
-            await using var stream = await objects.OpenReadAsync(job.ResultObjectKey, ct);
+            await using var stream = await objects.OpenReadAsync(job.ResultObjectKey!, ct);
             using var buffer = new MemoryStream();
             await stream.CopyToAsync(buffer, ct);
             bytes = buffer.ToArray();
@@ -159,28 +215,7 @@ public sealed class NestJobService(
 
         if (!string.Equals(Sha256(bytes), job.ResultSha256, StringComparison.Ordinal))
             throw StorageFailed();
-
-        NestJobResultPayload payload;
-        try
-        {
-            payload = CloudJson.Deserialize<NestJobResultPayload>(Encoding.UTF8.GetString(bytes));
-        }
-        catch (JsonException)
-        {
-            throw StorageFailed();
-        }
-
-        return new NestJobResult(
-            job.Id,
-            payload.Engine,
-            job.EngineVersion,
-            payload.Placements,
-            payload.SheetCount,
-            payload.Unplaced,
-            payload.Warnings,
-            job.InputSha256,
-            job.ResultSha256,
-            job.DurationMs.Value);
+        return bytes;
     }
 
     public static string Sha256(byte[] bytes) =>

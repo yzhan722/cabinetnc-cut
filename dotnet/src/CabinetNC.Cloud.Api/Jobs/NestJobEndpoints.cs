@@ -49,9 +49,33 @@ public static class NestJobEndpoints
                 NestJobService service,
                 HttpContext context,
                 CancellationToken ct) =>
-            Results.Json(
-                await service.GetResultAsync(jobId, context.User, ct),
-                CloudJson.Options))
+            {
+                var envelope = await service.GetResultAsync(jobId, context.User, ct);
+                return envelope.V2 is not null
+                    ? Results.Json(envelope.V2, CloudJson.Options)
+                    : Results.Json(envelope.V1, CloudJson.Options);
+            })
+            .RequireAuthorization();
+
+        // v2: true-shape request. Outlines make bodies larger than v1; 500 panels × 5000 points is still far below 16 MiB.
+        endpoints.MapPost(ApiRoutes.JobsNestV2, async (
+                SubmitNestJobRequestV2 request,
+                NestJobService service,
+                HttpContext context,
+                CancellationToken ct) =>
+            {
+                var keys = context.Request.Headers[ApiHeaders.IdempotencyKey];
+                if (keys.Count != 1)
+                {
+                    throw new ApiProblemException(
+                        StatusCodes.Status400BadRequest,
+                        ApiErrorCodes.InvalidRequest,
+                        "Exactly one Idempotency-Key header is required.");
+                }
+                var response = await service.SubmitV2Async(request, keys[0] ?? "", context.User, context.GetCorrelationId(), ct);
+                return Results.Json(response, CloudJson.Options, statusCode: StatusCodes.Status202Accepted);
+            })
+            .WithMetadata(new RequestSizeLimitAttribute(16 * 1024 * 1024))
             .RequireAuthorization();
 
         return endpoints;

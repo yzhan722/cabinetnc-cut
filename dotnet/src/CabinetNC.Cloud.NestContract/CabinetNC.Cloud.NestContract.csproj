@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Domain <-> nest contract v2 mapping, shared by the Desktop (builds requests, reads results) and the
+       cloud worker (rebuilds Domain inputs). Depends only on the Domain model types the engines read;
+       after the Domain.Model / Domain.Compute split this must reference Domain.Model only. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CabinetNC.Cloud.Contracts\CabinetNC.Cloud.Contracts.csproj" />
+    <ProjectReference Include="..\CabinetNC.Domain\CabinetNC.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

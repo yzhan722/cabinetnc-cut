@@ -54,11 +54,19 @@ public sealed class CloudApiClient : IDisposable, ICloudAuthTransport
         SendAsync<SubmitNestJobResponse>(_authenticated, HttpMethod.Post, ApiRoutes.JobsNest, request,
             r => r.Headers.TryAddWithoutValidation(ApiHeaders.IdempotencyKey, idempotencyKey), ct);
 
+    public Task<SubmitNestJobResponse> SubmitNestJobV2Async(SubmitNestJobRequestV2 request, string idempotencyKey, CancellationToken ct) =>
+        SendAsync<SubmitNestJobResponse>(_authenticated, HttpMethod.Post, ApiRoutes.JobsNestV2, request,
+            r => r.Headers.TryAddWithoutValidation(ApiHeaders.IdempotencyKey, idempotencyKey), ct);
+
     public Task<JobStatusResponse> GetJobStatusAsync(Guid jobId, CancellationToken ct) =>
         SendAsync<JobStatusResponse>(_authenticated, HttpMethod.Get, ApiRoutes.ForJobStatus(jobId), null, null, ct);
 
     public Task<NestJobResult> GetJobResultAsync(Guid jobId, CancellationToken ct) =>
         SendAsync<NestJobResult>(_authenticated, HttpMethod.Get, ApiRoutes.ForJobResult(jobId), null, null, ct);
+
+    /// <summary>Result of a job submitted through <see cref="SubmitNestJobV2Async"/>.</summary>
+    public Task<NestJobResultV2> GetJobResultV2Async(Guid jobId, CancellationToken ct) =>
+        SendAsync<NestJobResultV2>(_authenticated, HttpMethod.Get, ApiRoutes.ForJobResult(jobId), null, null, ct);
 
     Task<LoginResponse> ICloudAuthTransport.LoginAsync(LoginRequest request, CancellationToken ct) =>
         SendAsync<LoginResponse>(_anonymous, HttpMethod.Post, ApiRoutes.AuthLogin, request, null, ct);

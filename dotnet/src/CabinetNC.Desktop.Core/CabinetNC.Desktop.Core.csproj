@@ -9,6 +9,7 @@
     <ProjectReference Include="..\CabinetNC.Infrastructure\CabinetNC.Infrastructure.csproj" />
     <!-- Cloud/ : intranet client. Contracts are DTOs only; Compute.Contracts is the local gRPC worker surface. -->
     <ProjectReference Include="..\CabinetNC.Cloud.Contracts\CabinetNC.Cloud.Contracts.csproj" />
+    <ProjectReference Include="..\CabinetNC.Cloud.NestContract\CabinetNC.Cloud.NestContract.csproj" />
     <ProjectReference Include="..\CabinetNC.Compute.Contracts\CabinetNC.Compute.Contracts.csproj" />
   </ItemGroup>
 

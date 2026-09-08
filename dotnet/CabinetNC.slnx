@@ -4,6 +4,7 @@
     <Project Path="src/CabinetNC.Cloud.Api/CabinetNC.Cloud.Api.csproj" />
     <Project Path="src/CabinetNC.Cloud.Contracts/CabinetNC.Cloud.Contracts.csproj" />
     <Project Path="src/CabinetNC.Cloud.Infrastructure/CabinetNC.Cloud.Infrastructure.csproj" />
+    <Project Path="src/CabinetNC.Cloud.NestContract/CabinetNC.Cloud.NestContract.csproj" />
     <Project Path="src/CabinetNC.Cloud.Worker/CabinetNC.Cloud.Worker.csproj" />
     <Project Path="src/CabinetNC.Compute.Contracts/CabinetNC.Compute.Contracts.csproj" />
     <Project Path="src/CabinetNC.Compute.Core/CabinetNC.Compute.Core.csproj" />

@@ -17,7 +17,7 @@
 	encode zstd gzip
 
 	request_body {
-		max_size 4MB
+		max_size 16MB   # true-shape nest requests carry outlines; the API enforces its own per-route limits
 	}
 
 	header {

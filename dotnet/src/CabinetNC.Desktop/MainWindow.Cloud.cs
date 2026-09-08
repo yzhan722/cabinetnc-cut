@@ -158,30 +158,34 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// The Intranet branch of RunNestAsync: rectangular contract → submit → poll → result, mapped back to the
-    /// objects the rest of the nest pipeline consumes. Throws instead of falling back to Local.
+    /// The Intranet branch of RunNestAsync. The v2 contract carries the same panels, stock queue, settings,
+    /// engine preference and timeout the local branch would use, and the server runs the same router, so the
+    /// result maps back 1:1 (true-shape placements, remnants, keep-outs, parts-in-part, group reports).
+    /// Throws instead of falling back to Local.
     /// </summary>
     async Task<((NestResult Result, NestEngineRunLog Log) Packed, List<NestWarningMsg> Warnings)> RunIntranetNestAsync(
         IReadOnlyList<PanelPart> panels,
         NestSettings settings,
         IReadOnlyList<NestSheetSpec> sheets,
+        string enginePreference,
+        TimeSpan advancedTimeout,
         CancellationToken ct)
     {
         var gateway = new ComputeGatewayFactory(
             () => throw new InvalidOperationException("Local gateway is not used from this path."),
             () => _cloud).Create(ComputeMode.Intranet);
 
-        var contract = NestRequestBuilder.Build(panels, settings, sheets, SizeOf);
+        var (request, error) = NestRequestBuilder.BuildV2(panels, settings, sheets, enginePreference, advancedTimeout);
+        if (request is null)
+            throw new InvalidOperationException("排版输入不符合内网契约：" + error);
         var progress = new Progress<ComputeProgress>(p =>
             SetStatus($"内网计算中… {StatusLabel(p.Status)} · {p.Elapsed.TotalSeconds:0}s · job {ShortId(p.JobId)}", StatusKind.Busy));
 
-        var result = await gateway.RunNestingAsync(contract.Request, progress, ct).ConfigureAwait(true);
+        var result = await gateway.RunNestingV2Async(request, progress, ct).ConfigureAwait(true);
         _lastCloudJobId = result.JobId;
         _lastEngineVersion = result.EngineVersion;
 
-        var primarySheet = sheets.Count > 0 ? sheets[0] : new NestSheetSpec { WidthMm = contract.Request.SheetWidthMm, LengthMm = contract.Request.SheetLengthMm, BorderMm = settings.MarginMm, SpacingMm = settings.ClearanceMm };
-        var packed = NestResultMapper.ToLocal(result, primarySheet);
-
+        var packed = NestResultMapper.ToLocal(result);
         var warnings = new List<NestWarningMsg>
         {
             new()
@@ -190,15 +194,6 @@ public partial class MainWindow
                 Message = $"内网 job {result.JobId} · {result.EngineVersion} · 服务器计算 {result.DurationMs} ms · input {result.InputSha256[..12]} · result {result.ResultSha256[..12]}",
             },
         };
-        warnings.AddRange(contract.Downgrades.Select(d => new NestWarningMsg { Code = "intranet_contract", Message = d.Message }));
-        warnings.AddRange(result.Warnings.Select(w => new NestWarningMsg
-        {
-            Code = w.Code,
-            Message = w.Message,
-            PanelIdA = w.PanelIdA ?? "",
-            PanelIdB = w.PanelIdB ?? "",
-            SheetIndex = w.SheetIndex ?? 0,
-        }));
         return (packed, warnings);
     }
 

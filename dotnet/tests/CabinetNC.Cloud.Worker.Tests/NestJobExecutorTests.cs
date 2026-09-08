@@ -5,8 +5,12 @@ using CabinetNC.Cloud.Infrastructure;
 using CabinetNC.Cloud.Infrastructure.Entities;
 using CabinetNC.Cloud.Infrastructure.Jobs;
 using CabinetNC.Cloud.Infrastructure.Tests;
+using CabinetNC.Cloud.NestContract;
 using CabinetNC.Cloud.Worker;
 using CabinetNC.Compute.Core.Nesting;
+using CabinetNC.Domain.Geometry;
+using CabinetNC.Domain.Nesting;
+using CabinetNC.Domain.Parts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -273,18 +277,90 @@ public class NestJobExecutorTests(PostgresFixture pg) : IClassFixture<PostgresFi
         Assert.Equal(ApiErrorCodes.InvalidRequest, after.ErrorCode);
     }
 
+    [PostgresFact]
+    public async Task V2_job_runs_the_true_shape_router_and_stores_the_full_payload()
+    {
+        var request = NestContractV2Mapper.ToRequest(
+            [
+                new Panel { PanelId = "L", Material = "MDF", ThicknessMm = 18, Outline = new Outline { Points = [new(0, 0), new(700, 0), new(700, 250), new(300, 250), new(300, 500), new(0, 500)] } },
+                new Panel { PanelId = "R", Material = "MDF", ThicknessMm = 18, GrainDirection = "X", AllowedRotations = [0, 180], Outline = new Outline { Points = [new(0, 0), new(600, 0), new(600, 400), new(0, 400)] } },
+                new Panel { PanelId = "BIG", Material = "MDF", ThicknessMm = 18, Outline = new Outline { Points = [new(0, 0), new(3000, 0), new(3000, 3000), new(0, 3000)] } },
+            ],
+            new NestSettings { MarginMm = 15, ClearanceMm = 12, AllowRotation = true, GrainLock = true },
+            [new NestSheetSpec { WidthMm = 1220, LengthMm = 2440, BorderMm = 15, SpacingMm = 12, Label = "full", Material = "MDF", ThicknessMm = 18 }],
+            "nfp",
+            TimeSpan.FromSeconds(20));
+        var canonical = Encoding.UTF8.GetBytes(CloudJson.Serialize(request));
+        Guid jobId;
+        await using (var seed = pg.CreateContext())
+        {
+            var repo = new PostgresJobRepository(seed, _clock);
+            var job = await repo.CreateOrGetByIdempotencyKeyAsync(new NewComputeJob(TenantA, UserA, DeviceA, JobTypes.NestV2, "v2-1", "corr-v2", Sha256(canonical)), CT);
+            await _objects.PutAsync(job.InputObjectKey, new MemoryStream(canonical), "application/json", CT);
+            Assert.True(await repo.MarkInputStoredAsync(job.Id, CT));
+            jobId = job.Id;
+        }
+        await using var db = pg.CreateContext();
+
+        Assert.True(await Executor(db).ExecuteOneAsync(CT));
+
+        var done = await LoadAsync(jobId);
+        Assert.Equal(JobStatus.Succeeded, done.Status);
+        var stored = _objects.Objects[ObjectKeys.JobResult(TenantA, jobId)];
+        Assert.Equal(Sha256(stored.Bytes), done.ResultSha256);
+        var payload = CloudJson.Deserialize<NestJobResultPayloadV2>(Encoding.UTF8.GetString(stored.Bytes));
+        var (local, _) = NestingRunner.RunRouter(
+            request.Panels.Select(NestContractV2Mapper.ToPanel).ToList(),
+            NestContractV2Mapper.ToSettings(request.Settings),
+            request.Sheets.Select(NestContractV2Mapper.ToSheet).ToList(),
+            "nfp", TimeSpan.FromSeconds(20));
+        Assert.Equal(local.Engine, payload.Engine);
+        Assert.Equal(["L", "R"], payload.Placements.Select(p => p.PanelId).Order());
+        Assert.Equal(["BIG"], payload.Unplaced);
+        Assert.Equal(local.Placements.Select(p => (p.PanelId, p.SheetIndex, p.OffsetX, p.OffsetY, p.RotationDeg)),
+                     payload.Placements.Select(p => (p.PanelId, p.SheetIndex, p.OffsetX, p.OffsetY, p.RotationDeg)));
+        Assert.Single(payload.SheetsUsed);
+        Assert.Equal("full", payload.SheetsUsed[0].Label);
+        Assert.NotEmpty(payload.GroupReports);
+        Assert.Equal(local.Engine, payload.Log.SelectedEngine);
+    }
+
+    [PostgresFact]
+    public async Task V2_job_with_an_invalid_request_fails_without_retry()
+    {
+        await using (var seed = pg.CreateContext())
+        {
+            var repo = new PostgresJobRepository(seed, _clock);
+            var bytes = "{\"panels\":[],\"sheets\":[],\"settings\":null,\"enginePreference\":\"nfp\",\"advancedTimeoutSeconds\":5}"u8.ToArray();
+            var job = await repo.CreateOrGetByIdempotencyKeyAsync(new NewComputeJob(TenantA, UserA, DeviceA, JobTypes.NestV2, "v2-bad", "corr", Sha256(bytes)), CT);
+            await _objects.PutAsync(job.InputObjectKey, new MemoryStream(bytes), "application/json", CT);
+            await repo.MarkInputStoredAsync(job.Id, CT);
+        }
+        await using var db = pg.CreateContext();
+
+        Assert.True(await Executor(db).ExecuteOneAsync(CT));
+
+        var failed = (await db.ComputeJobs.AsNoTracking().SingleAsync());
+        Assert.Equal(JobStatus.Failed, failed.Status);
+        Assert.Equal(ApiErrorCodes.InvalidRequest, failed.ErrorCode);
+        Assert.Equal(1, failed.AttemptCount);
+    }
+
     sealed class ThrowingRunner(Exception exception) : INestingRunner
     {
         public NestingOutput Run(NestingInput input) => throw exception;
+        public NestJobResultPayloadV2 RunV2(SubmitNestJobRequestV2 request, CancellationToken ct = default) => throw exception;
     }
 
     sealed class FixedOutputRunner(NestingOutput output) : INestingRunner
     {
         public NestingOutput Run(NestingInput input) => output;
+        public NestJobResultPayloadV2 RunV2(SubmitNestJobRequestV2 request, CancellationToken ct = default) => throw new NotSupportedException();
     }
 
     sealed class CallbackRunner(Func<NestingInput, NestingOutput> callback) : INestingRunner
     {
         public NestingOutput Run(NestingInput input) => callback(input);
+        public NestJobResultPayloadV2 RunV2(SubmitNestJobRequestV2 request, CancellationToken ct = default) => throw new NotSupportedException();
     }
 }

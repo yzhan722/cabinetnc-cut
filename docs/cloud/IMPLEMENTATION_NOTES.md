@@ -773,6 +773,35 @@ WPF 侧全部放在新文件里，`MainWindow.xaml.cs` 只改了 `RunNestAsync` 
 2. 单租户部署为常态：不提供"创建租户"端点，租户由 bootstrap 建立；多租户 SaaS 不在范围。
 3. 停用/重置/吊销对 access token 的效果延迟 ≤ 15 min（access token 生命期），与 spec 的无状态设计一致；需要即时踢出时用短生命期或加黑名单，暂不做。
 
+## P2-2 — Nest 契约 v2：真形 parity（2026-09-06，机器 B）
+
+### 做了什么
+
+| 文件 | 内容 |
+|---|---|
+| `Cloud.Contracts/NestContractsV2.cs` | `SubmitNestJobRequestV2`：`NestPanelDto`（完整轮廓点、通孔环 `Cutouts`、材料/厚度、纹理、允许角度、数量）、`NestSheetDto`（尺寸、边距、四边余量、间距、旋转、parts-in-part、禁排区、标签、材料/厚度、纹理）、`NestSettingsDto`（`NestSettings` 全部字段）、`EnginePreference`、`AdvancedTimeoutSeconds`；`NestJobResultPayloadV2`（placements、sheetCount、unplaced + reasons、group reports、sheetsUsed、parts-in-part slots、run log）；`NestJobResultV2` 信封；`NestRequestV2Rules.Validate`（纯 DTO 校验：≤1000 件、≤64 板、轮廓 ≥3 点 ≤5000 点、有限坐标、唯一 id、引擎偏好白名单、超时 1–180 s…）；`JobTypes.NestV2 = "nest.v2"`、`ApiRoutes.JobsNestV2` |
+| **新项目 `CabinetNC.Cloud.NestContract`** | `NestContractV2Mapper`：Domain ↔ DTO 双向投影，只保留引擎读取的字段（`GrainDirection ?? Orientation.GrainDirection` 摊平；只带 `PanelEdit.IsCutout` 的特征环）；`AabbSizeOf` = Desktop 的 `SizeOf`；结果双向映射。Desktop.Core 与 Compute.Core 共用；拆分 Domain 后它只应依赖 Domain.Model |
+| `Compute.Core/NestingRunner` | `RunV2`（映射后调 `RunRouter`）；`RunRouter` 是**唯一**的引擎选择规则：`deepnest*` → `DeepnestPreviewNestingEngine`，否则 `ClipperNfpNestingEngine`；`NestEngineRouter` 按偏好走 NFP/BLF 并在超时时回退 BLF——与 `MainWindow.RunNestAsync` 本机分支完全相同 |
+| `Cloud.Api` | `POST /api/v1/jobs/nest/v2`（body ≤ 16 MiB；Caddy `max_size 16MB`）→ `SubmitV2Async`（`NestRequestV2Rules` 校验、JobType `nest.v2`）；`SubmitCoreAsync` 复用幂等/落盘/审计；同一 Idempotency-Key 换 job 类型 → 409 `idempotency_conflict`；`GET /jobs/{id}/result` 按 job 类型返回 v1 或 v2 信封 |
+| `Cloud.Worker/NestJobExecutor` | 按 `JobType` 分派：`nest.v2` → 反序列化 + 规则校验（坏输入 → 终态 `invalid_request`）→ `runner.RunV2` → payload v2 落盘；v1 路径不变 |
+| `Desktop.Core` | `CloudApiClient.SubmitNestJobV2Async/GetJobResultV2Async`；`IComputeGateway.RunNestingV2Async`（Intranet 与 v1 共用同一轮询循环；Local gRPC 网关 v2 → `NotSupported`）；`NestRequestBuilder.BuildV2`（**无降级**，只可能返回校验错误）；`NestResultMapper.ToLocal(NestJobResultV2)` |
+| `Desktop/MainWindow.Cloud.cs` | `RunIntranetNestAsync` 改用 v2：传入与本机分支相同的 `enginePreference` 与 `advancedTimeout`（>80 件 45 s，否则 25 s）；结果 1:1 回填 `NestResult`（含 unplacedReasons / groupReports / sheetsUsed / PiP slots）与 `NestEngineRunLog`；`intranet_contract` 降级警告不再产生 |
+| Worker Dockerfile | 复制 `CabinetNC.Cloud.NestContract` |
+
+### 测试
+
+- `Compute.Core.Tests/NestingRunnerV2Tests`（5）：**同一夹具**（矩形、L 形、带纹理 `[0,180]` 的件、数量 2、带通孔的宿主 + 小件、放不下的 BIG；三种大板：带禁排区+顺纹的整板、带左侧余量的余料、PLY 板；纹理锁设置）在 `blf` 与 `nfp` 两种偏好下，本机 `RunRouter` 与"序列化 → 服务器 `RunV2` → 序列化 → 反序列化"的结果**逐字段相等**（placements、unplaced、reasons、group reports、sheetsUsed、PiP slots、engine、fallback）；面板投影保留引擎所读字段（纹理摊平、仅通孔特征、`MayRotate90`/`PanelMayRotate90` 不变）；大板/设置往返；请求 canonical 且确定。
+- `Cloud.Worker.Tests`（+2）：v2 job 执行并落盘完整 payload，与本机路由一致；坏 v2 输入 → 终态 `invalid_request`。
+- `Cloud.Api.Tests`（+1）：v2 端到端（提交 202 → status `nest.v2` → worker → result v2 信封，placements 与本机路由一致；空 panels 400；v1 key 复用于 v2 → 409）。
+- `Desktop.Core.Tests`（+2）：v2 网关走同一轮询循环并映射回本地形状；`BuildV2` 对契约违规报错而不是降级。
+- UI smoke：开发版 **6/6**（06 场景现在跑 `nest.v2`，服务端 `EngineVersion=…+683f8ce`，66 ms）。
+
+### 决策
+
+1. v1 矩形契约保留（gRPC 本机 worker、性能基线、PoC 测试），Desktop 内网模式**只用 v2**。
+2. NFP 有超时回退，因此 parity 的定义是"同一代码、同一输入、同一超时"；在负载下服务器可能回退 BLF 而本机不回退（或反之），结果的 `Log.FallbackReason` 会说明。性能基线 §7 的建议（worker 2 vCPU）对 NFP 仍需实测——P2-8。
+3. `GET /jobs/{id}/result` 不加版本后缀：信封形状由 job 类型决定，客户端按自己提交的类型反序列化。
+
 ### 收尾提醒（给下一位接手者）
 
 1. **本机环境是会话级的**：每个新 shell 要先 `$env:DOTNET_ROOT='C:\Users\alex\AppData\Local\Microsoft\dotnet'; $env:PATH="C:\Users\alex\AppData\Local\Microsoft\dotnet;D:\Docker\Program\resources\bin;$env:PATH"`，否则 `dotnet` 会解析到系统目录里只有 9.0 运行时的安装（"No .NET SDKs were found"）。用户级 `DOTNET_ROOT` 指向了错误目录，建议用户自行修正。

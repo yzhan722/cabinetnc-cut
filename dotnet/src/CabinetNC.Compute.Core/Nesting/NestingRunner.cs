@@ -1,3 +1,5 @@
+using CabinetNC.Cloud.Contracts;
+using CabinetNC.Cloud.NestContract;
 using CabinetNC.Domain.Geometry;
 using CabinetNC.Domain.Nesting;
 using CabinetNC.Domain.Parts;
@@ -123,5 +125,46 @@ public sealed class NestingRunner : INestingRunner
                 Warnings: [],
                 Error: ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Mirrors <c>MainWindow.RunNestAsync</c>'s local branch exactly: same router, same advanced-engine
+    /// choice per preference, same AABB size function. Exceptions propagate (the worker classifies them).
+    /// </summary>
+    public NestJobResultPayloadV2 RunV2(SubmitNestJobRequestV2 request, CancellationToken ct = default)
+    {
+        var panels = request.Panels.Select(NestContractV2Mapper.ToPanel).ToList();
+        var sheets = request.Sheets.Select(NestContractV2Mapper.ToSheet).ToList();
+        var settings = NestContractV2Mapper.ToSettings(request.Settings);
+        var (result, log) = RunRouter(panels, settings, sheets, request.EnginePreference, TimeSpan.FromSeconds(request.AdvancedTimeoutSeconds), ct);
+        return NestContractV2Mapper.FromResult(result, log);
+    }
+
+    /// <summary>The one engine-selection rule shared by the Desktop's local path and the cloud worker.</summary>
+    public static (NestResult Result, NestEngineRunLog Log) RunRouter(
+        IReadOnlyList<Panel> panels,
+        NestSettings settings,
+        IReadOnlyList<NestSheetSpec> sheets,
+        string enginePreference,
+        TimeSpan advancedTimeout,
+        CancellationToken ct = default,
+        IProgress<NestProgressReport>? progress = null)
+    {
+        var preference = (enginePreference ?? "preferred").Trim().ToLowerInvariant();
+        INestingEngine advanced = preference is "deepnest" or "deepnest_next"
+            ? new DeepnestPreviewNestingEngine()
+            : new ClipperNfpNestingEngine();
+        return new NestEngineRouter(advanced: advanced).Run(
+            new NestEngineRequest
+            {
+                Panels = panels,
+                Settings = settings,
+                StockTemplates = sheets,
+                SizeOf = NestContractV2Mapper.AabbSizeOf,
+                EnginePreference = preference,
+                AdvancedTimeout = advancedTimeout,
+                Progress = progress,
+            },
+            ct);
     }
 }

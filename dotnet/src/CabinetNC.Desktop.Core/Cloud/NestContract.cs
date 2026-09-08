@@ -17,6 +17,27 @@ public sealed record NestContractRequest(SubmitNestJobRequest Request, IReadOnly
 /// </summary>
 public static class NestRequestBuilder
 {
+    /// <summary>
+    /// v2: the full request. Nothing is downgraded — the server runs the same router on the same
+    /// inputs — so the only possible outcome besides a request is a validation message.
+    /// </summary>
+    public static (SubmitNestJobRequestV2? Request, string? Error) BuildV2(
+        IReadOnlyList<Panel> panels,
+        NestSettings settings,
+        IReadOnlyList<NestSheetSpec> sheets,
+        string enginePreference,
+        TimeSpan advancedTimeout)
+    {
+        var request = CabinetNC.Cloud.NestContract.NestContractV2Mapper.ToRequest(
+            panels,
+            settings,
+            sheets.Count > 0 ? sheets : [new NestSheetSpec { BorderMm = settings.MarginMm, SpacingMm = settings.ClearanceMm }],
+            enginePreference,
+            advancedTimeout);
+        var error = NestRequestV2Rules.Validate(request);
+        return error is null ? (request, null) : (null, error);
+    }
+
     public static NestContractRequest Build(
         IReadOnlyList<Panel> panels,
         NestSettings settings,
@@ -82,6 +103,10 @@ public static class NestRequestBuilder
 /// <summary>Turns a server result into the objects the Desktop already renders and validates.</summary>
 public static class NestResultMapper
 {
+    /// <summary>v2 carries everything the local router returns; nothing has to be reconstructed.</summary>
+    public static (NestResult Result, NestEngineRunLog Log) ToLocal(NestJobResultV2 result) =>
+        CabinetNC.Cloud.NestContract.NestContractV2Mapper.ToResult(result.Result);
+
     public static (NestResult Result, NestEngineRunLog Log) ToLocal(NestJobResult result, NestSheetSpec sheet)
     {
         var placements = result.Placements

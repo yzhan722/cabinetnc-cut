@@ -72,7 +72,8 @@ public sealed class NestJobExecutor(
 
     async Task RunAsync(ComputeJobEntity job, CancellationToken ct)
     {
-        if (!string.Equals(job.JobType, JobTypes.Nest, StringComparison.Ordinal))
+        var isV2 = string.Equals(job.JobType, JobTypes.NestV2, StringComparison.Ordinal);
+        if (!isV2 && !string.Equals(job.JobType, JobTypes.Nest, StringComparison.Ordinal))
         {
             await FailAsync(job, ApiErrorCodes.InvalidRequest, $"Unsupported job type '{job.JobType}'.", retryable: false, ct);
             return;
@@ -104,38 +105,79 @@ public sealed class NestJobExecutor(
             return;
         }
 
-        SubmitNestJobRequest request;
-        try
+        var inputJson = Encoding.UTF8.GetString(inputBytes);
+        var stopwatch = new Stopwatch();
+        byte[] resultBytes;
+        string engine;
+        if (isV2)
         {
-            request = CloudJson.Deserialize<SubmitNestJobRequest>(Encoding.UTF8.GetString(inputBytes));
-        }
-        catch (JsonException)
-        {
-            await FailAsync(job, ApiErrorCodes.InvalidRequest, "The job input is not a valid nest request.", retryable: false, ct);
-            return;
-        }
+            SubmitNestJobRequestV2 request;
+            try
+            {
+                request = CloudJson.Deserialize<SubmitNestJobRequestV2>(inputJson);
+                if (NestRequestV2Rules.Validate(request) is { } violation)
+                    throw new JsonException(violation);
+            }
+            catch (JsonException ex)
+            {
+                await FailAsync(job, ApiErrorCodes.InvalidRequest, $"The job input is not a valid nest request: {ex.Message}", retryable: false, ct);
+                return;
+            }
 
-        var stopwatch = Stopwatch.StartNew();
-        NestingOutput output;
-        try
-        {
-            output = runner.Run(NestJobMapper.ToNestingInput(request));
+            NestJobResultPayloadV2 payload;
+            stopwatch.Start();
+            try
+            {
+                payload = runner.RunV2(request, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                await FailAsync(job, ApiErrorCodes.ComputeFailed, $"The nesting engine threw {ex.GetType().Name}.", retryable: true, ct);
+                return;
+            }
+            stopwatch.Stop();
+            engine = payload.Engine;
+            resultBytes = Encoding.UTF8.GetBytes(CloudJson.Serialize(payload));
         }
-        catch (Exception ex)
+        else
         {
-            await FailAsync(job, ApiErrorCodes.ComputeFailed, $"The nesting engine threw {ex.GetType().Name}.", retryable: true, ct);
-            return;
-        }
-        stopwatch.Stop();
+            SubmitNestJobRequest request;
+            try
+            {
+                request = CloudJson.Deserialize<SubmitNestJobRequest>(inputJson);
+            }
+            catch (JsonException)
+            {
+                await FailAsync(job, ApiErrorCodes.InvalidRequest, "The job input is not a valid nest request.", retryable: false, ct);
+                return;
+            }
 
-        if (!output.Ok)
-        {
-            // Deterministic rejection of this input; retrying the same bytes cannot succeed.
-            await FailAsync(job, ApiErrorCodes.ComputeFailed, output.Error ?? "The nesting engine reported a failure.", retryable: false, ct);
-            return;
-        }
+            NestingOutput output;
+            stopwatch.Start();
+            try
+            {
+                output = runner.Run(NestJobMapper.ToNestingInput(request));
+            }
+            catch (Exception ex)
+            {
+                await FailAsync(job, ApiErrorCodes.ComputeFailed, $"The nesting engine threw {ex.GetType().Name}.", retryable: true, ct);
+                return;
+            }
+            stopwatch.Stop();
 
-        var resultBytes = Encoding.UTF8.GetBytes(CloudJson.Serialize(NestJobMapper.ToPayload(output)));
+            if (!output.Ok)
+            {
+                // Deterministic rejection of this input; retrying the same bytes cannot succeed.
+                await FailAsync(job, ApiErrorCodes.ComputeFailed, output.Error ?? "The nesting engine reported a failure.", retryable: false, ct);
+                return;
+            }
+            engine = output.Engine;
+            resultBytes = Encoding.UTF8.GetBytes(CloudJson.Serialize(NestJobMapper.ToPayload(output)));
+        }
         var resultKey = ObjectKeys.JobResult(job.TenantId, job.Id);
         try
         {
@@ -159,8 +201,8 @@ public sealed class NestJobExecutor(
             return;
         }
 
-        logger.LogInformation("Job {JobId} succeeded in {DurationMs} ms ({Engine})", job.Id, completion.DurationMs, output.Engine);
-        await AuditAsync(job, "job.succeeded", ct, new { durationMs = completion.DurationMs, engineVersion = completion.EngineVersion, engine = output.Engine });
+        logger.LogInformation("Job {JobId} succeeded in {DurationMs} ms ({Engine})", job.Id, completion.DurationMs, engine);
+        await AuditAsync(job, "job.succeeded", ct, new { durationMs = completion.DurationMs, engineVersion = completion.EngineVersion, engine });
     }
 
     async Task FailAsync(ComputeJobEntity job, string errorCode, string message, bool retryable, CancellationToken ct)

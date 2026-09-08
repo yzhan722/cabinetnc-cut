@@ -87,7 +87,8 @@ public sealed class FakeCloudApiHandler : HttpMessageHandler
             ("POST", ApiRoutes.AuthLogin) => Login(body),
             ("POST", ApiRoutes.AuthRefresh) => Refresh(body),
             ("POST", ApiRoutes.AuthLogout) => Authorized(request, _ => { LogoutCount++; return new HttpResponseMessage(HttpStatusCode.NoContent); }),
-            ("POST", ApiRoutes.JobsNest) => Authorized(request, _ => Submit(request, body)),
+            ("POST", ApiRoutes.JobsNest) => Authorized(request, _ => Submit(request, body, JobTypes.Nest)),
+            ("POST", ApiRoutes.JobsNestV2) => Authorized(request, _ => Submit(request, body, JobTypes.NestV2)),
             _ when request.Method == HttpMethod.Get && path.StartsWith("/api/v1/jobs/", StringComparison.Ordinal) && path.EndsWith("/result", StringComparison.Ordinal)
                 => Authorized(request, _ => Result(Guid.Parse(path.Split('/')[4]))),
             _ when request.Method == HttpMethod.Get && path.StartsWith("/api/v1/jobs/", StringComparison.Ordinal)
@@ -158,12 +159,23 @@ public sealed class FakeCloudApiHandler : HttpMessageHandler
         return action(token);
     }
 
-    HttpResponseMessage Submit(HttpRequestMessage request, string body)
+    readonly Dictionary<Guid, string> _jobTypes = [];
+
+    HttpResponseMessage Submit(HttpRequestMessage request, string body, string jobType)
     {
         if (!request.Headers.TryGetValues(ApiHeaders.IdempotencyKey, out var keys))
             return Error(HttpStatusCode.BadRequest, ApiErrorCodes.InvalidRequest, "missing idempotency key");
         var key = keys.Single();
-        _ = CloudJson.Deserialize<SubmitNestJobRequest>(body);
+        if (jobType == JobTypes.NestV2)
+        {
+            var v2 = CloudJson.Deserialize<SubmitNestJobRequestV2>(body);
+            if (NestRequestV2Rules.Validate(v2) is { } violation)
+                return Error(HttpStatusCode.BadRequest, ApiErrorCodes.InvalidRequest, violation);
+        }
+        else
+        {
+            _ = CloudJson.Deserialize<SubmitNestJobRequest>(body);
+        }
         lock (_gate)
         {
             SubmittedIdempotencyKeys.Add(key);
@@ -173,6 +185,7 @@ public sealed class FakeCloudApiHandler : HttpMessageHandler
                 _jobsByIdempotencyKey[key] = jobId;
                 _jobStatusSequence[jobId] = new Queue<JobStatus>(StatusSequence);
                 _jobCurrent[jobId] = JobStatus.Queued;
+                _jobTypes[jobId] = jobType;
             }
             return Json(HttpStatusCode.Accepted, new SubmitNestJobResponse(jobId, JobStatus.Queued, "corr"));
         }
@@ -207,6 +220,19 @@ public sealed class FakeCloudApiHandler : HttpMessageHandler
                 return Error(HttpStatusCode.NotFound, ApiErrorCodes.JobNotFound, "no job");
             if (status != JobStatus.Succeeded)
                 return Error(HttpStatusCode.Conflict, ApiErrorCodes.JobNotReady, "not ready");
+            if (_jobTypes.GetValueOrDefault(jobId) == JobTypes.NestV2)
+            {
+                var payload = new NestJobResultPayloadV2(
+                    "clipper_nfp_v1",
+                    [new NestPlacementDto("L", 0, 15, 15, 0), new NestPlacementDto("R", 1, 15, 15, 90)],
+                    2, ["BIG"],
+                    [new NestUnplacedReasonDto("BIG", "too_large", "exceeds every sheet")],
+                    [new NestGroupReportDto("MDF", 18, 3, 2, 2, 0, 41.5)],
+                    [new NestSheetDto(1220, 2440, 15, null, null, null, null, 12, true, false, [], "full", "MDF", 18, "None"), new NestSheetDto(1220, 2440, 15, null, null, null, null, 12, true, false, [], "full", "MDF", 18, "None")],
+                    [],
+                    new NestRunLogDto("clipper_nfp_v1", "clipper_nfp_v1", null, 87, 41.5));
+                return Json(HttpStatusCode.OK, new NestJobResultV2(jobId, payload, "CabinetNC.Compute.Core/test", new string('a', 64), new string('b', 64), 87));
+            }
             return Json(HttpStatusCode.OK, new NestJobResult(
                 jobId, "grouped_blf_v0", "CabinetNC.Compute.Core/test",
                 [new NestPlacementDto("A", 0, 15, 15, 0), new NestPlacementDto("B", 0, 627, 15, 90)],

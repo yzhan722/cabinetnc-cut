@@ -164,6 +164,52 @@ public class IntranetComputeGatewayTests
     }
 
     [Fact]
+    public async Task V2_request_round_trips_through_the_same_polling_loop_and_maps_to_local_shapes()
+    {
+        var (client, gateway) = await GatewayAsync();
+        using var _ = client;
+        var (request, error) = NestRequestBuilder.BuildV2(
+            [
+                new CabinetNC.Domain.Parts.Panel { PanelId = "L", Material = "MDF", ThicknessMm = 18, Outline = new CabinetNC.Domain.Geometry.Outline { Points = [new(0, 0), new(700, 0), new(700, 250), new(300, 250), new(300, 500), new(0, 500)] } },
+                new CabinetNC.Domain.Parts.Panel { PanelId = "R", Material = "MDF", ThicknessMm = 18, Outline = new CabinetNC.Domain.Geometry.Outline { Points = [new(0, 0), new(600, 0), new(600, 400), new(0, 400)] } },
+            ],
+            new CabinetNC.Domain.Nesting.NestSettings { MarginMm = 15, ClearanceMm = 12 },
+            [new CabinetNC.Domain.Nesting.NestSheetSpec { WidthMm = 1220, LengthMm = 2440, BorderMm = 15, SpacingMm = 12, Label = "full", Material = "MDF", ThicknessMm = 18 }],
+            "nfp",
+            TimeSpan.FromSeconds(25));
+        Assert.Null(error);
+        Assert.Equal(6, request!.Panels[0].Outline.Count);   // true shape, not a bounding box
+
+        var result = await gateway.RunNestingV2Async(request, null, CT);
+
+        Assert.Equal("clipper_nfp_v1", result.Result.Engine);
+        Assert.Contains(_api.RequestLog, r => r == $"POST {ApiRoutes.JobsNestV2}");
+        var (local, log) = NestResultMapper.ToLocal(result);
+        Assert.Equal(2, local.SheetCount);
+        Assert.Equal(2, local.SheetsUsed.Count);
+        Assert.Equal("full", local.SheetsUsed[0].Label);
+        Assert.Equal(["BIG"], local.Unplaced);
+        Assert.Equal("too_large", Assert.Single(local.UnplacedReasons).Code);
+        Assert.Equal(41.5, Assert.Single(local.GroupReports).UtilizationPct);
+        Assert.Equal(87, log.ElapsedMs);
+        Assert.Equal("clipper_nfp_v1", log.SelectedEngine);
+    }
+
+    [Fact]
+    public void V2_builder_reports_contract_violations_instead_of_downgrading()
+    {
+        var (request, error) = NestRequestBuilder.BuildV2(
+            [new CabinetNC.Domain.Parts.Panel { PanelId = "", Material = "MDF", ThicknessMm = 18, Outline = new CabinetNC.Domain.Geometry.Outline { Points = [new(0, 0), new(1, 0), new(1, 1)] } }],
+            new CabinetNC.Domain.Nesting.NestSettings(),
+            [],
+            "nfp",
+            TimeSpan.FromSeconds(25));
+
+        Assert.Null(request);
+        Assert.Contains("panelId", error);
+    }
+
+    [Fact]
     public async Task Signed_out_session_refuses_to_run_instead_of_falling_back()
     {
         var client = new CloudApiClient(ClientFixtures.Options(), _tokens, new DeviceIdentityStore(_dir.Path), _clock, _api);
