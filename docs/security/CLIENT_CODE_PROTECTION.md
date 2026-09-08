@@ -52,7 +52,41 @@ Desktop 需要 `CabinetNC.Domain` 的模型（`Panel`、`Outline`、包/工程�
 2. Desktop 里仍在本机调用算法的路径（CAM 叠加 `RebuildOpsOverlay`、NC 预览 `NcEmitter`、`GuillotineCutPlanner`）按 Task 11 的顺序迁到云 job：Operations → Preflight → Post。
 3. 迁完之后 `verify-customer-package.ps1` 的严格模式才应该变绿；`-PoC` 开关随即删除。
 
-## 4. 混淆评估（未实施，理由如下）
+## 4. 已实施的混淆（Phase 2 · P2-7 基线，2026-09-08）
+
+先说清楚保护模型，再说做了什么：
+
+| 层 | 保护什么 | 手段 | 抵御 |
+|---|---|---|---|
+| L0 架构 | 排版/CAM/NC 算法 | 根本不在客户端（§3） | 任何反编译器：不存在的代码无法还原 |
+| L1 服务器镜像 | `Domain.Compute` / `Compute.Core` / `Worker` | **Obfuscar 激进模式**：全部类型与成员（含 public）重命名为不可区分的 Unicode 名、所有字符串字面量隐藏、`SuppressIldasm`；映射表只留在 Docker 构建阶段 | 拷出 DLL 用 ILSpy/dnSpy 直接阅读；Domain.Compute 反编译为 4 个无名文件，`"contour"`/`"drill"`/G 代码片段/引擎标签全部不可见 |
+| L2 客户包 | `Desktop.Core`（鉴权/令牌/协议）、`Domain`（模型）、`NestContract` | **Obfuscar 保守模式**：保留公共 API（STJ 与 XAML 绑定按名访问），重命名私有/内部成员，隐藏字符串 | 直接阅读令牌/刷新逻辑与内部标识；DPAPI 熵字符串、`cloud.token`/`device-id` 文件名、错误文案不再明文 |
+| L3 令牌与数据 | refresh token、密码 | DPAPI CurrentUser；服务端只存哈希；access token 仅内存 | 拷走文件到别的账号/机器无法解密 |
+
+**为什么内网服务器也要混淆**：服务器部署在客户现场，有 root 就能拷出 worker 镜像里的程序集——这是当前最大的暴露面，所以 L1 比 L2 更激进。
+
+### 4.1 集成点
+
+- 客户包：`dotnet/scripts/publish-customer.ps1` → publish → `obfuscar.console`（配置 `dotnet/obfuscation/customer.obfuscar.xml`）→ 覆盖三个 DLL → 映射表移到 `dist/obfuscation-maps/customer-<rev>-<utc>.map`（git 忽略、不发货、读客户堆栈需要它）→ 严格验证（新增检查：`Desktop.Core.dll` 中不得出现 `RefreshCoreAsync`/`WithNetworkGraceAsync`/熵字符串/令牌文件名；包内不得有 `Mapping.txt`）。`-SkipObfuscation` 仅用于排障。
+- worker 镜像：`dotnet/src/CabinetNC.Cloud.Worker/Dockerfile` 构建阶段安装 `Obfuscar.GlobalTool 2.2.50` 并应用 `dotnet/obfuscation/worker.obfuscar.xml`；`ARG OBFUSCATE=false` 可关闭；映射表在 `/maps/worker-mapping.txt`（仅构建阶段，`docker build --target build` 可导出）。
+- 为混淆做的代码调整：worker 审计的匿名对象改为字典（匿名类型属性名会被重命名，破坏 JSON 键）。
+
+### 4.2 验收（四项，2026-09-08）
+
+| 项 | 结果 |
+|---|---|
+| 全量 .NET 测试 | 770/770（测试针对未混淆构建；混淆只发生在 publish/镜像阶段） |
+| UI smoke | 开发版内网场景通过（混淆 worker）；**客户版（混淆客户端 + 混淆 worker）场景 07 通过**：排版 → 刀路 → NC → 导出 |
+| 严格包验证 | `RESULT: PASS`（含新增的混淆检查） |
+| 普通反编译器验收（ilspycmd 9.1） | 客户端 `Desktop.Core`：混淆前 10/10 探针命中（方法名、熵字符串、文件名），混淆后私有标识与字符串 0 命中，仅剩必须保留的公共 API 名；worker `Domain.Compute`：14 个探针（类型名、方法名、`"contour"`、`"drill"`、`G1 X`、`blf_fallback`、`TroyRecipe`）全部 0 命中 |
+
+### 4.3 诚实的边界
+
+- Obfuscar 只做重命名与字符串隐藏，**没有控制流混淆、反调试、反篡改**；字符串隐藏可被运行时调试还原。它把"复制粘贴即可复用"变成"必须逆向工程"，不是"不可能"。
+- 仍以明文存在的：公共 API 名（模型属性、契约 DTO、`Desktop.Core` 公共方法）——这是 STJ/XAML 的硬约束；`CabinetNC.Desktop.dll`（WPF 界面）未混淆。
+- 更强的选项（按性价比）：① 商业混淆器（Eazfuscator.NET 2026.1 / Dotfuscator Pro 7.5 / ArmDot）加控制流混淆、字符串加密、反篡改，需采购；② worker **Native AOT**（无 IL 可反编译，只剩机器码）——worker 是控制台程序，技术上可行，但 EF Core 需编译模型、MinIO SDK 反射兼容性需验证，NOT_RUN；③ 把 worker 移出客户现场（公有云托管算法），超出内网 PoC 范围。
+
+## 4b. 混淆评估（历史记录：实施前的评估）
 
 | 候选 | 版本 / 许可 | .NET 10 | WPF/XAML | 结论 |
 |---|---|---|---|---|

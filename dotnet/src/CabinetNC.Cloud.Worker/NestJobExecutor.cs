@@ -213,7 +213,7 @@ public sealed class NestJobExecutor(
         }
 
         logger.LogInformation("Job {JobId} succeeded in {DurationMs} ms ({Engine})", job.Id, completion.DurationMs, engine);
-        await AuditAsync(job, "job.succeeded", ct, new { durationMs = completion.DurationMs, engineVersion = completion.EngineVersion, engine });
+        await AuditAsync(job, "job.succeeded", ct, new Dictionary<string, object?> { ["durationMs"] = completion.DurationMs, ["engineVersion"] = completion.EngineVersion, ["engine"] = engine });
     }
 
     async Task FailAsync(ComputeJobEntity job, string errorCode, string message, bool retryable, CancellationToken ct)
@@ -223,11 +223,11 @@ public sealed class NestJobExecutor(
         {
             case JobStatus.Queued:
                 logger.LogWarning("Job {JobId} attempt {Attempt} failed with {ErrorCode}; requeued", job.Id, job.AttemptCount, errorCode);
-                await AuditAsync(job, "job.retry", ct, new { errorCode, attempt = job.AttemptCount });
+                await AuditAsync(job, "job.retry", ct, new Dictionary<string, object?> { ["errorCode"] = errorCode, ["attempt"] = job.AttemptCount });
                 break;
             case JobStatus.Failed:
                 logger.LogWarning("Job {JobId} failed permanently with {ErrorCode} after {Attempt} attempt(s)", job.Id, errorCode, job.AttemptCount);
-                await AuditAsync(job, "job.failed", ct, new { errorCode, attempt = job.AttemptCount });
+                await AuditAsync(job, "job.failed", ct, new Dictionary<string, object?> { ["errorCode"] = errorCode, ["attempt"] = job.AttemptCount });
                 break;
             default:
                 logger.LogWarning("Lease for job {JobId} was lost before its failure could be recorded", job.Id);

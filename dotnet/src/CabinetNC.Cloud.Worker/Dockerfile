@@ -26,6 +26,19 @@ RUN dotnet publish dotnet/src/CabinetNC.Cloud.Worker/CabinetNC.Cloud.Worker.cspr
       -c Release --no-restore -o /app \
       -p:SourceRevisionId=${SOURCE_REVISION} -p:UseAppHost=false
 
+# The worker runs on the customer's own server, so the algorithm assemblies are obfuscated here:
+# all types/members renamed (they are only referenced by each other), every string literal hidden.
+# The rename map stays in this build stage (needed to read worker stack traces: export it with
+# `docker build --target build` and `docker cp` if a trace must be decoded); it never enters the image.
+ARG OBFUSCATE=true
+COPY dotnet/obfuscation/worker.obfuscar.xml /obfuscation/worker.obfuscar.xml
+RUN if [ "$OBFUSCATE" = "true" ]; then \
+      dotnet tool install --global Obfuscar.GlobalTool --version 2.2.50 \
+      && /root/.dotnet/tools/obfuscar.console /obfuscation/worker.obfuscar.xml \
+      && mkdir -p /maps && mv /app/obfuscated/Mapping.txt /maps/worker-mapping.txt \
+      && cp /app/obfuscated/*.dll /app/ && rm -rf /app/obfuscated ; \
+    fi
+
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS runtime
 # Npgsql probes for Kerberos (GSSAPI) support at startup and logs an error when the library is absent.
 RUN apt-get update \

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cloud worker obfuscation (Obfuscar, MIT). Aggressive: the three assemblies below are only ever
+  referenced by each other inside the worker image, so public types and members are renamed too and
+  every string literal is hidden. Not processed: CabinetNC.Cloud.Contracts (wire JSON by property
+  name), CabinetNC.Cloud.NestContract and CabinetNC.Domain (model types with enums whose names travel
+  on the wire), CabinetNC.Cloud.Infrastructure (EF entities). Applied in the Dockerfile build stage.
+-->
+<Obfuscator>
+  <Var name="InPath" value="/app" />
+  <Var name="OutPath" value="/app/obfuscated" />
+  <Var name="KeepPublicApi" value="false" />
+  <Var name="HidePrivateApi" value="true" />
+  <Var name="HideStrings" value="true" />
+  <Var name="RenameFields" value="true" />
+  <Var name="RenameProperties" value="true" />
+  <Var name="RenameEvents" value="true" />
+  <Var name="ReuseNames" value="true" />
+  <Var name="UseUnicodeNames" value="true" />
+  <Var name="OptimizeMethods" value="true" />
+  <Var name="SuppressIldasm" value="true" />
+  <Var name="AnalyzeXaml" value="false" />
+
+  <Module file="$(InPath)/CabinetNC.Cloud.Worker.dll">
+    <!-- Hosting resolves the entry point; keep Program.Main discoverable. -->
+    <SkipType name="CabinetNC.Cloud.Worker.Program" skipMethods="true" />
+  </Module>
+  <Module file="$(InPath)/CabinetNC.Compute.Core.dll" />
+  <Module file="$(InPath)/CabinetNC.Domain.Compute.dll">
+    <!-- The module initializer registers the post processors by attribute, not by name; nothing to skip. -->
+  </Module>
+</Obfuscator>

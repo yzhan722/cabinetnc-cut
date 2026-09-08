@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Customer package obfuscation (Obfuscar, MIT). Conservative on purpose:
+    * public API is kept: Domain / Desktop.Core types are serialized by property name (package JSON,
+      library.json, cloud.json, cloud.token) and bound by name from the WPF XAML in CabinetNC.Desktop.dll;
+    * private/internal members are renamed and every string literal is hidden;
+    * CabinetNC.Desktop.dll (WPF code-behind, x:Name fields, event handlers) is deliberately not processed —
+      Obfuscar's maintainers do not support XAML renaming and the UI glue holds no algorithm value.
+  Invoked by dotnet/scripts/publish-customer.ps1 with InPath/OutPath overridden on the command line.
+-->
+<Obfuscator>
+  <Var name="InPath" value="." />
+  <Var name="OutPath" value=".\obfuscated" />
+  <Var name="KeepPublicApi" value="true" />
+  <Var name="HidePrivateApi" value="true" />
+  <Var name="HideStrings" value="true" />
+  <Var name="RenameFields" value="true" />
+  <Var name="RenameProperties" value="true" />
+  <Var name="RenameEvents" value="true" />
+  <Var name="ReuseNames" value="true" />
+  <Var name="UseUnicodeNames" value="true" />
+  <Var name="OptimizeMethods" value="true" />
+  <Var name="SuppressIldasm" value="true" />
+  <Var name="AnalyzeXaml" value="false" />
+
+  <Module file="$(InPath)\CabinetNC.Desktop.Core.dll" />
+  <Module file="$(InPath)\CabinetNC.Cloud.NestContract.dll" />
+  <Module file="$(InPath)\CabinetNC.Domain.dll" />
+</Obfuscator>

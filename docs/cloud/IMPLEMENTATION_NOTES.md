@@ -869,6 +869,10 @@ WPF 侧全部放在新文件里，`MainWindow.xaml.cs` 只改了 `RunNestAsync` 
 2. "本张密排优化"（`SheetStabilityOptimizer`）客户版暂不提供；需要时作为新 job 类型上云（与 nest.v2 同一契约基础设施）。
 3. 本机 gRPC `ComputeWorker` 保留为开发/A-B 工具（引用 Compute），客户版不构建不发布。
 
+## P2-7 — 混淆基线（2026-09-08，机器 B）
+
+见 `docs/security/CLIENT_CODE_PROTECTION.md` §4。要点：worker 镜像在 Dockerfile 构建阶段用 Obfuscar 2.2.50 激进混淆 `Worker`/`Compute.Core`/`Domain.Compute`（`KeepPublicApi=false` + `HideStrings`，映射表不进镜像）；客户包在 `publish-customer.ps1` 里保守混淆 `Desktop.Core`/`NestContract`/`Domain`（保留公共 API），映射表落到 `dist/obfuscation-maps/`（git 忽略）；`verify-customer-package.ps1` 新增混淆检查。worker 审计匿名对象改为字典。验收：770/770、混淆后整栈 UI smoke 开发版 + 客户版通过、严格验证 PASS、ilspycmd 探针客户端 10→0、worker 14 个探针 0 命中。边界：无控制流混淆/反篡改。
+
 ### 收尾提醒（给下一位接手者）
 
 1. **本机环境是会话级的**：每个新 shell 要先 `$env:DOTNET_ROOT='C:\Users\alex\AppData\Local\Microsoft\dotnet'; $env:PATH="C:\Users\alex\AppData\Local\Microsoft\dotnet;D:\Docker\Program\resources\bin;$env:PATH"`，否则 `dotnet` 会解析到系统目录里只有 9.0 运行时的安装（"No .NET SDKs were found"）。用户级 `DOTNET_ROOT` 指向了错误目录，建议用户自行修正。

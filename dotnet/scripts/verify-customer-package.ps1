@@ -86,7 +86,17 @@ foreach ($f in $files) {
 }
 if ($secretHits) { Fail "possible embedded secrets: $($secretHits -join '; ')" } else { Ok 'no server secrets (env files, connection strings, signing keys, object-store credentials)' }
 
-# 5. the product itself
+# 5. obfuscation applied to the non-UI client assemblies (private identifiers and string literals gone)
+$core = $files | Where-Object { $_.Name -ieq 'CabinetNC.Desktop.Core.dll' } | Select-Object -First 1
+if ($core) {
+    $coreText = [System.Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($core.FullName))
+    $leaks = @('RefreshCoreAsync', 'WithNetworkGraceAsync', 'CabinetNC.Cloud.RefreshToken.v1', 'cloud.token', 'device-id') | Where-Object { $coreText.Contains($_) }
+    if ($leaks) { Fail "CabinetNC.Desktop.Core.dll is not obfuscated (found: $($leaks -join ', ')); run publish-customer.ps1 without -SkipObfuscation" }
+    else { Ok 'CabinetNC.Desktop.Core.dll obfuscated (no private identifiers or string literals in plaintext)' }
+}
+if ($files | Where-Object { $_.Name -ieq 'Mapping.txt' }) { Fail 'obfuscation rename map (Mapping.txt) must not ship with the package' }
+
+# 6. the product itself
 if ($files | Where-Object { $_.Name -ieq 'CabinetNC.Desktop.exe' }) { Ok 'CabinetNC.Desktop.exe present' } else { Fail 'CabinetNC.Desktop.exe missing' }
 if ($files | Where-Object { $_.Name -ieq 'CabinetNC.Desktop.Core.dll' }) { Ok 'CabinetNC.Desktop.Core.dll (intranet client) present' } else { Fail 'CabinetNC.Desktop.Core.dll missing' }
 

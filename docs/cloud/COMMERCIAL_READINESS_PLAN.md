@@ -24,7 +24,7 @@
 | P2-4 | **Post（NC）云 job**：`IPostProcessorRunner` → `jobs/post` → Desktop 内网 NC 预览/导出走服务器 | G3 | 本机/服务器 NC **逐字节**相同（无归一化）；导出流程 UI smoke 通过 | **DONE** |
 | P2-5 | **Domain 拆分**：`CabinetNC.Domain`（模型 + 客户端几何，命名空间不变）/ `CabinetNC.Domain.Compute`（BLF/NFP/Deepnest/Router/PiP 打包/稳定性优化/OpsPlanner/PocketClearer/CamPipeline/NcEmitter）；Desktop 客户版不引用 Compute，本机分支 `#if !CUSTOMER_BUILD`；`verify-customer-package.ps1` 只有严格模式（禁 `Domain.Compute.dll` + 算法类型名扫描） | G4 | 全量回归、UI smoke（开发版+客户版）、严格验证 PASS | **DONE**：770/770、开发版 6/6、客户版 07 全流程、`RESULT: PASS`。断料/桥接/标签留在客户端（决策）；"本张密排优化"客户版暂不提供 |
 | P2-6 | **运维包**：`backup.sh/restore.sh`（pg_dump + MinIO 卷）并演练；compose 默认 2 worker、poll 0.2 s；`/api/v1/health/ready` 深检（DB/MinIO）；日志轮转；升级/回滚步骤；Prometheus 指标（job 计数/时延/失败） | G5 | 恢复演练：备份→清库→恢复→job 与用户可查；杀掉一个 worker 后 job 由另一个完成 | **DONE**（指标待做）；演练记录见 runbook §4.6 |
-| P2-7 | **受保护构建**：Eazfuscator.NET（或 Dotfuscator Pro）试用版在客户包上试跑 → 全量测试 + UI smoke + 严格验证 + ILSpy 检查 | G4 | 四项验收全绿；否则记录 FAIL 与原因 | 需采购/试用许可 |
+| P2-7 | **受保护构建**：Obfuscar（MIT）基线——worker 镜像激进混淆（含公共符号 + 字符串），客户包保守混淆（保留公共 API）；四项验收（测试 / UI smoke / 严格验证 / ilspycmd 反编译探针） | G4 | 四项验收全绿；否则记录 FAIL 与原因 | **DONE（基线）**：四项全绿，见 `CLIENT_CODE_PROTECTION.md` §4。控制流混淆/反篡改仍需商业工具或 worker Native AOT（后续） |
 | P2-8 | **现场验证**：第二台 LAN 机器、车间 CA 证书、真实工单（去标识）性能与 parity | G6 | 数据写入 `PERFORMANCE_RESULTS.md` §"现场" | 需运维/现场 |
 
 P2-1 与 P2-2 可以立刻开始且互不依赖；P2-3/4 依赖 P2-2 的契约基础设施；P2-5 依赖 P2-3/4；P2-7/8 需要外部条件。

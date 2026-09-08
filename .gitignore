@@ -28,3 +28,6 @@ logs/*
 !logs/.gitkeep
 .cnc-pickup/
 dotnet/artifacts/
+
+# Obfuscation rename maps: needed to read customer stack traces, never shipped, never committed.
+dist/obfuscation-maps/
