@@ -216,12 +216,16 @@ curl -sS "$API/api/v1/auth/password" -H "$AUTH" -H 'Content-Type: application/js
 ### 4.6 日常运维
 
 ```bash
-docker compose logs -f cabinetnc-api cabinetnc-worker        # JSON 行日志，含 correlationId / jobId
-docker compose exec postgres pg_dump -U cabinetnc cabinetnc > backup-$(date +%F).sql   # 数据库备份
-docker run --rm -v cabinetnc-intranet_minio-data:/data -v "$PWD":/out alpine tar czf /out/minio-$(date +%F).tgz -C /data .   # 对象备份
-git pull && docker compose up -d --build                       # 升级：API 启动时自动迁移
-docker compose run -d -e CABINETNC_WORKER_ID=worker-2 cabinetnc-worker   # 临时加一个 worker（ID 必须不同）
+docker compose logs -f cabinetnc-api cabinetnc-worker cabinetnc-worker-2   # JSON 行日志，含 correlationId / jobId；每服务 5×50 MB 轮转
+curl -sS https://cabinetnc.shop.local/api/v1/health/ready                  # 就绪：DB/MinIO 真探测 + 队列深度；不就绪返回 503
+./backup.sh ./backups                                                      # 备份：pg_dump（custom 格式）+ MinIO 卷 tar + manifest
+./restore.sh ./backups/cabinetnc-<UTC 时间戳>                              # 恢复（破坏性：停 api/worker → 重建 schema → pg_restore → 替换 MinIO 数据 → 启动）
+git pull && docker compose up -d --build                                   # 升级：API 启动时自动迁移；回滚 = checkout 旧版本 + 同一命令 + 必要时 restore.sh
 ```
+
+默认跑 **2 个 worker**（`cabinetnc-worker` / `cabinetnc-worker-2`，ID 不同，轮询 0.2 s）：一个挂掉，另一个在租约到期后接管其 job；再加 worker 就复制一段 service 定义并换 `CABINETNC_WORKER_ID`。
+
+备份策略建议：每日 `backup.sh` 到另一台机器/NAS（cron），保留 14 天；升级前手动备份一次。**演练记录（机器 B，2026-09-08）**：造 2 个 job → `backup.sh`（dump 16 KB + MinIO 8 KB）→ `docker compose down -v`（库与对象全部销毁，重建后 0 个 job）→ `restore.sh` → 2 job / 1 用户 / 16 审计全部回来，用恢复前的管理员密码登录成功，`GET /jobs/{id}/result` 返回 200（服务端重算 `ResultSha256` 与恢复出的 MinIO 对象一致），诊断端点显示原审计链与设备名；同轮还验证了停掉 worker-1 后 worker-2 接管并完成 job。
 
 限流按客户端 IP 计数；API 只信任来自 `172.28.100.0/24`（compose 里 `edge` 网络的固定网段）的 `X-Forwarded-For`。若改了该网段，同步改 compose 里 API 的 `CABINETNC_TRUSTED_PROXY_CIDRS`。
 

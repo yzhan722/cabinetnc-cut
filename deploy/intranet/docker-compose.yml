@@ -5,6 +5,36 @@
 
 name: cabinetnc-intranet
 
+# Bounded local log files for every service (the API/worker write one JSON line per event).
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "5"
+
+# One definition, two replicas: the second worker exists for lease recovery, not throughput
+# (see docs/cloud/PERFORMANCE_RESULTS.md §7). Each replica must carry a distinct worker id.
+x-worker: &worker
+  build:
+    context: ../..
+    dockerfile: dotnet/src/CabinetNC.Cloud.Worker/Dockerfile
+    args:
+      SOURCE_REVISION: "${SOURCE_REVISION:-}"
+  image: cabinetnc/cloud-worker:${CABINETNC_IMAGE_TAG:-local}
+  restart: unless-stopped
+  depends_on:
+    cabinetnc-api:
+      condition: service_healthy   # the API applies migrations; the worker never does
+  healthcheck:
+    test: ["CMD", "bash", "-c", "grep -q CabinetNC.Cloud.Worker.dll /proc/1/cmdline"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 20s
+  networks: [backend]
+  <<: *logging
+
 x-datastore-env: &datastore-env
   CABINETNC_DB_CONNECTION: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-cabinetnc};Username=${POSTGRES_USER:-cabinetnc};Password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
   CABINETNC_OBJECTSTORE_ENDPOINT: "minio:9000"
@@ -17,6 +47,7 @@ services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    <<: *logging
     environment:
       POSTGRES_DB: "${POSTGRES_DB:-cabinetnc}"
       POSTGRES_USER: "${POSTGRES_USER:-cabinetnc}"
@@ -34,6 +65,7 @@ services:
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     restart: unless-stopped
+    <<: *logging
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}"
@@ -58,6 +90,7 @@ services:
         SOURCE_REVISION: "${SOURCE_REVISION:-}"
     image: cabinetnc/cloud-api:${CABINETNC_IMAGE_TAG:-local}
     restart: unless-stopped
+    <<: *logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,33 +118,27 @@ services:
       edge: {}
 
   cabinetnc-worker:
-    build:
-      context: ../..
-      dockerfile: dotnet/src/CabinetNC.Cloud.Worker/Dockerfile
-      args:
-        SOURCE_REVISION: "${SOURCE_REVISION:-}"
-    image: cabinetnc/cloud-worker:${CABINETNC_IMAGE_TAG:-local}
-    restart: unless-stopped
-    depends_on:
-      cabinetnc-api:
-        condition: service_healthy   # the API applies migrations; the worker never does
+    <<: *worker
     environment:
       <<: *datastore-env
       # Every worker replica needs its own id; inside a container the pid-based default is always 1.
       CABINETNC_WORKER_ID: "${CABINETNC_WORKER_ID:-worker-1}"
       CABINETNC_WORKER_LEASE_SECONDS: "${CABINETNC_WORKER_LEASE_SECONDS:-300}"
-      CABINETNC_WORKER_POLL_SECONDS: "${CABINETNC_WORKER_POLL_SECONDS:-1}"
-    healthcheck:
-      test: ["CMD", "bash", "-c", "grep -q CabinetNC.Cloud.Worker.dll /proc/1/cmdline"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    networks: [backend]
+      # 0.2 s halves end-to-end latency versus 1 s (PERFORMANCE_RESULTS.md §5) at negligible idle cost.
+      CABINETNC_WORKER_POLL_SECONDS: "${CABINETNC_WORKER_POLL_SECONDS:-0.2}"
+
+  cabinetnc-worker-2:
+    <<: *worker
+    environment:
+      <<: *datastore-env
+      CABINETNC_WORKER_ID: "${CABINETNC_WORKER_2_ID:-worker-2}"
+      CABINETNC_WORKER_LEASE_SECONDS: "${CABINETNC_WORKER_LEASE_SECONDS:-300}"
+      CABINETNC_WORKER_POLL_SECONDS: "${CABINETNC_WORKER_POLL_SECONDS:-0.2}"
 
   reverse-proxy:
     image: caddy:2-alpine
     restart: unless-stopped
+    <<: *logging
     depends_on:
       cabinetnc-api:
         condition: service_healthy

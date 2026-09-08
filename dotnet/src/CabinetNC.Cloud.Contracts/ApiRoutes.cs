@@ -11,6 +11,8 @@ public static class ApiRoutes
     public const string JobStatusTemplate = "/api/v1/jobs/{jobId}";
     public const string JobResultTemplate = "/api/v1/jobs/{jobId}/result";
     public const string Health = "/api/v1/health";
+    /// <summary>Readiness: verifies PostgreSQL and the object store; 503 with per-dependency states when not ready.</summary>
+    public const string HealthReady = "/api/v1/health/ready";
 
     public static string ForJobStatus(Guid jobId) => $"/api/v1/jobs/{jobId:D}";
     public static string ForJobResult(Guid jobId) => $"/api/v1/jobs/{jobId:D}/result";

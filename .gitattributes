@@ -7,3 +7,8 @@ docs/sprint/golden/**    text=auto eol=lf
 
 # Programs the machine actually ran are evidence: keep every byte, CRLF included.
 dotnet/tests/testdata/regression/shop-anc/*.anc -text
+
+# Server-side scripts and container files must stay LF even when checked out on Windows.
+*.sh                     text eol=lf
+Dockerfile               text eol=lf
+deploy/intranet/Caddyfile text eol=lf

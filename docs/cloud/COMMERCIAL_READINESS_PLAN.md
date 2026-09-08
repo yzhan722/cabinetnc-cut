@@ -23,7 +23,7 @@
 | P2-3 | **Operations（CAM）云 job**：characterization → `IOperationsRunner` 入 Compute.Core → 本机 gRPC 变 adapter → `jobs/operations` → Desktop 内网模式刀路走服务器 | G3 | op 数量/零件-特征关联/大板坐标/钻孔-轮廓语义 parity；本机回归不变 | |
 | P2-4 | **Post（NC）云 job**：golden NC → `IPostProcessorRunner` → `jobs/post` → Desktop 内网 NC 预览/导出走服务器 | G3 | 本机/服务器 NC 归一化后逐行相同，且**不归一化掉有意义差异**；导出流程 UI smoke 通过 | |
 | P2-5 | **Domain 拆分**：`CabinetNC.Domain.Model`（几何、零件、包、设置、校验）/ `CabinetNC.Domain.Compute`（BLF/NFP/Guillotine/CAM/Post）；Desktop 客户版只引用 Model；`verify-customer-package.ps1` 严格模式 PASS，删除 `-PoC` | G4 | 全量回归、UI smoke（开发版+客户版）、严格验证 PASS | |
-| P2-6 | **运维包**：`backup.sh/restore.sh`（pg_dump + MinIO 卷）并演练；compose 默认 2 worker、poll 0.2 s；`/api/v1/health` 深检（DB/MinIO）与 `/api/v1/health/live`；日志轮转；升级/回滚步骤；Prometheus 指标（job 计数/时延/失败） | G5 | 恢复演练：备份→清库→恢复→job 与用户可查；杀掉一个 worker 后 job 由另一个完成 | |
+| P2-6 | **运维包**：`backup.sh/restore.sh`（pg_dump + MinIO 卷）并演练；compose 默认 2 worker、poll 0.2 s；`/api/v1/health/ready` 深检（DB/MinIO）；日志轮转；升级/回滚步骤；Prometheus 指标（job 计数/时延/失败） | G5 | 恢复演练：备份→清库→恢复→job 与用户可查；杀掉一个 worker 后 job 由另一个完成 | **DONE**（指标待做）；演练记录见 runbook §4.6 |
 | P2-7 | **受保护构建**：Eazfuscator.NET（或 Dotfuscator Pro）试用版在客户包上试跑 → 全量测试 + UI smoke + 严格验证 + ILSpy 检查 | G4 | 四项验收全绿；否则记录 FAIL 与原因 | 需采购/试用许可 |
 | P2-8 | **现场验证**：第二台 LAN 机器、车间 CA 证书、真实工单（去标识）性能与 parity | G6 | 数据写入 `PERFORMANCE_RESULTS.md` §"现场" | 需运维/现场 |
 

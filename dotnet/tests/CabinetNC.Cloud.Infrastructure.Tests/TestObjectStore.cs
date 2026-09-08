@@ -38,6 +38,8 @@ public sealed class TestObjectStore : IObjectStore
     {
         ObjectKeyRules.EnsureSafe(key);
         ct.ThrowIfCancellationRequested();
+        if (FailReadWhen?.Invoke(key) == true)
+            throw new IOException("Injected object-store read failure.");
         return Task.FromResult(_objects.ContainsKey(key));
     }
 

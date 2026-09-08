@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -158,6 +159,35 @@ app.MapGet(ApiRoutes.Health, (TimeProvider clock) =>
             CloudJson.Options))
     .AllowAnonymous();
 
+// Readiness for operators and load balancers: real round trips to PostgreSQL and the object store, each
+// bounded to two seconds, plus the queue depth. Anonymous, but reveals nothing beyond ok/failed + counts.
+app.MapGet(ApiRoutes.HealthReady, async (CloudDbContext db, IObjectStore objects, TimeProvider clock, CancellationToken ct) =>
+    {
+        var database = await ProbeAsync(async token =>
+        {
+            var queued = await db.ComputeJobs.CountAsync(j => j.Status == JobStatus.Queued, token);
+            var running = await db.ComputeJobs.CountAsync(j => j.Status == JobStatus.Running, token);
+            return (queued, running);
+        }, ct);
+        var objectStore = await ProbeAsync(async token =>
+        {
+            await objects.ExistsAsync("health/readiness-probe", token);
+            return (0, 0);
+        }, ct);
+
+        var ready = database.Health.Status == "ok" && objectStore.Health.Status == "ok";
+        var response = new ReadinessResponse(
+            ready ? "ready" : "not_ready",
+            typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
+            clock.GetUtcNow(),
+            database.Health,
+            objectStore.Health,
+            database.Counts.queued,
+            database.Counts.running);
+        return Results.Json(response, CloudJson.Options, statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
+    })
+    .AllowAnonymous();
+
 app.MapPost(ApiRoutes.AuthLogin, async (
         LoginRequest request,
         AuthService auth,
@@ -228,6 +258,29 @@ static RateLimitPartition<string> FixedWindow(HttpContext context, int permitLim
         QueueLimit = 0,
         AutoReplenishment = true,
     });
+}
+
+static async Task<(DependencyHealth Health, (int queued, int running) Counts)> ProbeAsync(
+    Func<CancellationToken, Task<(int queued, int running)>> probe,
+    CancellationToken ct)
+{
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+    timeout.CancelAfter(TimeSpan.FromSeconds(2));
+    try
+    {
+        var counts = await probe(timeout.Token);
+        return (new DependencyHealth("ok", stopwatch.ElapsedMilliseconds, null), counts);
+    }
+    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+    {
+        return (new DependencyHealth("failed", stopwatch.ElapsedMilliseconds, "timeout"), (0, 0));
+    }
+    catch (Exception ex)
+    {
+        // Type name only: connection strings and hostnames stay out of an anonymous endpoint.
+        return (new DependencyHealth("failed", stopwatch.ElapsedMilliseconds, ex.GetType().Name), (0, 0));
+    }
 }
 
 static bool IsTokenExpired(Exception? exception) =>

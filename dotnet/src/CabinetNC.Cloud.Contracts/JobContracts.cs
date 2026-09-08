@@ -7,6 +7,19 @@ public sealed record HealthResponse(
     string Version,
     DateTimeOffset TimestampUtc);
 
+/// <summary>One dependency probe: "ok" or "failed" plus a non-sensitive reason and the probe latency.</summary>
+public sealed record DependencyHealth(string Status, long LatencyMs, string? Reason);
+
+/// <summary>Readiness: "ready" when every dependency is ok; served with HTTP 503 otherwise.</summary>
+public sealed record ReadinessResponse(
+    string Status,
+    string Version,
+    DateTimeOffset TimestampUtc,
+    DependencyHealth Database,
+    DependencyHealth ObjectStore,
+    int QueuedJobs,
+    int RunningJobs);
+
 /// <summary>The only job states the spec allows. Serialized as these exact strings.</summary>
 public enum JobStatus
 {

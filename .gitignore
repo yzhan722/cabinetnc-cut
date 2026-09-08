@@ -8,6 +8,8 @@ portable/
 .env.*
 # The compose template holds placeholders only; real values live in deploy/intranet/.env (ignored above).
 !deploy/intranet/.env.example
+# backup.sh output: database dumps and object-store archives never belong in git.
+deploy/intranet/backups/
 
 # Native build outputs
 native/cabinetnc_core/build/

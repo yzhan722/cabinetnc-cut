@@ -802,6 +802,21 @@ WPF 侧全部放在新文件里，`MainWindow.xaml.cs` 只改了 `RunNestAsync` 
 2. NFP 有超时回退，因此 parity 的定义是"同一代码、同一输入、同一超时"；在负载下服务器可能回退 BLF 而本机不回退（或反之），结果的 `Log.FallbackReason` 会说明。性能基线 §7 的建议（worker 2 vCPU）对 NFP 仍需实测——P2-8。
 3. `GET /jobs/{id}/result` 不加版本后缀：信封形状由 job 类型决定，客户端按自己提交的类型反序列化。
 
+## P2-3 — CAM 上云：特征化完成，实施待决策（2026-09-06）
+
+见 `COMMERCIAL_READINESS_PLAN.md` §"P2-3 特征化结论与待决策"：本机刀路链 = Domain 纯函数（`FeaturesToOps`/`AttachToNest`/`OpsToNc`）+ Desktop 内逻辑（刀具库自动偏置、工序开关、断料、桥接）；现有 gRPC `GenerateNc` 是有损简化版，不能当服务器等价物。三项产品决策（刀具库/机型档的归属、契约形式、断料/桥接是否上云）确认后开工；建议方案已写明。
+
+## P2-6 — 运维包（2026-09-08，机器 B）
+
+| 项 | 内容 |
+|---|---|
+| `GET /api/v1/health/ready` | 匿名就绪端点：PostgreSQL 真查询（队列 Queued/Running 计数）+ 对象存储 `ExistsAsync` 探测，各 2 s 超时；任一失败 → **503** `not_ready`，`reason` 只给异常类型名（不泄漏连接串/主机名）。`ReadinessTests` 3/3（就绪；注入 MinIO 读失败 → 503 且响应无 `Password`/`Host=`；liveness 仍静态） |
+| compose | `x-worker` 锚点 → **2 个 worker**（`worker-1`/`worker-2`），轮询默认 **0.2 s**；`x-logging` 锚点 → 所有服务 json-file 5×50 MB 轮转 |
+| `backup.sh` / `restore.sh` | pg_dump custom 格式 + MinIO 卷 tar + manifest（时间、镜像、git 版本、字节数）；restore 停 api/worker → `DROP SCHEMA public CASCADE` → `pg_restore` → 替换卷内容 → 启动。Git Bash 下用 `pwd -W` 取 Windows 路径并 `MSYS_NO_PATHCONV=1`，Ubuntu 上原样可用；`.gitattributes` 强制 `*.sh`/Dockerfile/Caddyfile 为 LF |
+| 演练 | 见 runbook §4.6：备份 → `down -v` 全毁 → 重建 → 恢复 → API 取回结果（哈希校验通过）；worker-1 停机后 worker-2 接管 |
+
+未做：Prometheus 指标（P2-6 剩余项）、告警。**P2-6 核心（备份/恢复/双 worker/就绪/日志轮转）DONE**。
+
 ### 收尾提醒（给下一位接手者）
 
 1. **本机环境是会话级的**：每个新 shell 要先 `$env:DOTNET_ROOT='C:\Users\alex\AppData\Local\Microsoft\dotnet'; $env:PATH="C:\Users\alex\AppData\Local\Microsoft\dotnet;D:\Docker\Program\resources\bin;$env:PATH"`，否则 `dotnet` 会解析到系统目录里只有 9.0 运行时的安装（"No .NET SDKs were found"）。用户级 `DOTNET_ROOT` 指向了错误目录，建议用户自行修正。
