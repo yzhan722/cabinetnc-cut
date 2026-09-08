@@ -29,6 +29,37 @@
 
 P2-1 与 P2-2 可以立刻开始且互不依赖；P2-3/4 依赖 P2-2 的契约基础设施；P2-5 依赖 P2-3/4；P2-7/8 需要外部条件。
 
+### P2-3 特征化结论与待决策（2026-09-06）
+
+本机刀路 = `MainWindow.RebuildOpsOverlay()`：
+
+```text
+OpsPlanner.FeaturesToOps(panels, clearance/drill 阈值)   Domain 纯函数
+→ OpsPlanner.AttachToNest(ops, placements)               Domain 纯函数
+→ ApplyAutomaticToolOffset(ops)                           Desktop：依赖车间刀具库（library.json 的 Tools）
+→ Where(PassEnabled)                                      Desktop：UI 工序开关（contour/drill/groove/pocket）
+→ Concat(BuildGuillotineOps())                            Desktop：依赖 _guillotineBySheet（断料规划，UI 状态）
+→ ProfileBridgePlanner.Reproject(bridges)                 Desktop：交互式桥接
+→ NcEmitter.OpsToNc(ops, ActiveProfileForCam(), CurrentPostRecipe())   Domain，输入机型档 + 后处理配方
+```
+
+现有 gRPC `PostProcessorServiceImpl.GenerateNc` 只做前两步 + 默认配方，且特征只带钻孔基本字段——**它不是本机结果的等价物**，不能直接当"服务器版"。
+
+要让服务器算出与本机相同的刀路/NC，必须：
+
+1. 把 `ApplyAutomaticToolOffset`、`BuildGuillotineOps`、`PassEnabled` 从 `MainWindow` 抽成 Domain/Compute.Core 的纯函数（输入显式化：刀具库、工序开关、断料计划、桥接）；这是 Task 11 "characterization → extract runner" 的第一步，也是**在不动云端任何东西的前提下就能做、且立刻提高可测性**的重构。
+2. 契约要携带完整 `PanelFeature`（含 `Path/Profile/Holes/CadSegments`）、放置、机型档、刀具库、清根/钻孔阈值、工序开关、断料计划、桥接、后处理配方。
+
+**需要产品决策（阻塞 P2-3 实施）：**
+
+| 决策 | 选项 A | 选项 B |
+|---|---|---|
+| 刀具库与机型档在哪里 | 随每个 job 发送（客户端仍是配置的主人，服务器无状态，契约大但简单） | 作为**租户配置**存在服务器（`/api/v1/admin/tools`、`/machines`），Desktop 同步只读副本；多台电脑共享一套刀具库——更像商业产品，但要做配置管理 UI/API 与版本化 |
+| 契约形式 | 手写 DTO 投影（如 v2 nest，字段可控、可校验） | 直接序列化 Domain 类型（快，但客户端/服务器版本必须一致，且 `CutOp.Path` 用元组需自定义转换） |
+| 断料与桥接 | 仍在 Desktop 本机做（它们是几何后处理，不含核心算法价值） | 一并上云 |
+
+建议：A（随 job 发送）+ 手写 DTO + 断料/桥接留本机，先把 `FeaturesToOps → AttachToNest → ToolOffset → OpsToNc` 上云；租户级刀具库作为 P2-3b 后续。等确认后开工。
+
 ## 2. 不变的纪律
 
 - 每项：先写测试 → 实现 → `dotnet test dotnet/CabinetNC.slnx -c Release` 全绿 → UI smoke 不退化 → `IMPLEMENTATION_NOTES.md` 记录 → 单独 commit。
