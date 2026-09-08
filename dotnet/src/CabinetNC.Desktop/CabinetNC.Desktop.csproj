@@ -6,8 +6,11 @@
     <ProjectReference Include="..\CabinetNC.FusionPackage\CabinetNC.FusionPackage.csproj" />
     <ProjectReference Include="..\CabinetNC.Application\CabinetNC.Application.csproj" />
     <ProjectReference Include="..\CabinetNC.Desktop.Core\CabinetNC.Desktop.Core.csproj" />
-    <!-- The local compute worker is a developer/A-B artefact; the customer build neither builds nor ships it. -->
+    <!-- The local compute worker and the algorithm assembly are developer/A-B artefacts; the customer build
+         neither builds nor ships them (Local compute is compiled out with CUSTOMER_BUILD). -->
     <ProjectReference Include="..\CabinetNC.ComputeWorker\CabinetNC.ComputeWorker.csproj" ReferenceOutputAssembly="false"
+                      Condition="'$(CustomerBuild)' != 'true'" />
+    <ProjectReference Include="..\CabinetNC.Domain.Compute\CabinetNC.Domain.Compute.csproj"
                       Condition="'$(CustomerBuild)' != 'true'" />
     <ProjectReference Include="..\CabinetNC.Infrastructure\CabinetNC.Infrastructure.csproj" />
   </ItemGroup>

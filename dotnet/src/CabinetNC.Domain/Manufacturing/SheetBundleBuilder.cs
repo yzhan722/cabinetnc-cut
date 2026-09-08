@@ -28,16 +28,27 @@ public sealed class NullToolChangePost : IToolChangePost
     public string? EmitToolChange(ToolDefinition tool, MachineProfile profile) => null;
 }
 
-public sealed class GenericMmPostProcessor : IPostProcessor
+/// <summary>
+/// Resolves the post processor for a machine. The NC-emitting implementations live in
+/// CabinetNC.Domain.Compute, which registers itself here when loaded; a process without that assembly
+/// (the customer build) must supply its own <see cref="IPostProcessor"/> (the intranet one) explicitly.
+/// </summary>
+public static class PostProcessorCatalog
 {
-    public string Id => "generic_mm";
-    public string Emit(IEnumerable<CutOp> ops, MachineProfile profile, PostRecipe? recipe = null)
-    {
-        var p = CloneProfile(profile, dialect: "generic", programEnd: profile.ProgramEnd);
-        return NcEmitter.OpsToNc(ops, p, recipe: recipe);
-    }
+    public static Func<MachineProfile, IPostProcessor>? Provider { get; set; }
 
-    internal static MachineProfile CloneProfile(MachineProfile profile, string dialect, string? programEnd) =>
+    public static IPostProcessor Resolve(MachineProfile profile) =>
+        Provider?.Invoke(profile)
+        ?? throw new InvalidOperationException(
+            "No post processor is available in this process: NC is produced on the intranet server; pass the intranet post processor explicitly.");
+
+    /// <summary>Profile as the dialect-specific emitter sees it (dialect id, program end); shared by every implementation.</summary>
+    public static (string PostId, MachineProfile Profile) DialectFor(MachineProfile profile) =>
+        profile.Dialect == "fanuc_like"
+            ? ("fanuc_like", CloneProfile(profile, "fanuc_like", "M30"))
+            : ("generic_mm", CloneProfile(profile, "generic", profile.ProgramEnd));
+
+    public static MachineProfile CloneProfile(MachineProfile profile, string dialect, string? programEnd) =>
         new()
         {
             Id = profile.Id,
@@ -57,24 +68,6 @@ public sealed class GenericMmPostProcessor : IPostProcessor
             EnableGroove = profile.EnableGroove,
             OriginNote = profile.OriginNote,
         };
-}
-
-public sealed class FanucLikePostProcessor : IPostProcessor
-{
-    public string Id => "fanuc_like";
-    public string Emit(IEnumerable<CutOp> ops, MachineProfile profile, PostRecipe? recipe = null)
-    {
-        var p = GenericMmPostProcessor.CloneProfile(profile, "fanuc_like", "M30");
-        return NcEmitter.OpsToNc(ops, p, recipe: recipe);
-    }
-}
-
-public static class PostProcessorCatalog
-{
-    public static IPostProcessor Resolve(MachineProfile profile) =>
-        profile.Dialect == "fanuc_like"
-            ? new FanucLikePostProcessor()
-            : new GenericMmPostProcessor();
 }
 
 public sealed class ToolNcProgram

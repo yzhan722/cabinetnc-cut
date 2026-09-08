@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Core manufacturing algorithms: nesting engines and router, parts-in-part packing, sheet stability
+       optimisation, CAM planning (features → operations), NC emission. Runs on the intranet server
+       (Compute.Core / cloud worker) and in the developer Desktop for Local/A-B; the customer build must
+       never ship this assembly (dotnet/scripts/verify-customer-package.ps1). Namespaces are unchanged
+       (CabinetNC.Domain.*) so the split is invisible to callers that are allowed to reference it. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>CabinetNC.Domain</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CabinetNC.Domain\CabinetNC.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Clipper2" Version="2.0.0" />
+  </ItemGroup>
+
+</Project>

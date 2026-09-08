@@ -30,7 +30,13 @@ pwsh dotnet/scripts/publish-customer.ps1 -PoC       # 同上，但把 CabinetNC.
 
 功能验证：`tests/ui-smoke/scenarios/07-customer-intranet-only.txt` 用客户版 exe 跑通——「计算位置」下拉 `IsEnabled=false`（`assert-disabled`）→ 内网登录 → 重新密排 → `密排完成 … 内网 job`（`.handoff/local-evidence/task12-ui-smoke-customer.log`，截图 `07a/07b`）。客户版**只能**通过内网计算排版。
 
-## 3. 已知缺口：`CabinetNC.Domain.dll`
+## 3. 缺口已关闭（Phase 2 · P2-5，2026-09-08）
+
+`CabinetNC.Domain` 已拆为 **`CabinetNC.Domain`（模型：几何、零件、包、设置、校验、断料/桥接/标签等客户端几何）** 与 **`CabinetNC.Domain.Compute`（算法：BLF/GroupedBLF/NFP/Deepnest 引擎与路由、parts-in-part 打包、密排稳定性优化、OpsPlanner/PocketClearer/CamPipeline、NcEmitter 与后处理器实现）**，命名空间不变。客户版 csproj 不引用 `Domain.Compute`，Desktop 里的本机分支全部在 `#if !CUSTOMER_BUILD` 之内；`verify-customer-package.ps1` 现在只有严格模式：禁止 `CabinetNC.Domain.Compute.dll`，并对每个 `CabinetNC.*.dll` 扫描算法类型名（`BlfNester / GroupedBlfNester / ClipperNfpNestingEngine / DeepnestPreviewNestingEngine / NestEngineRouter / PartsInPartPacker / SheetStabilityOptimizer / OpsPlanner / PocketClearer / PocketClearIslands / CamPipeline / NcEmitter`）。
+
+2026-09-08 结果：`dist/CabinetNC-Cut-Customer`（78 个文件）**RESULT: PASS**；客户版 UI smoke 07 用真实栈跑通排版 → 刀路 → NC → 导出（全部在服务器计算）。客户版里"本张密排优化"按钮提示暂不提供（该算法尚无内网 job）。
+
+### 3a. 历史记录：拆分前的缺口（PoC 阶段）
 
 Desktop 需要 `CabinetNC.Domain` 的模型（`Panel`、`Outline`、包/工程、`NestSettings`、校验器 `NestValidator`/`NestExportGate`、CAM 叠加与 NC 预览），而**同一个程序集**里还住着核心算法：`BlfNester`、`ClipperNfpNestingEngine`、`DeepnestPreviewNestingEngine`、`NestEngineRouter`、`GuillotineCutPlanner`、`NcEmitter` 等。对客户包做字符串扫描：
 

@@ -1,5 +1,5 @@
-# Customer build (dotnet/scripts/publish-customer.ps1): Local compute is compiled out, so the mode selector is
-# locked to 内网计算 and the only way to nest is through the intranet service.
+# Customer build (dotnet/scripts/publish-customer.ps1): no algorithm assembly is shipped, the mode selector is
+# locked to 内网计算, and nest → CAM → NC → export all run on the intranet service.
 # run-all.ps1 runs this only when CABINETNC_SMOKE_CUSTOMER_BUILD=1 (pass -Exe <customer exe>) and an API URL is set.
 assert-status:就绪
 invoke:打开示例
@@ -23,6 +23,25 @@ assert-status:已登录内网
 invoke:重新密排
 wait:9000
 dismiss
-assert-status:密排完成
-assert-status:内网 job
+assert-status:内网
+assert-text:NestReportMeta=已排 1
 shot:07b-customer-intranet-nested.png
+tab:4 刀路与加工档
+wait:6000
+invoke:计算全部
+wait:6000
+dismiss
+assert-status:已计算全部大板
+assert-status:内网计算
+tab:5 导出
+wait:8000
+invoke-optional:下一步
+wait:200
+invoke-optional:下一步
+wait:600
+invoke:导出当前大板
+wait:3000
+dismiss
+assert-status:已导出
+assert-file:%OMNICAM_AUTO_EXPORT_DIR%\Left_side.bmp
+shot:07c-customer-exported.png

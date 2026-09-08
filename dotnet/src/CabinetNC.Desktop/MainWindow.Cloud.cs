@@ -215,8 +215,10 @@ public partial class MainWindow
     /// <summary>Local: the in-process pipeline. Intranet: cached server result, or null while the job runs.</summary>
     IReadOnlyList<CutOp>? PlanOps(IReadOnlyList<PanelPart> panels, IReadOnlyList<NestPlacement> places, CamPipelineOptions options)
     {
+#if !CUSTOMER_BUILD
         if (ComputeModeSelected != ComputeMode.Intranet)
             return CamPipeline.Plan(panels, places, options);
+#endif
 
         var request = new SubmitOperationsJobRequest(
             panels.Select(CamContractMapper.FromPanel).ToList(),
@@ -243,8 +245,10 @@ public partial class MainWindow
     /// <summary>Local: NcEmitter in-process. Intranet: cached server NC, or a placeholder while the job runs.</summary>
     string EmitNc(IReadOnlyList<CutOp> ops, MachineProfile profile, PostRecipe recipe)
     {
+#if !CUSTOMER_BUILD
         if (ComputeModeSelected != ComputeMode.Intranet)
             return NcEmitter.OpsToNc(ops, profile, recipe: recipe);
+#endif
 
         var request = new SubmitPostJobRequest(ops.Select(CamContractMapper.FromOp).ToList(), CamContractMapper.FromMachine(profile), CamContractMapper.FromRecipe(recipe));
         var key = CloudApiClient.ContentKey(request);
@@ -263,6 +267,60 @@ public partial class MainWindow
             };
         }, () => _cloudNcCache[key] = null);
         return "// 内网 NC 计算中… " + key[..8];
+    }
+
+    /// <summary>
+    /// Post processor for the export bundle. Local: the in-process emitter. Intranet: a first dry run of the
+    /// bundle collects every (ops, machine, recipe) program the bundle will emit, all of them are fetched
+    /// from the server, then the real run is served from the cache so no placeholder can reach a file.
+    /// </summary>
+    async Task<IPostProcessor> ResolveBundlePostProcessorAsync(IReadOnlyList<NestPlacement> places, MachineProfile profile, PostRecipe recipe, string html)
+    {
+#if !CUSTOMER_BUILD
+        if (ComputeModeSelected != ComputeMode.Intranet)
+            return PostProcessorCatalog.Resolve(profile);
+#endif
+        var gateway = new ComputeGatewayFactory(() => throw new InvalidOperationException(), () => _cloud).Create(ComputeMode.Intranet);
+        var collector = new CloudPostProcessor(_cloudNcCache, collectOnly: true);
+        SheetBundleBuilder.Build(_session.Package!, places, _opsOverlay, profile, post: collector, jobSheetHtml: html, recipe: recipe);
+
+        var missing = collector.Missing.ToList();
+        if (missing.Count > 0)
+        {
+            SetStatus($"内网 NC 生成中… {missing.Count} 个程序", StatusKind.Busy);
+            var results = await Task.WhenAll(missing.Select(m => gateway.RunPostAsync(m.Request, null, CancellationToken.None)));
+            for (var i = 0; i < missing.Count; i++)
+            {
+                Trim(_cloudNcCache);
+                _cloudNcCache[missing[i].Key] = results[i].Result.NcText;
+            }
+        }
+        return new CloudPostProcessor(_cloudNcCache, collectOnly: false);
+    }
+
+    /// <summary>Serves NC from the content cache; in collect mode it records what is missing instead of failing.</summary>
+    sealed class CloudPostProcessor(Dictionary<string, string?> cache, bool collectOnly) : IPostProcessor
+    {
+        public List<(string Key, SubmitPostJobRequest Request)> Missing { get; } = [];
+        public string Id => "intranet";
+
+        public string Emit(IEnumerable<CutOp> ops, MachineProfile profile, PostRecipe? recipe = null)
+        {
+            var (_, dialectProfile) = PostProcessorCatalog.DialectFor(profile);
+            var request = new SubmitPostJobRequest(
+                ops.Select(CamContractMapper.FromOp).ToList(),
+                CamContractMapper.FromMachine(dialectProfile),
+                CamContractMapper.FromRecipe(recipe ?? PostRecipe.TroyDefault()));
+            var key = CloudApiClient.ContentKey(request);
+            if (cache.TryGetValue(key, out var nc) && nc is not null)
+                return nc;
+            if (collectOnly)
+            {
+                Missing.Add((key, request));
+                return "// pending";
+            }
+            throw new InvalidOperationException("内网 NC 尚未就绪，无法写入导出文件。");
+        }
     }
 
     /// <summary>Runs one cloud job off the UI thread; applies its result (or records the failure) back on it.</summary>

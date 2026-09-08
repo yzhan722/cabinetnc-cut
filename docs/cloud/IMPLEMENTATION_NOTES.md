@@ -843,6 +843,32 @@ WPF 侧全部放在新文件里，`MainWindow.xaml.cs` 只改了 `RunNestAsync` 
 
 未做：Prometheus 指标（P2-6 剩余项）、告警。**P2-6 核心（备份/恢复/双 worker/就绪/日志轮转）DONE**。
 
+## P2-5 — Domain 拆分，客户包严格验证转绿（2026-09-08，机器 B）
+
+### 做了什么
+
+| 项 | 内容 |
+|---|---|
+| 新项目 `CabinetNC.Domain.Compute` | 引用 `Domain` + Clipper2；`RootNamespace` 仍为 `CabinetNC.Domain`，**命名空间不变**，调用方只需加/不加程序集引用 |
+| 迁入 Compute（整文件） | `ClipperNfpNestingEngine`、`DeepnestPreviewNestingEngine`、`PartsInPartPacker`、`SheetStabilityOptimizer`、`PocketClearer`、`PocketClearIslands`、`GrooveClear`、`CamPipeline`、`NcEmitter`、`NcEmitter.Troy` |
+| 按顶层类型切分（`dotnet/scripts/split-domain-compute.ps1` 留档） | `BlfNester.cs` → 模型（`SheetInsets/NestSheetSpec/NestBlockedRect/NestRequest/NestPart/NestPlacement/NestResult`）留下，`BlfNester` 迁走；`INestingEngine.cs` → 接口与 `NestEngineRequest/NestEngineRunLog/PartInPartSlot` 留下，`BlfNestingEngine/AdvancedNestingEngineStub/NestEngineRouter` 迁走；`GroupedBlfNester.cs` → `NestExportGate` 留下（文件改名 `NestExportGate.cs`），`GroupedBlfNester` 迁走；`OpsPlanner.cs` → `CutOp` 留下，`OpsPlanner` 迁走；`SheetBundleBuilder.cs` → `GenericMmPostProcessor/FanucLikePostProcessor` 迁到 Compute 的 `PostProcessors.cs` |
+| 模型侧新增 | `PanelExtents.SizeOfOutline`（AABB，`GroupedBlfNester.SizeOfOutline` 委托给它）；`PartsInPartGeometry`（`IgnoreCollisionPairs`/`TryUsableVoid`，Desktop 与 `NestExportGate` 用它，打包器委托给它）；`CamPipelineOptions` 记录移到模型侧；`PostProcessorCatalog` 改为 **Provider 钩子** + `DialectFor/CloneProfile`，Compute 侧用 `[ModuleInitializer]` 注册进程内发射器——没有 Compute 的进程（客户版）必须显式传入后处理器 |
+| Desktop | csproj：`Domain.Compute` 与 `ComputeWorker` 引用都 `Condition="'$(CustomerBuild)' != 'true'"`；`#if !CUSTOMER_BUILD` 包住：`RunNestAsync` 本机分支（引擎选择 + Router）、`PlanOps`/`EmitNc` 本机分支、`SheetStabilityOptimizer`（客户版给出"暂不提供"状态）；"一键打包"改为 `async`，`ResolveBundlePostProcessorAsync`：本机 → `PostProcessorCatalog.Resolve`；内网 → `CloudPostProcessor` 两遍法（第一遍 `Build` 只收集需要的 (ops, 机型方言, 配方) 组合，云端并行取回全部 NC 入缓存，第二遍真正写文件；缓存缺失时抛错而不是写占位符） |
+| 引用更新 | `Compute.Core`、`ComputeWorker`、`Domain.Tests`、`Package.Tests` 引用 `Domain.Compute`；worker Dockerfile 复制该项目；slnx 加入 |
+| `verify-customer-package.ps1` | 禁止项加 `CabinetNC.Domain.Compute.dll`；对所有 `CabinetNC.*.dll` 扫描 12 个算法类型名（Desktop.dll 若还引用它们也会被抓到）；`-PoC` 只剩兼容警告 |
+
+### 实测
+
+- 全量回归 **770/770**（Domain.Tests 431 与 Package.Tests 40 通过 `Domain.Compute` 引用照常运行）。
+- 客户版 publish：78 个文件，程序集 = Application、Cloud.Contracts、Cloud.NestContract、Compute.Contracts、Desktop、Desktop.Core、**Domain（模型）**、FusionPackage、Infrastructure；严格验证 **RESULT: PASS**（`p2-5-verify-customer-strict.log`）。
+- UI smoke：开发版 6/6（5 本机 + 06 内网全流程）；客户版 07：下拉禁用 → 登录 → 内网排版 → 刀路（`· 内网计算`）→ 导出页 NC → 导出当前大板落盘——通过。服务端 job：`nest.v2 ×2`（开发版、客户版各一）、`operations ×1`、`post ×1`（两种构建的相同输入被内容哈希去重）。
+
+### 决策 / 剩余
+
+1. `ContourToolOffset`、`ClearanceToolPick`、`GuillotineCutPlanner`、`ProfileBridgePlanner`、`LabelAnchorFinder`、`NestValidator`、`NestExportGate`、`NcToPanels`（.anc 反推）留在模型侧：客户端渲染/校验/交互需要它们，且不是核心制造算法。
+2. "本张密排优化"（`SheetStabilityOptimizer`）客户版暂不提供；需要时作为新 job 类型上云（与 nest.v2 同一契约基础设施）。
+3. 本机 gRPC `ComputeWorker` 保留为开发/A-B 工具（引用 Compute），客户版不构建不发布。
+
 ### 收尾提醒（给下一位接手者）
 
 1. **本机环境是会话级的**：每个新 shell 要先 `$env:DOTNET_ROOT='C:\Users\alex\AppData\Local\Microsoft\dotnet'; $env:PATH="C:\Users\alex\AppData\Local\Microsoft\dotnet;D:\Docker\Program\resources\bin;$env:PATH"`，否则 `dotnet` 会解析到系统目录里只有 9.0 运行时的安装（"No .NET SDKs were found"）。用户级 `DOTNET_ROOT` 指向了错误目录，建议用户自行修正。

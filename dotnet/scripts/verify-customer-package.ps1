@@ -27,7 +27,7 @@ function Ok([string] $m)   { Write-Host "ok    $m" -ForegroundColor Green }
 # 1. deployable compute components / server-side assemblies
 $forbidden = @(
     'CabinetNC.ComputeWorker.exe', 'CabinetNC.ComputeWorker.dll', 'CabinetNC.ComputeWorker.runtimeconfig.json',
-    'CabinetNC.Compute.Core.dll',
+    'CabinetNC.Compute.Core.dll', 'CabinetNC.Domain.Compute.dll',
     'CabinetNC.Cloud.Api.dll', 'CabinetNC.Cloud.Worker.dll', 'CabinetNC.Cloud.Infrastructure.dll',
     'Microsoft.EntityFrameworkCore.dll', 'Npgsql.dll', 'Minio.dll'
 )
@@ -35,14 +35,24 @@ foreach ($name in $forbidden) {
     $hit = $files | Where-Object { $_.Name -ieq $name }
     if ($hit) { Fail "forbidden compute/server component present: $($hit.FullName.Substring($PackageDir.Length + 1) -join ', ')" }
 }
-if (-not ($files | Where-Object { $forbidden -icontains $_.Name })) { Ok 'no ComputeWorker / Compute.Core / cloud server assemblies' }
+if (-not ($files | Where-Object { $forbidden -icontains $_.Name })) { Ok 'no ComputeWorker / Compute.Core / Domain.Compute / cloud server assemblies' }
 
-# 2. core manufacturing algorithm assembly
-$domain = $files | Where-Object { $_.Name -ieq 'CabinetNC.Domain.dll' }
-if ($domain) {
-    $msg = 'CabinetNC.Domain.dll is shipped: it still contains the nesting (BLF/NFP), CAM and post-processor algorithms'
-    if ($PoC) { Warn "$msg (accepted as a known PoC gap; see CLIENT_CODE_PROTECTION.md)" } else { Fail $msg }
-} else { Ok 'no core algorithm assembly' }
+# 2. core manufacturing algorithm types must not be defined in any shipped assembly (CabinetNC.Domain.dll is the
+#    model assembly and is allowed; the algorithms live in CabinetNC.Domain.Compute.dll, checked above).
+$algorithmTypes = @('BlfNester', 'GroupedBlfNester', 'ClipperNfpNestingEngine', 'DeepnestPreviewNestingEngine', 'NestEngineRouter',
+                    'PartsInPartPacker', 'SheetStabilityOptimizer', 'OpsPlanner', 'PocketClearer', 'PocketClearIslands', 'CamPipeline', 'NcEmitter')
+$typeHits = @()
+foreach ($dll in ($files | Where-Object { $_.Extension -eq '.dll' -and $_.Name -like 'CabinetNC.*' })) {
+    $text = [System.Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($dll.FullName))
+    foreach ($t in $algorithmTypes) {
+        # A defined type appears as a bare metadata name; a mere reference from Desktop.dll would too, so we
+        # only accept assemblies that contain none of them at all — Desktop must not reference them either.
+        if ($text.Contains("`0$t`0")) { $typeHits += "$($dll.Name):$t" }
+    }
+}
+if ($typeHits) { Fail "core algorithm types present in shipped assemblies: $($typeHits -join ', ')" }
+else { Ok 'no core algorithm types (nesting engines, CAM planner, NC emitter) in any shipped assembly' }
+if ($PoC) { Warn '-PoC is no longer needed: the strict check is the only mode' }
 
 # 3. PDB / source / project files
 $leaks = $files | Where-Object { $_.Extension -in '.pdb', '.cs', '.xaml', '.csproj', '.slnx', '.sln', '.proto' }

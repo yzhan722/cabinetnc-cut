@@ -4,6 +4,7 @@
     <ProjectReference Include="..\CabinetNC.Compute.Contracts\CabinetNC.Compute.Contracts.csproj" />
     <ProjectReference Include="..\CabinetNC.Compute.Core\CabinetNC.Compute.Core.csproj" />
     <ProjectReference Include="..\CabinetNC.Domain\CabinetNC.Domain.csproj" />
+    <ProjectReference Include="..\CabinetNC.Domain.Compute\CabinetNC.Domain.Compute.csproj" />
   </ItemGroup>
 
   <ItemGroup>

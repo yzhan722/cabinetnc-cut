@@ -3,15 +3,6 @@ using CabinetNC.Domain.Parts;
 
 namespace CabinetNC.Domain.Manufacturing;
 
-/// <summary>Inputs of the algorithmic part of CAM. Everything interactive (pass toggles, guillotine, bridges) is outside.</summary>
-public sealed record CamPipelineOptions(
-    bool EnableContour,
-    bool EnableDrill,
-    bool EnableGroove,
-    double ClearanceLargeMinShortMm,
-    double DrillMaxExclusiveMm,
-    double ContourToolDiameterMm);
-
 /// <summary>
 /// The one definition of "features → operations": planner, attach to the nest, contour tool offset.
 /// The Desktop's Local mode and the cloud worker both call this, which is what makes their results equal.

@@ -3188,6 +3188,14 @@ public partial class MainWindow : Window
             return;
         }
 
+#if CUSTOMER_BUILD
+        // The optimiser is a core algorithm and does not ship in the customer build; it becomes an
+        // intranet job in a later iteration (COMMERCIAL_READINESS_PLAN.md).
+        const string unavailable = "本张密排优化：客户版暂不提供（算法在服务器侧，内网版本待后续迭代）";
+        UsageLog.LogEvent("ui", "desktop.nestStabilize.result", new Dictionary<string, object?> { ["ok"] = false, ["why"] = "customer-build" });
+        SetStatus(unavailable, StatusKind.Warning);
+        return;
+#else
         var frozen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var slot in _partInPartSlots)
         {
@@ -3246,6 +3254,7 @@ public partial class MainWindow : Window
         RefreshNestReport();
         CanvasHost.InvalidateVisual();
         SetStatus($"大板 {_activeNestSheet + 1}: {result.Message}");
+#endif
     }
 
     (double Clearance, double MinEdge) ReadGuillotineGeometry()
@@ -3461,7 +3470,7 @@ public partial class MainWindow : Window
     HashSet<(string A, string B)>? PipIgnorePairs() =>
         _partInPartSlots.Count == 0
             ? null
-            : PartsInPartPacker.IgnoreCollisionPairs(_partInPartSlots);
+            : PartsInPartGeometry.IgnoreCollisionPairs(_partInPartSlots);
 
     (double Ox, double Oy) ClampPipChild(
         string childId,
@@ -3478,7 +3487,7 @@ public partial class MainWindow : Window
         var host = _session.Package.Panels.FirstOrDefault(p => p.PanelId == slot.HostPanelId);
         if (hostPlace is null || host is null) return (ox, oy);
         var gap = ParseMm(NestSpacingBox.Text, 12);
-        if (!PartsInPartPacker.TryUsableVoid(
+        if (!PartsInPartGeometry.TryUsableVoid(
                 host, hostPlace.OffsetX, hostPlace.OffsetY, hostPlace.RotationDeg,
                 slot.FeatureId, gap, out var vx, out var vy, out var vw, out var vh))
             return (ox, oy);
@@ -5331,9 +5340,6 @@ public partial class MainWindow : Window
             var progress = new Progress<NestProgressReport>(OnNestProgress);
 
             SetStatus("密排计算中…");
-            INestingEngine advanced = enginePreference is "deepnest" or "deepnest_next"
-                ? new DeepnestPreviewNestingEngine()
-                : new ClipperNfpNestingEngine();
             var advancedTimeout = panels.Count > 80
                 ? TimeSpan.FromSeconds(45)
                 : TimeSpan.FromSeconds(25);
@@ -5348,6 +5354,13 @@ public partial class MainWindow : Window
             }
             else
             {
+#if CUSTOMER_BUILD
+                throw new InvalidOperationException("客户版不包含本机排版引擎；请使用内网计算。");
+#else
+                // Same engine selection rule as the cloud worker (Compute.Core.NestingRunner.RunRouter).
+                INestingEngine advanced = enginePreference is "deepnest" or "deepnest_next"
+                    ? new DeepnestPreviewNestingEngine()
+                    : new ClipperNfpNestingEngine();
                 packedPair = await Task.Run(() =>
                     new NestEngineRouter(advanced: advanced).Run(
                         new NestEngineRequest
@@ -5361,6 +5374,7 @@ public partial class MainWindow : Window
                             Progress = progress,
                         },
                         cancelToken)).ConfigureAwait(true);
+#endif
             }
 
             var packed = packedPair.Result;
@@ -6773,7 +6787,7 @@ public partial class MainWindow : Window
         });
     }
 
-    void OnExportBundleClick(object sender, RoutedEventArgs e)
+    async void OnExportBundleClick(object sender, RoutedEventArgs e)
     {
         if (_session.Package is null || _nest is not { Ok: true })
         {
@@ -6805,16 +6819,29 @@ public partial class MainWindow : Window
         }).ToList();
         RebuildOpsOverlay();
         var profile = ActiveProfileForCam();
+        var recipe = CurrentPostRecipe();
         var html = JobSheetBuilder.BuildHtml(
             _session.Package, profile, places, _locked,
             NcPreflight.Format(RunPreflight()), EstimateUtilization(), _nest.Unplaced.Count);
+        IPostProcessor post;
+        try
+        {
+            // Intranet: every sheet×tool program comes from the server; Local: the in-process emitter.
+            post = await ResolveBundlePostProcessorAsync(places, profile, recipe, html);
+        }
+        catch (Exception ex) when (ex is CloudAuthenticationRequiredException or ComputeUnavailableException or ComputeJobFailedException or ComputeJobTimeoutException or CloudApiException)
+        {
+            SetStatus("一键打包失败 · 内网 NC 未就绪: " + ex.Message + " · 未自动改用本机", StatusKind.Error);
+            return;
+        }
         var bundle = SheetBundleBuilder.Build(
             _session.Package,
             places,
             _opsOverlay,
             profile,
+            post: post,
             jobSheetHtml: html,
-            recipe: CurrentPostRecipe());
+            recipe: recipe);
         var written = SheetBundleBuilder.WriteToDirectory(bundle, dir);
         if (!string.IsNullOrWhiteSpace(_session.PackageJson))
             File.WriteAllText(Path.Combine(dir, bundle.JobId + ".cut.json"), _session.PackageJson);

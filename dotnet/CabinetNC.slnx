@@ -12,6 +12,7 @@
     <Project Path="src/CabinetNC.Desktop.Core/CabinetNC.Desktop.Core.csproj" />
     <Project Path="src/CabinetNC.Desktop/CabinetNC.Desktop.csproj" />
     <Project Path="src/CabinetNC.Domain/CabinetNC.Domain.csproj" />
+    <Project Path="src/CabinetNC.Domain.Compute/CabinetNC.Domain.Compute.csproj" />
     <Project Path="src/CabinetNC.FusionPackage/CabinetNC.FusionPackage.csproj" />
     <Project Path="src/CabinetNC.Infrastructure/CabinetNC.Infrastructure.csproj" />
   </Folder>

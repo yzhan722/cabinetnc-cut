@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CabinetNC.Domain\CabinetNC.Domain.csproj" />
+    <ProjectReference Include="..\CabinetNC.Domain.Compute\CabinetNC.Domain.Compute.csproj" />
     <ProjectReference Include="..\CabinetNC.Cloud.Contracts\CabinetNC.Cloud.Contracts.csproj" />
     <ProjectReference Include="..\CabinetNC.Cloud.NestContract\CabinetNC.Cloud.NestContract.csproj" />
   </ItemGroup>

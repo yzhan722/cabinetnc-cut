@@ -7,6 +7,7 @@ ARG SOURCE_REVISION=
 WORKDIR /src
 
 COPY dotnet/src/CabinetNC.Domain/CabinetNC.Domain.csproj dotnet/src/CabinetNC.Domain/
+COPY dotnet/src/CabinetNC.Domain.Compute/CabinetNC.Domain.Compute.csproj dotnet/src/CabinetNC.Domain.Compute/
 COPY dotnet/src/CabinetNC.Compute.Core/CabinetNC.Compute.Core.csproj dotnet/src/CabinetNC.Compute.Core/
 COPY dotnet/src/CabinetNC.Cloud.Contracts/CabinetNC.Cloud.Contracts.csproj dotnet/src/CabinetNC.Cloud.Contracts/
 COPY dotnet/src/CabinetNC.Cloud.NestContract/CabinetNC.Cloud.NestContract.csproj dotnet/src/CabinetNC.Cloud.NestContract/
@@ -15,6 +16,7 @@ COPY dotnet/src/CabinetNC.Cloud.Worker/CabinetNC.Cloud.Worker.csproj dotnet/src/
 RUN dotnet restore dotnet/src/CabinetNC.Cloud.Worker/CabinetNC.Cloud.Worker.csproj
 
 COPY dotnet/src/CabinetNC.Domain/ dotnet/src/CabinetNC.Domain/
+COPY dotnet/src/CabinetNC.Domain.Compute/ dotnet/src/CabinetNC.Domain.Compute/
 COPY dotnet/src/CabinetNC.Compute.Core/ dotnet/src/CabinetNC.Compute.Core/
 COPY dotnet/src/CabinetNC.Cloud.Contracts/ dotnet/src/CabinetNC.Cloud.Contracts/
 COPY dotnet/src/CabinetNC.Cloud.NestContract/ dotnet/src/CabinetNC.Cloud.NestContract/

@@ -88,6 +88,12 @@
 |---|---|---|
 | 2026-09-06 | P2-1 管理 API | 新增 gate G1：管理员建号/停用/重置/吊销设备、操作员改密——**PASS**（`AdminUserTests` 8/8） |
 | 2026-09-06 | P2-2 Nest 契约 v2 | "Nest · Local/server parity" 由 **PASS（限矩形契约）** 升级为 **PASS（真形）**：服务器与本机运行同一 `NestEngineRouter`，`NestingRunnerV2Tests` 在 blf/nfp 下逐字段相等；Desktop 内网模式不再有 `intranet_contract` 降级 |
+| 2026-09-08 | P2-3/P2-4 刀路与 NC 上云 | 新增 gate G3：服务器 ops 与 NC 与本机逐字节相同（`CamRunnersTests`、API 端到端）；Desktop 内网模式刀路/NC/导出全部走服务器（UI smoke 06）——**PASS** |
+| 2026-09-08 | P2-5 Domain 拆分 | "Customer build · No core compute engine" 由 **FAIL** 变为 **PASS**：`CabinetNC.Domain.Compute.dll` 不在客户包内，任何已发布程序集中无算法类型名，严格验证 `RESULT: PASS`；客户版 UI smoke 07 全流程经服务器通过 |
+| 2026-09-08 | P2-6 运维包 | 新增 gate G5：就绪探测、双 worker 接管、备份→全毁→恢复演练——**PASS**（Prometheus 指标待做） |
+| 2026-09-06 | P2-1 管理 API | 新增 gate G1——**PASS** |
+
+**Phase 2 之后矩阵中不再有 FAIL 项**；仍为 NOT_RUN 的：第二台 LAN 机器验证、混淆（需许可）、真实 CNC。
 
 ## 4. 声明
 
