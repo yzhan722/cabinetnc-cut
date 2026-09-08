@@ -7,6 +7,7 @@ using CabinetNC.Cloud.Infrastructure.Jobs;
 using CabinetNC.Cloud.Infrastructure.Tests;
 using CabinetNC.Cloud.NestContract;
 using CabinetNC.Cloud.Worker;
+using CabinetNC.Compute.Core.Cam;
 using CabinetNC.Compute.Core.Nesting;
 using CabinetNC.Domain.Geometry;
 using CabinetNC.Domain.Nesting;
@@ -18,7 +19,7 @@ namespace CabinetNC.Cloud.Worker.Tests;
 
 /// <summary>
 /// The worker loop body against a real PostgreSQL queue, the shared in-memory object store and the
-/// real Compute.Core runner: claim â†’ load + verify input â†’ run â†’ store result â†’ fenced completion.
+/// real Compute.Core runner: claim â†?load + verify input â†?run â†?store result â†?fenced completion.
 /// </summary>
 public class NestJobExecutorTests(PostgresFixture pg) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
@@ -53,7 +54,7 @@ public class NestJobExecutorTests(PostgresFixture pg) : IClassFixture<PostgresFi
         new(
             new PostgresJobRepository(db, _clock),
             _objects,
-            runner ?? new NestingRunner(),
+            runner ?? new NestingRunner(), new OperationsRunner(), new PostProcessorRunner(),
             db,
             _clock,
             new WorkerOptions { WorkerId = workerId, LeaseDuration = lease ?? TimeSpan.FromMinutes(5) },
@@ -265,7 +266,7 @@ public class NestJobExecutorTests(PostgresFixture pg) : IClassFixture<PostgresFi
         await using var seed = pg.CreateContext();
         var repo = new PostgresJobRepository(seed, _clock);
         var job = await repo.CreateOrGetByIdempotencyKeyAsync(
-            new NewComputeJob(TenantA, UserA, DeviceA, "post", "k-post", "corr", new string('0', 64)), CT);
+            new NewComputeJob(TenantA, UserA, DeviceA, "carve", "k-carve", "corr", Sha256("{}"u8.ToArray())), CT);
         await _objects.PutAsync(job.InputObjectKey, new MemoryStream("{}"u8.ToArray()), "application/json", CT);
         await repo.MarkInputStoredAsync(job.Id, CT);
         await using var db = pg.CreateContext();

@@ -3,8 +3,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using CabinetNC.Cloud.Contracts;
+using CabinetNC.Cloud.NestContract;
 using CabinetNC.Compute.Contracts;
 using CabinetNC.Desktop.Core.Cloud;
+using CabinetNC.Domain.Machines;
+using CabinetNC.Domain.Manufacturing;
 using CabinetNC.Domain.Nesting;
 using CabinetNC.Infrastructure.Diagnostics;
 using CabinetNC.Infrastructure.Library;
@@ -195,6 +198,129 @@ public partial class MainWindow
             },
         };
         return (packed, warnings);
+    }
+
+    // ---- CAM / NC via the intranet ----------------------------------------------------------------
+    //
+    // RebuildOpsOverlay and RefreshExportFiles are synchronous UI code called from many event handlers.
+    // In Intranet mode they read from content-hash caches; a miss schedules the job and re-runs the
+    // caller when the result arrives. The same inputs therefore never compute twice (the server also
+    // dedups them through the idempotency key derived from the same hash).
+
+    readonly Dictionary<string, IReadOnlyList<CutOp>?> _cloudOpsCache = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string?> _cloudNcCache = new(StringComparer.Ordinal);
+    readonly HashSet<string> _cloudJobsInFlight = new(StringComparer.Ordinal);
+    const int CloudCacheLimit = 64;
+
+    /// <summary>Local: the in-process pipeline. Intranet: cached server result, or null while the job runs.</summary>
+    IReadOnlyList<CutOp>? PlanOps(IReadOnlyList<PanelPart> panels, IReadOnlyList<NestPlacement> places, CamPipelineOptions options)
+    {
+        if (ComputeModeSelected != ComputeMode.Intranet)
+            return CamPipeline.Plan(panels, places, options);
+
+        var request = new SubmitOperationsJobRequest(
+            panels.Select(CamContractMapper.FromPanel).ToList(),
+            places.Select(CamContractMapper.FromPlacement).ToList(),
+            new OperationsOptionsDto(options.EnableContour, options.EnableDrill, options.EnableGroove, options.ClearanceLargeMinShortMm, options.DrillMaxExclusiveMm, options.ContourToolDiameterMm));
+        var key = CloudApiClient.ContentKey(request);
+        if (_cloudOpsCache.TryGetValue(key, out var cached))
+            return cached ?? [];   // null = the last attempt failed; the status bar said why
+
+        ScheduleCloudJob(key, "刀路", async gateway =>
+        {
+            var result = await gateway.RunOperationsAsync(request, null, CancellationToken.None);
+            return () =>
+            {
+                Trim(_cloudOpsCache);
+                _cloudOpsCache[key] = result.Result.Ops.Select(CamContractMapper.ToOp).ToList();
+                RebuildOpsOverlay();
+                SetStatus($"内网刀路完成 · {_opsOverlay.Count} 条工序 · 服务器 {result.DurationMs} ms · job {ShortId(result.JobId)}", StatusKind.Success);
+            };
+        }, () => _cloudOpsCache[key] = null);
+        return null;
+    }
+
+    /// <summary>Local: NcEmitter in-process. Intranet: cached server NC, or a placeholder while the job runs.</summary>
+    string EmitNc(IReadOnlyList<CutOp> ops, MachineProfile profile, PostRecipe recipe)
+    {
+        if (ComputeModeSelected != ComputeMode.Intranet)
+            return NcEmitter.OpsToNc(ops, profile, recipe: recipe);
+
+        var request = new SubmitPostJobRequest(ops.Select(CamContractMapper.FromOp).ToList(), CamContractMapper.FromMachine(profile), CamContractMapper.FromRecipe(recipe));
+        var key = CloudApiClient.ContentKey(request);
+        if (_cloudNcCache.TryGetValue(key, out var cached))
+            return cached ?? "// 内网 NC 计算失败，见状态栏";
+
+        ScheduleCloudJob(key, "NC", async gateway =>
+        {
+            var result = await gateway.RunPostAsync(request, null, CancellationToken.None);
+            return () =>
+            {
+                Trim(_cloudNcCache);
+                _cloudNcCache[key] = result.Result.NcText;
+                RegenerateNcFromCurrentOps();
+                SetStatus($"内网 NC 完成 · {result.Result.LineCount} 行 · {result.Result.MachineId} · job {ShortId(result.JobId)}", StatusKind.Success);
+            };
+        }, () => _cloudNcCache[key] = null);
+        return "// 内网 NC 计算中… " + key[..8];
+    }
+
+    /// <summary>Runs one cloud job off the UI thread; applies its result (or records the failure) back on it.</summary>
+    void ScheduleCloudJob(string key, string what, Func<IComputeGateway, Task<Action>> run, Action onFailure)
+    {
+        if (!_cloudJobsInFlight.Add(key))
+            return;
+        IComputeGateway gateway;
+        try
+        {
+            gateway = new ComputeGatewayFactory(() => throw new InvalidOperationException(), () => _cloud).Create(ComputeMode.Intranet);
+        }
+        catch (CloudAuthenticationRequiredException ex)
+        {
+            _cloudJobsInFlight.Remove(key);
+            onFailure();
+            SetStatus($"内网{what}未登录 · {ex.Message}", StatusKind.Error);
+            return;
+        }
+
+        SetStatus($"内网{what}计算中… {key[..8]}", StatusKind.Busy);
+        _ = Task.Run(async () =>
+        {
+            Action apply;
+            try
+            {
+                apply = await run(gateway);
+            }
+            catch (Exception ex) when (ex is ComputeUnavailableException or ComputeJobFailedException or ComputeJobTimeoutException or CloudApiException or CloudAuthenticationRequiredException)
+            {
+                var code = ex switch
+                {
+                    ComputeJobFailedException f => f.ErrorCode ?? "job_failed",
+                    ComputeJobTimeoutException => "job_timeout",
+                    CloudApiException a => a.Code ?? ((int)a.StatusCode).ToString(),
+                    CloudAuthenticationRequiredException => "auth_required",
+                    _ => "unavailable",
+                };
+                UsageLog.LogEvent("warn", "cloud.cam", new Dictionary<string, object?> { ["what"] = what, ["error"] = code }, error: ex.Message);
+                apply = () =>
+                {
+                    onFailure();
+                    SetStatus($"内网{what}计算失败 [{code}]: {ex.Message} · 未自动改用本机", StatusKind.Error);
+                };
+            }
+            await Dispatcher.BeginInvoke(() =>
+            {
+                _cloudJobsInFlight.Remove(key);
+                apply();
+            });
+        });
+    }
+
+    static void Trim<TValue>(Dictionary<string, TValue> cache)
+    {
+        if (cache.Count < CloudCacheLimit) return;
+        foreach (var stale in cache.Keys.Take(cache.Count - CloudCacheLimit / 2).ToList())
+            cache.Remove(stale);
     }
 
     static string StatusLabel(JobStatus status) => status switch

@@ -68,6 +68,24 @@ public sealed class CloudApiClient : IDisposable, ICloudAuthTransport
     public Task<NestJobResultV2> GetJobResultV2Async(Guid jobId, CancellationToken ct) =>
         SendAsync<NestJobResultV2>(_authenticated, HttpMethod.Get, ApiRoutes.ForJobResult(jobId), null, null, ct);
 
+    public Task<SubmitNestJobResponse> SubmitOperationsJobAsync(SubmitOperationsJobRequest request, string idempotencyKey, CancellationToken ct) =>
+        SendAsync<SubmitNestJobResponse>(_authenticated, HttpMethod.Post, ApiRoutes.JobsOperations, request,
+            r => r.Headers.TryAddWithoutValidation(ApiHeaders.IdempotencyKey, idempotencyKey), ct);
+
+    public Task<OperationsJobResult> GetOperationsResultAsync(Guid jobId, CancellationToken ct) =>
+        SendAsync<OperationsJobResult>(_authenticated, HttpMethod.Get, ApiRoutes.ForJobResult(jobId), null, null, ct);
+
+    public Task<SubmitNestJobResponse> SubmitPostJobAsync(SubmitPostJobRequest request, string idempotencyKey, CancellationToken ct) =>
+        SendAsync<SubmitNestJobResponse>(_authenticated, HttpMethod.Post, ApiRoutes.JobsPost, request,
+            r => r.Headers.TryAddWithoutValidation(ApiHeaders.IdempotencyKey, idempotencyKey), ct);
+
+    public Task<PostJobResult> GetPostResultAsync(Guid jobId, CancellationToken ct) =>
+        SendAsync<PostJobResult>(_authenticated, HttpMethod.Get, ApiRoutes.ForJobResult(jobId), null, null, ct);
+
+    /// <summary>Canonical request hash; used as the idempotency key for CAM jobs so identical inputs never recompute.</summary>
+    public static string ContentKey<T>(T request) =>
+        Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(CloudJson.Serialize(request))));
+
     Task<LoginResponse> ICloudAuthTransport.LoginAsync(LoginRequest request, CancellationToken ct) =>
         SendAsync<LoginResponse>(_anonymous, HttpMethod.Post, ApiRoutes.AuthLogin, request, null, ct);
 

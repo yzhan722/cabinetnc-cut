@@ -802,9 +802,35 @@ WPF 侧全部放在新文件里，`MainWindow.xaml.cs` 只改了 `RunNestAsync` 
 2. NFP 有超时回退，因此 parity 的定义是"同一代码、同一输入、同一超时"；在负载下服务器可能回退 BLF 而本机不回退（或反之），结果的 `Log.FallbackReason` 会说明。性能基线 §7 的建议（worker 2 vCPU）对 NFP 仍需实测——P2-8。
 3. `GET /jobs/{id}/result` 不加版本后缀：信封形状由 job 类型决定，客户端按自己提交的类型反序列化。
 
-## P2-3 — CAM 上云：特征化完成，实施待决策（2026-09-06）
+## P2-3 / P2-4 — 刀路（CAM）与 NC 后处理上云（2026-09-08，机器 B；方案：配置随 job 发送、手写 DTO、断料/桥接留本机）
 
-见 `COMMERCIAL_READINESS_PLAN.md` §"P2-3 特征化结论与待决策"：本机刀路链 = Domain 纯函数（`FeaturesToOps`/`AttachToNest`/`OpsToNc`）+ Desktop 内逻辑（刀具库自动偏置、工序开关、断料、桥接）；现有 gRPC `GenerateNc` 是有损简化版，不能当服务器等价物。三项产品决策（刀具库/机型档的归属、契约形式、断料/桥接是否上云）确认后开工；建议方案已写明。
+### 做了什么
+
+| 层 | 内容 |
+|---|---|
+| `Domain/Manufacturing/CamPipeline.cs` | **算法链的唯一定义**：`FeaturesToOps(开关、清根/钻孔阈值) → AttachToNest → ContourToolOffset(轮廓刀具直径/2)`；`CamPipelineOptions` 记录。Desktop 本机分支与云 worker 都调用它（之前 Desktop 的 `ApplyAutomaticToolOffset` 逻辑迁入，方法删除） |
+| `Cloud.Contracts/CamContracts.cs` | `SubmitOperationsJobRequest`（`CamPanelDto`：轮廓点 + CAD 段、材料/厚度、**Side**（`Panel.Side ?? Orientation.MillingFace` 摊平）、完整 `PanelFeatureDto`（Path/Profile/Holes/ProfileSegments/HoleSegments…）；放置；`OperationsOptionsDto`）→ `OperationsJobResultPayload`（完整 `CutOpDto`，含 PathSegments/FinishLoop/PanelBounds/CadPath 等 30 个字段 + 计数）；`SubmitPostJobRequest`（ops + `MachineProfileDto` + `PostRecipeDto` 含桥接）→ `PostJobResultPayload`（NC 文本、行数、机型）；`CamRequestRules` 纯 DTO 校验；`JobTypes.Operations/Post`、`ApiRoutes.JobsOperations/JobsPost` |
+| `Cloud.NestContract/CamContractMapper.cs` | Domain ↔ DTO 双向投影（几何、特征、面板、放置、CutOp、机型、配方、桥接） |
+| `Compute.Core/Cam/CamRunners.cs` | `IOperationsRunner`/`OperationsRunner`（映射 → `CamPipeline.Plan`）、`IPostProcessorRunner`/`PostProcessorRunner`（映射 → `NcEmitter.OpsToNc`） |
+| `Cloud.Worker/NestJobExecutor` | 按 job 类型的分派表 `Compute(jobType, json)`（nest / nest.v2 / operations / post），统一"坏输入 → 终态 invalid_request、引擎拒绝 → 终态 compute_failed、异常 → 可重试" |
+| `Cloud.Api` | `POST /api/v1/jobs/operations`、`POST /api/v1/jobs/post`（body ≤ 32 MiB），`GET /jobs/{id}/result` 按类型返回 `OperationsJobResult`/`PostJobResult` |
+| `Desktop.Core` | 客户端方法 + 网关 `RunOperationsAsync`/`RunPostAsync`；**幂等键 = 请求内容 SHA-256**（`CloudApiClient.ContentKey`），相同输入在服务器上只算一次 |
+| `Desktop/MainWindow.Cloud.cs` | 两个 choke point：`PlanOps(panels, places, options)` 与 `EmitNc(ops, profile, recipe)`。本机 → 进程内 `CamPipeline.Plan` / `NcEmitter`；内网 → 按内容哈希查缓存，未命中则 `ScheduleCloudJob`（后台线程跑网关，完成后回到 UI 线程写缓存并重跑 `RebuildOpsOverlay()` / `RegenerateNcFromCurrentOps()`，状态栏"内网刀路完成 · N 条工序 · job …"/"内网 NC 完成 · N 行"）；失败记入缓存（null）并报状态码，**不回退本机**；in-flight 去重、缓存上限 64 |
+| `MainWindow.xaml.cs` | `RebuildOpsOverlay` 的三步算法替换为 `PlanOps`（返回 null 时清空 overlay 并刷新，等待回调）；两处 `NcEmitter.OpsToNc` 改 `EmitNc`；`CalculateOps` 的状态加 " · 内网计算"标记且在 job 未完成时不覆盖进度状态 |
+
+### 测试
+
+- `Compute.Core.Tests/CamRunnersTests`（5）：门板（4 边 CAD 段、Ø35 铰链杯 ×2、Ø8 木销、背槽、带岛的 LED 槽、通风口通孔）+ 五边形层板（B 面、`GroupId` 槽）、两块放置（其一旋转 90°）：**服务器 ops 与本机 `CamPipeline.Plan` 逐字节相同**（刀具 8 mm 与 0 mm 两组）；**NC 逐字节相同**（含斜坡进刀、桥接、`HomeXyAtEnd=false` 的配方，且证明配方确实改变输出）；特征/工序/机型/配方投影往返；请求校验。
+- `Cloud.Api.Tests`（+1）：operations job → 与本机 ops 相同 → 其结果作为 post job 输入 → NC 与本机相同；空 panels 400。
+- `Cloud.Worker.Tests`：分派表重构后 11/11（不支持类型的夹具改为 `carve`）。
+- UI smoke 06 扩展为**全流程**：登录 → 内网排版 → 刀路（`已计算全部大板 … · 内网计算`）→ 导出页 NC → 导出当前大板（bmp 落盘）→ 退出登录：通过。服务端记录：三次运行 `nest.v2 ×3`、**`operations ×1`、`post ×1`**——内容哈希幂等键让相同刀路/NC 只算一次。
+- smoke 工具：`shot:` 改为非致命（本会话桌面无法截屏，UIA 全部正常）；新增 `invoke-optional:`。
+
+### 决策
+
+1. 断料（guillotine）、桥接、工序开关留在 Desktop：它们是交互式几何后处理，不含核心算法价值；服务器只算 `CamPipeline` 与 `NcEmitter`。
+2. 刀具库与机型档随 job 发送（无服务器状态）；租户级配置留作后续。
+3. 云端 CAM/NC 是异步的但 UI 仍是同步模型：缓存 + 回调重跑，避免改写 9000 行窗口的调用结构。
 
 ## P2-6 — 运维包（2026-09-08，机器 B）
 

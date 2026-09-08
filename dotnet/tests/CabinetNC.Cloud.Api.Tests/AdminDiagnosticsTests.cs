@@ -7,6 +7,7 @@ using CabinetNC.Cloud.Infrastructure.Entities;
 using CabinetNC.Cloud.Infrastructure.Jobs;
 using CabinetNC.Cloud.Infrastructure.Tests;
 using CabinetNC.Cloud.Worker;
+using CabinetNC.Compute.Core.Cam;
 using CabinetNC.Compute.Core.Nesting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -15,7 +16,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CabinetNC.Cloud.Api.Tests;
 
-/// <summary>Support must be able to explain any job from its id alone â€” without ever seeing credentials.</summary>
+/// <summary>Support must be able to explain any job from its id alone â€?without ever seeing credentials.</summary>
 public class AdminDiagnosticsTests(MigratedByAppPostgresFixture pg) : IClassFixture<MigratedByAppPostgresFixture>, IAsyncLifetime
 {
     readonly ManualClock _clock = new() { Now = new DateTimeOffset(DateTimeOffset.UtcNow.Year, DateTimeOffset.UtcNow.Month, DateTimeOffset.UtcNow.Day, DateTimeOffset.UtcNow.Hour, DateTimeOffset.UtcNow.Minute, DateTimeOffset.UtcNow.Second, TimeSpan.Zero) };
@@ -70,7 +71,7 @@ public class AdminDiagnosticsTests(MigratedByAppPostgresFixture pg) : IClassFixt
     async Task RunWorkerOnceAsync()
     {
         await using var db = pg.CreateContext();
-        var executor = new NestJobExecutor(new PostgresJobRepository(db, _clock), _factory.ObjectStore, new NestingRunner(), db, _clock,
+        var executor = new NestJobExecutor(new PostgresJobRepository(db, _clock), _factory.ObjectStore, new NestingRunner(), new OperationsRunner(), new PostProcessorRunner(), db, _clock,
             new WorkerOptions { WorkerId = "diag-worker" }, NullLogger<NestJobExecutor>.Instance);
         Assert.True(await executor.ExecuteOneAsync(CancellationToken.None));
     }

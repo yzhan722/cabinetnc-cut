@@ -139,17 +139,23 @@ function Status-Text {
     return $el.Current.Name
 }
 function Shot([string]$file) {
-    [SmokeWin32]::SetForegroundWindow($h) | Out-Null; Start-Sleep -Milliseconds 300
-    $r = New-Object SmokeWin32+RECT
-    [SmokeWin32]::GetWindowRect($h, [ref]$r) | Out-Null
-    $w = $r.Right - $r.Left; $hh = $r.Bottom - $r.Top
-    if ($w -le 0 -or $hh -le 0) { return }
-    $bmp = New-Object System.Drawing.Bitmap $w, $hh
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.CopyFromScreen($r.Left, $r.Top, 0, 0, (New-Object System.Drawing.Size $w, $hh))
-    $path = Join-Path $ShotDir $file
-    $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose()
-    Ok "shot $file"
+    # Screenshots are evidence, not assertions: a locked or headless desktop must not fail the scenario.
+    try {
+        [SmokeWin32]::SetForegroundWindow($h) | Out-Null; Start-Sleep -Milliseconds 300
+        $r = New-Object SmokeWin32+RECT
+        [SmokeWin32]::GetWindowRect($h, [ref]$r) | Out-Null
+        $w = $r.Right - $r.Left; $hh = $r.Bottom - $r.Top
+        if ($w -le 0 -or $hh -le 0) { Write-Host "warn  shot $file skipped: window has no size" -ForegroundColor Yellow; return }
+        $bmp = New-Object System.Drawing.Bitmap $w, $hh
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.CopyFromScreen($r.Left, $r.Top, 0, 0, (New-Object System.Drawing.Size $w, $hh))
+        $path = Join-Path $ShotDir $file
+        $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose()
+        Ok "shot $file"
+    }
+    catch {
+        Write-Host "warn  shot $file skipped: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
 }
 
 $steps = $allLines | Where-Object { $_ -notlike 'launch-arg:*' -and $_ -notlike 'pre-copy:*' }
@@ -160,6 +166,12 @@ foreach ($s in $steps) {
             'invoke' {
                 $el = Find-ByName $arg ([System.Windows.Automation.ControlType]::Button)
                 if ($null -eq $el) { Fail "button '$arg' not found"; continue }
+                $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 900; Ok "invoke $arg"
+            }
+            'invoke-optional' {
+                # Clicks the button when present; a wizard step that is already passed is not a failure.
+                $el = Find-ByName $arg ([System.Windows.Automation.ControlType]::Button) 2500
+                if ($null -eq $el) { Write-Host "warn  optional button '$arg' not present" -ForegroundColor Yellow; continue }
                 $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 900; Ok "invoke $arg"
             }
             'tab' {

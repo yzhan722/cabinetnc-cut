@@ -19,6 +19,12 @@ public interface IComputeGateway
 
     /// <summary>v2 true-shape contract: what the Desktop actually uses in Intranet mode.</summary>
     Task<NestJobResultV2> RunNestingV2Async(SubmitNestJobRequestV2 request, IProgress<ComputeProgress>? progress, CancellationToken ct);
+
+    /// <summary>CAM: cut operations for placed panels. Keyed by content, so identical inputs reuse the same job.</summary>
+    Task<OperationsJobResult> RunOperationsAsync(SubmitOperationsJobRequest request, IProgress<ComputeProgress>? progress, CancellationToken ct);
+
+    /// <summary>Post-processor: NC program for a sheet's operations. Keyed by content as well.</summary>
+    Task<PostJobResult> RunPostAsync(SubmitPostJobRequest request, IProgress<ComputeProgress>? progress, CancellationToken ct);
 }
 
 /// <summary>
@@ -43,13 +49,22 @@ public sealed class IntranetComputeGateway(
     public Task<NestJobResultV2> RunNestingV2Async(SubmitNestJobRequestV2 request, IProgress<ComputeProgress>? progress, CancellationToken ct) =>
         RunAsync(key => api.SubmitNestJobV2Async(request, key, ct), jobId => api.GetJobResultV2Async(jobId, ct), progress, ct);
 
+    public Task<OperationsJobResult> RunOperationsAsync(SubmitOperationsJobRequest request, IProgress<ComputeProgress>? progress, CancellationToken ct) =>
+        RunAsync(key => api.SubmitOperationsJobAsync(request, key, ct), jobId => api.GetOperationsResultAsync(jobId, ct), progress, ct,
+            idempotencyKey: "ops-" + CloudApiClient.ContentKey(request));
+
+    public Task<PostJobResult> RunPostAsync(SubmitPostJobRequest request, IProgress<ComputeProgress>? progress, CancellationToken ct) =>
+        RunAsync(key => api.SubmitPostJobAsync(request, key, ct), jobId => api.GetPostResultAsync(jobId, ct), progress, ct,
+            idempotencyKey: "post-" + CloudApiClient.ContentKey(request));
+
     async Task<TResult> RunAsync<TResult>(
         Func<string, Task<SubmitNestJobResponse>> submit,
         Func<Guid, Task<TResult>> fetchResult,
         IProgress<ComputeProgress>? progress,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? idempotencyKey = null)
     {
-        var idempotencyKey = Guid.NewGuid().ToString("D");
+        idempotencyKey ??= Guid.NewGuid().ToString("D");
         var started = _clock.GetUtcNow();
 
         var submitted = await WithNetworkGraceAsync(() => submit(idempotencyKey), ct);
@@ -115,6 +130,12 @@ public sealed class LocalComputeGateway(Func<Nesting.NestingClient> clientFactor
     /// <summary>The local gRPC worker speaks the rectangular contract only; Local true-shape nesting runs in-process in the Desktop.</summary>
     public Task<NestJobResultV2> RunNestingV2Async(SubmitNestJobRequestV2 request, IProgress<ComputeProgress>? progress, CancellationToken ct) =>
         throw new NotSupportedException("The local gRPC worker only implements the rectangular (v1) contract.");
+
+    public Task<OperationsJobResult> RunOperationsAsync(SubmitOperationsJobRequest request, IProgress<ComputeProgress>? progress, CancellationToken ct) =>
+        throw new NotSupportedException("Local CAM runs in-process in the Desktop.");
+
+    public Task<PostJobResult> RunPostAsync(SubmitPostJobRequest request, IProgress<ComputeProgress>? progress, CancellationToken ct) =>
+        throw new NotSupportedException("Local post-processing runs in-process in the Desktop.");
 
     public async Task<NestJobResult> RunNestingAsync(SubmitNestJobRequest request, IProgress<ComputeProgress>? progress, CancellationToken ct)
     {

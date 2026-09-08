@@ -20,8 +20,8 @@
 |---|---|---|---|---|
 | P2-1 | **管理 API**：`/api/v1/admin/users`（增/列/停用/启用/重置密码/改角色）、`/api/v1/admin/devices`（列/吊销=撤销全部 refresh token）、`/api/v1/auth/password`（本人改密并撤销其他会话）；密码策略 ≥ 12；全部写审计 | G1 | API 测试覆盖每个端点的成功、越权（operator 403、跨 tenant 404）、最后一个 admin 不能被停用；runbook 给 curl 示例 | **DONE** `683f8ce` |
 | P2-2 | **Nest 契约 v2（真形）**：`POST /api/v1/jobs/nest/v2` 接受完整轮廓（多边形 + 通孔）、纹理/允许角度、完整大板队列（余料、禁排区、按边余量、材料/厚度、纹理）、`NestSettings`、引擎偏好与超时；worker 运行与 Desktop 本机**同一个** `NestEngineRouter`；v1 矩形契约保留为子集 | G2 | parity 测试：同一请求本机 `NestEngineRouter.Run` 与服务器结果逐字段相同；Desktop 内网模式 `intranet_contract` 降级清单为空；UI smoke 06 在 NFP 引擎下通过 | **DONE**（本 commit） |
-| P2-3 | **Operations（CAM）云 job**：characterization → `IOperationsRunner` 入 Compute.Core → 本机 gRPC 变 adapter → `jobs/operations` → Desktop 内网模式刀路走服务器 | G3 | op 数量/零件-特征关联/大板坐标/钻孔-轮廓语义 parity；本机回归不变 | |
-| P2-4 | **Post（NC）云 job**：golden NC → `IPostProcessorRunner` → `jobs/post` → Desktop 内网 NC 预览/导出走服务器 | G3 | 本机/服务器 NC 归一化后逐行相同，且**不归一化掉有意义差异**；导出流程 UI smoke 通过 | |
+| P2-3 | **Operations（CAM）云 job**：characterization → `IOperationsRunner` 入 Compute.Core → `jobs/operations` → Desktop 内网模式刀路走服务器 | G3 | op 数量/零件-特征关联/大板坐标/钻孔-轮廓语义 parity；本机回归不变 | **DONE**（ops 逐字节 parity；本机 gRPC worker 未改为 adapter——它仍是 PoC 的 A/B 用简化版，客户版不含） |
+| P2-4 | **Post（NC）云 job**：`IPostProcessorRunner` → `jobs/post` → Desktop 内网 NC 预览/导出走服务器 | G3 | 本机/服务器 NC **逐字节**相同（无归一化）；导出流程 UI smoke 通过 | **DONE** |
 | P2-5 | **Domain 拆分**：`CabinetNC.Domain.Model`（几何、零件、包、设置、校验）/ `CabinetNC.Domain.Compute`（BLF/NFP/Guillotine/CAM/Post）；Desktop 客户版只引用 Model；`verify-customer-package.ps1` 严格模式 PASS，删除 `-PoC` | G4 | 全量回归、UI smoke（开发版+客户版）、严格验证 PASS | |
 | P2-6 | **运维包**：`backup.sh/restore.sh`（pg_dump + MinIO 卷）并演练；compose 默认 2 worker、poll 0.2 s；`/api/v1/health/ready` 深检（DB/MinIO）；日志轮转；升级/回滚步骤；Prometheus 指标（job 计数/时延/失败） | G5 | 恢复演练：备份→清库→恢复→job 与用户可查；杀掉一个 worker 后 job 由另一个完成 | **DONE**（指标待做）；演练记录见 runbook §4.6 |
 | P2-7 | **受保护构建**：Eazfuscator.NET（或 Dotfuscator Pro）试用版在客户包上试跑 → 全量测试 + UI smoke + 严格验证 + ILSpy 检查 | G4 | 四项验收全绿；否则记录 FAIL 与原因 | 需采购/试用许可 |

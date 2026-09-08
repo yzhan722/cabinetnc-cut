@@ -1,4 +1,4 @@
-# Intranet compute mode: sign in → demo package nested on the cloud API → result rendered.
+# Intranet compute mode end to end: sign in → nest (nest.v2) → CAM (operations job) → NC (post job) → export.
 # Needs a running API; run-all.ps1 skips this scenario unless CABINETNC_SMOKE_API_URL is set:
 #   CABINETNC_SMOKE_API_URL   e.g. http://127.0.0.1:8080 (loopback http) or https://cabinetnc.shop.local
 #   CABINETNC_SMOKE_TENANT / CABINETNC_SMOKE_EMAIL / CABINETNC_SMOKE_PASSWORD
@@ -29,9 +29,35 @@ wait:500
 invoke:重新密排
 wait:9000
 dismiss
-assert-status:密排完成
-assert-status:内网 job
+# By now nest → CAM → NC have all completed on the server; the status bar shows the last of them.
+assert-status:内网
+assert-text:NestReportMeta=已排 1
 shot:06c-intranet-nested.png
+# CAM on the server. The operations job is usually already finished (it starts as soon as the nest
+# arrives), so the click reports the counts with the intranet marker.
+tab:4 刀路与加工档
+wait:6000
+invoke:计算全部
+wait:6000
+dismiss
+assert-status:已计算全部大板
+assert-status:内网计算
+shot:06d-intranet-ops.png
+# NC on the server (one post job per sheet), then the ordinary export pipeline.
+tab:5 导出
+wait:8000
+invoke-optional:下一步
+wait:200
+invoke-optional:下一步
+wait:600
+invoke:导出当前大板
+wait:3000
+dismiss
+assert-status:已导出
+assert-file:%OMNICAM_AUTO_EXPORT_DIR%\Left_side.bmp
+shot:06e-intranet-exported.png
+tab:3 密排
+wait:800
 invoke:退出内网登录
 wait:1500
 assert-status:已退出内网登录

@@ -4,6 +4,7 @@ using CabinetNC.Cloud.Infrastructure.Entities;
 using CabinetNC.Cloud.Infrastructure.Jobs;
 using CabinetNC.Cloud.Infrastructure.Tests;
 using CabinetNC.Cloud.Worker;
+using CabinetNC.Compute.Core.Cam;
 using CabinetNC.Compute.Core.Nesting;
 using CabinetNC.Desktop.Core.Cloud;
 using Microsoft.AspNetCore.Identity;
@@ -83,7 +84,7 @@ public class ReliabilitySuiteTests(MigratedByAppPostgresFixture pg) : IClassFixt
     async Task<bool> RunWorkerOnceAsync(string workerId = "worker-1", CloudApiFactory? factory = null)
     {
         await using var db = pg.CreateContext();
-        var executor = new NestJobExecutor(new PostgresJobRepository(db, _clock), (factory ?? _factory).ObjectStore, new NestingRunner(), db, _clock,
+        var executor = new NestJobExecutor(new PostgresJobRepository(db, _clock), (factory ?? _factory).ObjectStore, new NestingRunner(), new OperationsRunner(), new PostProcessorRunner(), db, _clock,
             new WorkerOptions { WorkerId = workerId }, NullLogger<NestJobExecutor>.Instance);
         return await executor.ExecuteOneAsync(CT);
     }

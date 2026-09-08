@@ -1,5 +1,6 @@
 using CabinetNC.Cloud.Infrastructure;
 using CabinetNC.Cloud.Infrastructure.Storage;
+using CabinetNC.Compute.Core.Cam;
 using CabinetNC.Compute.Core.Nesting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -22,6 +23,8 @@ public static class Program
         builder.Services.AddCloudPersistence(_ => RequireEnvironment("CABINETNC_DB_CONNECTION"));
         builder.Services.AddCloudObjectStore(_ => ObjectStoreOptions.FromEnvironment());
         builder.Services.AddSingleton<INestingRunner, NestingRunner>();
+        builder.Services.AddSingleton<IOperationsRunner, OperationsRunner>();
+        builder.Services.AddSingleton<IPostProcessorRunner, PostProcessorRunner>();
         builder.Services.AddScoped<NestJobExecutor>();
         builder.Services.AddHostedService<NestJobWorkerHost>();
 

@@ -8,6 +8,10 @@ public static class ApiRoutes
     public const string JobsNest = "/api/v1/jobs/nest";
     /// <summary>True-shape contract (outlines, cutouts, full stock queue, settings); result is <see cref="NestJobResultV2"/>.</summary>
     public const string JobsNestV2 = "/api/v1/jobs/nest/v2";
+    /// <summary>CAM: panels + placements + options → cut operations (<see cref="OperationsJobResult"/>).</summary>
+    public const string JobsOperations = "/api/v1/jobs/operations";
+    /// <summary>Post-processor: operations + machine + recipe → NC program (<see cref="PostJobResult"/>).</summary>
+    public const string JobsPost = "/api/v1/jobs/post";
     public const string JobStatusTemplate = "/api/v1/jobs/{jobId}";
     public const string JobResultTemplate = "/api/v1/jobs/{jobId}/result";
     public const string Health = "/api/v1/health";
@@ -49,4 +53,6 @@ public static class JobTypes
 {
     public const string Nest = "nest";
     public const string NestV2 = "nest.v2";
+    public const string Operations = "operations";
+    public const string Post = "post";
 }

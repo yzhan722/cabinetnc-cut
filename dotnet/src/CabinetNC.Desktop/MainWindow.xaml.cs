@@ -827,7 +827,7 @@ public partial class MainWindow : Window
                 string nc;
                 try
                 {
-                    nc = NcEmitter.OpsToNc(ops, profile, recipe: recipe);
+                    nc = EmitNc(ops, profile, recipe);
                 }
                 catch (Exception ex)
                 {
@@ -2408,16 +2408,28 @@ public partial class MainWindow : Window
         }).Where(p => _opsAllSheets || p.SheetIndex == _activeNestSheet).ToList();
         ReadClearanceFields();
         ReadDrillFields();
-        var raw = OpsPlanner.FeaturesToOps(
+        // Same pipeline definition as the cloud worker (CamPipeline); Intranet mode answers from the
+        // content cache and returns null while the server job is still running.
+        var planned = PlanOps(
             _session.Package.Panels,
-            enableContour: true,
-            enableDrill: true,
-            enableGroove: true,
-            clearanceLargeMinShortMm: _clrLargeMinShort,
-            drillMaxExclusiveMm: _drillMaxExclusive);
-        _opsOverlay = OpsPlanner.AttachToNest(raw, places);
-        _opsOverlay = ApplyAutomaticToolOffset(_opsOverlay);
-        _opsOverlay = _opsOverlay
+            places,
+            new CamPipelineOptions(
+                EnableContour: true,
+                EnableDrill: true,
+                EnableGroove: true,
+                ClearanceLargeMinShortMm: _clrLargeMinShort,
+                DrillMaxExclusiveMm: _drillMaxExclusive,
+                ContourToolDiameterMm: ToolDiameterOf(new CutOp { Op = "contour", PanelId = "_" })));
+        if (planned is null)
+        {
+            _opsOverlay = [];
+            RefreshOpsRail();
+            RefreshCamFrames();
+            RefreshPreflightMeta();
+            RegenerateNcFromCurrentOps();
+            return;
+        }
+        _opsOverlay = planned
             .Where(PassEnabled)
             .ToList();
         _opsOverlay = _opsOverlay.Concat(BuildGuillotineOps()).ToList();
@@ -2502,14 +2514,6 @@ public partial class MainWindow : Window
                 return preset.DiameterMm;
         }
         return ActiveProfileForCam().ToolDiameterMm is > 0 and var d ? d : 6.35;
-    }
-
-    IReadOnlyList<CutOp> ApplyAutomaticToolOffset(IReadOnlyList<CutOp> ops)
-    {
-        var contour = ops.FirstOrDefault(o => o.Op == "contour");
-        var radius = ToolDiameterOf(contour ?? new CutOp { Op = "contour", PanelId = "_" }) / 2;
-        if (radius < 1e-6) return ops;
-        return ContourToolOffset.Apply(ops, radius);
     }
 
     void RefreshOpsRail()
@@ -3118,9 +3122,13 @@ public partial class MainWindow : Window
         _opsAllSheets = allSheets;
         RebuildOpsOverlay();
         CanvasHost.InvalidateVisual();
+        // In Intranet mode an empty overlay means the server job is still running; leave its status in place.
+        if (ComputeModeSelected == ComputeMode.Intranet && _opsOverlay.Count == 0)
+            return;
+        var source = ComputeModeSelected == ComputeMode.Intranet ? " · 内网计算" : "";
         SetStatus(allSheets
-            ? $"已计算全部大板 · {_opsSummary}"
-            : $"已计算当前大板 {_activeNestSheet + 1} · {_opsSummary}");
+            ? $"已计算全部大板 · {_opsSummary}{source}"
+            : $"已计算当前大板 {_activeNestSheet + 1} · {_opsSummary}{source}");
     }
 
     void OnOpsCalculateClick(object sender, RoutedEventArgs e) =>
@@ -5517,7 +5525,7 @@ public partial class MainWindow : Window
                 {
                     var profile = ActiveProfileForCam();
                     var opsForNc = _opsOverlay.ToList();
-                    var nc = NcEmitter.OpsToNc(opsForNc, profile, recipe: CurrentPostRecipe());
+                    var nc = EmitNc(opsForNc, profile, CurrentPostRecipe());
                     NcPreview.Text = nc;
                     ncNote = $" · NC {profile.Id} lines={nc.Split('\n').Length}";
                     opsNote = $" · ops c={opsForNc.Count(o => o.Op == "contour")} d={opsForNc.Count(o => o.Op == "drill")} g={opsForNc.Count(o => o.Op == "groove")}";

@@ -11,8 +11,11 @@ using CabinetNC.Cloud.Infrastructure.Jobs;
 using CabinetNC.Cloud.Infrastructure.Tests;
 using CabinetNC.Cloud.NestContract;
 using CabinetNC.Cloud.Worker;
+using CabinetNC.Compute.Core.Cam;
 using CabinetNC.Compute.Core.Nesting;
 using CabinetNC.Domain.Geometry;
+using CabinetNC.Domain.Machines;
+using CabinetNC.Domain.Manufacturing;
 using CabinetNC.Domain.Nesting;
 using CabinetNC.Domain.Parts;
 using Microsoft.AspNetCore.Identity;
@@ -360,6 +363,63 @@ public class JobEndpointTests(MigratedByAppPostgresFixture pg) : IClassFixture<M
     }
 
     [PostgresFact]
+    public async Task Operations_then_post_jobs_reproduce_the_local_cam_chain_end_to_end()
+    {
+        var door = new Panel
+        {
+            PanelId = "door-1", Material = "MDF", ThicknessMm = 18,
+            Outline = new Outline { Points = [new(0, 0), new(600, 0), new(600, 400), new(0, 400)] },
+            Features =
+            [
+                new PanelFeature { FeatureId = "dowel", Kind = "hole", FaceId = "A", X = 300, Y = 50, DiameterMm = 8, DepthMm = 10 },
+                new PanelFeature { FeatureId = "groove", Kind = "groove", FaceId = "A", WidthMm = 4, DepthMm = 6, Path = [new(20, 380), new(580, 380)] },
+            ],
+        };
+        var placements = new List<NestPlacement> { new() { PanelId = "door-1", SheetIndex = 0, OffsetX = 15, OffsetY = 15, RotationDeg = 0 } };
+        var options = new OperationsOptionsDto(true, true, true, 120, 12, 8);
+        var machine = MachineCatalog.All[0];
+        var recipe = new PostRecipe { HomeXyAtEnd = false };
+
+        // Local reference: exactly what the Desktop computes in Local mode.
+        var localOps = OperationsRunner.RunPipeline([door], placements, options);
+        var localNc = NcEmitter.OpsToNc(localOps, machine, recipe: recipe);
+
+        var opsRequest = new SubmitOperationsJobRequest([CamContractMapper.FromPanel(door)], placements.Select(CamContractMapper.FromPlacement).ToList(), options);
+        var opsJobId = (await (await PostJobAsync(ApiRoutes.JobsOperations, opsRequest, "ops-1")).ReadAsync<SubmitNestJobResponse>()).JobId;
+        Assert.True(await RunWorkerOnceAsync("cam-worker"));
+        var opsResult = await (await GetAsAsync(ApiRoutes.ForJobResult(opsJobId), _login.AccessToken)).ReadAsync<OperationsJobResult>();
+        Assert.Equal(CloudJson.Serialize(CamContractMapper.FromOps(localOps)), CloudJson.Serialize(opsResult.Result));
+        Assert.Equal(1, opsResult.Result.DrillCount);
+        Assert.Equal(1, opsResult.Result.GrooveCount);
+
+        // Desktop-side post-processing (pass toggles, guillotine, bridges) would happen here; then the NC job.
+        var postRequest = new SubmitPostJobRequest(opsResult.Result.Ops, CamContractMapper.FromMachine(machine), CamContractMapper.FromRecipe(recipe));
+        var postJobId = (await (await PostJobAsync(ApiRoutes.JobsPost, postRequest, "post-1")).ReadAsync<SubmitNestJobResponse>()).JobId;
+        Assert.True(await RunWorkerOnceAsync("cam-worker"));
+        var postResult = await (await GetAsAsync(ApiRoutes.ForJobResult(postJobId), _login.AccessToken)).ReadAsync<PostJobResult>();
+        Assert.Equal(localNc, postResult.Result.NcText);
+        Assert.Equal(machine.Id, postResult.Result.MachineId);
+        Assert.Equal(JobTypes.Post, (await (await GetAsAsync(ApiRoutes.ForJobStatus(postJobId), _login.AccessToken)).ReadAsync<JobStatusResponse>()).JobType);
+
+        var invalid = await PostJobAsync(ApiRoutes.JobsOperations, opsRequest with { Panels = [] }, "ops-bad");
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+    }
+
+    async Task<HttpResponseMessage> PostJobAsync(string route, object body, string idempotencyKey)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, route)
+        {
+            Content = new StringContent(CloudJson.Serialize(body), Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation(ApiHeaders.IdempotencyKey, idempotencyKey);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _login.AccessToken);
+        var response = await _client.SendAsync(request);
+        if (response.StatusCode != HttpStatusCode.BadRequest)
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        return response;
+    }
+
+    [PostgresFact]
     public async Task Result_endpoint_refuses_a_stored_result_whose_hash_no_longer_matches()
     {
         var jobId = (await (await SubmitAsync(ValidRequest(), "tamper-1")).ReadAsync<SubmitNestJobResponse>()).JobId;
@@ -404,6 +464,8 @@ public class JobEndpointTests(MigratedByAppPostgresFixture pg) : IClassFixture<M
             new PostgresJobRepository(db, _clock),
             _factory.ObjectStore,
             new NestingRunner(),
+            new OperationsRunner(),
+            new PostProcessorRunner(),
             db,
             _clock,
             new WorkerOptions { WorkerId = workerId },

@@ -42,6 +42,30 @@ public sealed class NestJobService(
         return SubmitCoreAsync(JobTypes.NestV2, Encoding.UTF8.GetBytes(CloudJson.Serialize(request)), idempotencyKey, principal, correlationId, ct);
     }
 
+    public Task<SubmitNestJobResponse> SubmitOperationsAsync(
+        SubmitOperationsJobRequest request,
+        string idempotencyKey,
+        ClaimsPrincipal principal,
+        string correlationId,
+        CancellationToken ct)
+    {
+        if (CamRequestRules.Validate(request) is { } violation)
+            Invalid(violation);
+        return SubmitCoreAsync(JobTypes.Operations, Encoding.UTF8.GetBytes(CloudJson.Serialize(request)), idempotencyKey, principal, correlationId, ct);
+    }
+
+    public Task<SubmitNestJobResponse> SubmitPostAsync(
+        SubmitPostJobRequest request,
+        string idempotencyKey,
+        ClaimsPrincipal principal,
+        string correlationId,
+        CancellationToken ct)
+    {
+        if (CamRequestRules.Validate(request) is { } violation)
+            Invalid(violation);
+        return SubmitCoreAsync(JobTypes.Post, Encoding.UTF8.GetBytes(CloudJson.Serialize(request)), idempotencyKey, principal, correlationId, ct);
+    }
+
     async Task<SubmitNestJobResponse> SubmitCoreAsync(
         string jobType,
         byte[] inputBytes,
@@ -148,8 +172,8 @@ public sealed class NestJobService(
             job.CorrelationId);
     }
 
-    /// <summary>Either a v1 or a v2 envelope, depending on how the job was submitted.</summary>
-    public sealed record ResultEnvelope(NestJobResult? V1, NestJobResultV2? V2);
+    /// <summary>Exactly one member is set, matching the job type the client submitted.</summary>
+    public sealed record ResultEnvelope(NestJobResult? V1, NestJobResultV2? V2, OperationsJobResult? Operations = null, PostJobResult? Post = null);
 
     public async Task<ResultEnvelope> GetResultAsync(
         Guid jobId,
@@ -176,12 +200,17 @@ public sealed class NestJobService(
         var bytes = await ReadVerifiedResultAsync(job, ct);
         try
         {
-            if (string.Equals(job.JobType, JobTypes.NestV2, StringComparison.Ordinal))
+            var json = Encoding.UTF8.GetString(bytes);
+            switch (job.JobType)
             {
-                var v2 = CloudJson.Deserialize<NestJobResultPayloadV2>(Encoding.UTF8.GetString(bytes));
-                return new ResultEnvelope(null, new NestJobResultV2(job.Id, v2, job.EngineVersion, job.InputSha256, job.ResultSha256, job.DurationMs.Value));
+                case JobTypes.NestV2:
+                    return new ResultEnvelope(null, new NestJobResultV2(job.Id, CloudJson.Deserialize<NestJobResultPayloadV2>(json), job.EngineVersion, job.InputSha256, job.ResultSha256, job.DurationMs.Value));
+                case JobTypes.Operations:
+                    return new ResultEnvelope(null, null, new OperationsJobResult(job.Id, CloudJson.Deserialize<OperationsJobResultPayload>(json), job.EngineVersion, job.InputSha256, job.ResultSha256, job.DurationMs.Value));
+                case JobTypes.Post:
+                    return new ResultEnvelope(null, null, null, new PostJobResult(job.Id, CloudJson.Deserialize<PostJobResultPayload>(json), job.EngineVersion, job.InputSha256, job.ResultSha256, job.DurationMs.Value));
             }
-            var payload = CloudJson.Deserialize<NestJobResultPayload>(Encoding.UTF8.GetString(bytes));
+            var payload = CloudJson.Deserialize<NestJobResultPayload>(json);
             return new ResultEnvelope(
                 new NestJobResult(
                     job.Id, payload.Engine, job.EngineVersion, payload.Placements, payload.SheetCount, payload.Unplaced, payload.Warnings,
