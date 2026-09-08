@@ -180,6 +180,39 @@ $env:CABINETNC_SMOKE_PASSWORD = Read-Host 'bootstrap admin password'
 pwsh dotnet/tests/ui-smoke/run-all.ps1            # 不设 CABINETNC_SMOKE_API_URL 时 06 场景记为 skipped
 ```
 
+### 4.5c 用户、设备与密码管理（Phase 2 · P2-1）
+
+全部走 API，无需进数据库；admin 角色调用，作用域是自己的租户；每个操作写审计（`user.created / user.updated / user.password_reset / user.sessions_revoked / device.revoked / user.password_changed`，含操作者）。下面用 bash + `curl`（Windows 用 `curl.exe`，加 `--cacert` 与 `--ssl-revoke-best-effort`）：
+
+```bash
+API=https://cabinetnc.shop.local
+TOKEN=$(curl -sS "$API/api/v1/auth/login" -H 'Content-Type: application/json' \
+  -d "{\"tenant\":\"shop\",\"email\":\"admin@example.internal\",\"password\":\"$ADMIN_PW\",\"deviceId\":\"$(uuidgen)\",\"deviceName\":\"admin-cli\"}" | jq -r .accessToken)
+AUTH="Authorization: Bearer $TOKEN"
+
+# 新建操作员（密码 ≥ 12 字符，不能等于邮箱；角色 admin | operator）
+curl -sS "$API/api/v1/admin/users" -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"email":"op1@shop.local","password":"<initial-password>","role":"operator"}'
+# 列出用户（含设备数、活动会话数、最后活动时间）
+curl -sS "$API/api/v1/admin/users" -H "$AUTH"
+# 停用（立即撤销其全部会话；不能停用/降级最后一个活跃 admin → 409 conflict）/ 启用 / 改角色
+curl -sS -X PATCH "$API/api/v1/admin/users/<userId>" -H "$AUTH" -H 'Content-Type: application/json' -d '{"isActive":false}'
+curl -sS -X PATCH "$API/api/v1/admin/users/<userId>" -H "$AUTH" -H 'Content-Type: application/json' -d '{"role":"admin","isActive":true}'
+# 重置密码（撤销该用户所有设备的会话，下次登录用新密码）
+curl -sS "$API/api/v1/admin/users/<userId>/password" -H "$AUTH" -H 'Content-Type: application/json' -d '{"newPassword":"<new-password>"}'
+# 设备：列出（可按 ?userId= 过滤）；吊销丢失电脑的会话（该电脑仍可用密码重新登录——吊销的是会话不是账号）
+curl -sS "$API/api/v1/admin/devices?userId=<userId>" -H "$AUTH"
+curl -sS -X POST "$API/api/v1/admin/devices/<deviceId>/revoke" -H "$AUTH"
+curl -sS -X POST "$API/api/v1/admin/users/<userId>/revoke" -H "$AUTH"      # 该用户全部设备
+```
+
+操作员本人改密码（任何已登录用户；当前设备保留会话，其他设备被登出；与登录同样限流）：
+
+```bash
+curl -sS "$API/api/v1/auth/password" -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"currentPassword":"<old>","newPassword":"<new>"}'
+```
+
 ### 4.6 日常运维
 
 ```bash

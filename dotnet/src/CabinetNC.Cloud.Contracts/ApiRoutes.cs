@@ -16,6 +16,21 @@ public static class ApiRoutes
     /// <summary>Admin-only: everything known about a job, so support can work from a JobId alone.</summary>
     public const string AdminJobDiagnosticsTemplate = "/api/v1/admin/jobs/{jobId}/diagnostics";
     public static string ForAdminJobDiagnostics(Guid jobId) => $"/api/v1/admin/jobs/{jobId:D}/diagnostics";
+
+    /// <summary>Self-service password change for the signed-in user.</summary>
+    public const string AuthPassword = "/api/v1/auth/password";
+
+    /// <summary>Admin-only tenant administration (users and devices of the caller's tenant).</summary>
+    public const string AdminUsers = "/api/v1/admin/users";
+    public const string AdminUserTemplate = "/api/v1/admin/users/{userId}";
+    public const string AdminUserPasswordTemplate = "/api/v1/admin/users/{userId}/password";
+    public const string AdminUserRevokeTemplate = "/api/v1/admin/users/{userId}/revoke";
+    public const string AdminDevices = "/api/v1/admin/devices";
+    public const string AdminDeviceRevokeTemplate = "/api/v1/admin/devices/{deviceId}/revoke";
+    public static string ForAdminUser(Guid userId) => $"/api/v1/admin/users/{userId:D}";
+    public static string ForAdminUserPassword(Guid userId) => $"/api/v1/admin/users/{userId:D}/password";
+    public static string ForAdminUserRevoke(Guid userId) => $"/api/v1/admin/users/{userId:D}/revoke";
+    public static string ForAdminDeviceRevoke(Guid deviceId) => $"/api/v1/admin/devices/{deviceId:D}/revoke";
 }
 
 public static class ApiHeaders

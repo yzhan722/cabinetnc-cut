@@ -747,6 +747,32 @@ WPF 侧全部放在新文件里，`MainWindow.xaml.cs` 只改了 `RunNestAsync` 
 
 `docs/cloud/INTRANET_POC_ACCEPTANCE.md`：15 行验收矩阵（14 PASS、**1 FAIL**：Customer build / No core compute engine——`CabinetNC.Domain.dll` 仍在客户包内）、范围外与 NOT_RUN 清单（Task 11、第二台 LAN 机器、混淆、真实 CNC）、按计划模板写的 Cursor final report（含服务器实测）、以及"不宣称 Production Ready"的声明。
 
+---
+
+# Phase 2 — Commercial readiness（计划：`COMMERCIAL_READINESS_PLAN.md`）
+
+分支已推送到 `origin/feature/intranet-cloud-poc`（用户授权）；此后每个工作项完成即 push。
+
+## P2-1 — 管理 API（用户 / 设备 / 密码）（2026-09-06，机器 B）
+
+### 做了什么
+
+| 文件 | 内容 |
+|---|---|
+| `Cloud.Contracts/AdminContracts.cs` | `UserRoles`（admin/operator）、`PasswordPolicy.Check`（≥12、≤1024、无首尾空白、≠邮箱；Desktop 与服务端共用）、`CreateUserRequest`/`UpdateUserRequest`（PATCH 语义）/`ResetPasswordRequest`/`ChangePasswordRequest`/`UserSummary`/`DeviceSummary`/`RevokeResponse`；`ApiRoutes` 新增 `/api/v1/admin/users[...]`、`/api/v1/admin/devices[...]`、`/api/v1/auth/password`；错误码新增 `conflict`（409） |
+| `Cloud.Api/Admin/TenantAdminService.cs` | 全部 tenant 作用域（来自 JWT）：建用户（邮箱归一化、角色校验、密码策略、重复 → 409，含唯一索引竞态兜底）；列用户（设备数、活动会话数 = 未撤销且未过期的 refresh token、最后活动）；PATCH 角色/启停（**最后一个活跃 admin 不能被停用或降级** → 409；停用即撤销全部会话）；重置密码（撤销全部会话）；撤销用户/设备会话；本人改密（先验当前密码——失败 401 `invalid_credentials` 并审计——再按策略换新，**只登出其他设备**）。审计 `DetailsJson` 记录 actorUserId/actorDeviceId 与变更字段，从不记录密码 |
+| `Cloud.Api/Admin/AdminUserEndpoints.cs` | admin 组 `RequireRole("admin")`；`auth/password` 任何登录用户可用，套用 `login` 限流；body 上限 16 KB |
+
+### 测试（`AdminUserTests`，8 个，真实 API + PostgreSQL）
+
+建号后能登录并被列出（含邮箱归一化、设备/会话计数）；邮箱/角色/弱密码 400、重复邮箱 409、库里无明文；operator 全部 403、匿名 401、别的租户的 admin 看不到也改不了（404）；停用 → refresh 401、登录 401 `invalid_credentials`，启用+升 admin 后可登录且角色生效；最后一个 admin 不能停用/降级，有第二个 admin 后可以；admin 重置密码 → 两台设备都被登出、旧密码失效、新密码可登录；本人改密 → 错当前密码 401、弱密码 400、成功后当前设备仍可 refresh、另一台被登出；设备列表/过滤/吊销（会话 -1，可再登录）/吊销用户全部会话，跨租户 404。
+
+### 决策
+
+1. 管理面暂只有 API（runbook §4.5c 给了 curl）；Desktop 内的管理界面留到 P2-2 之后按需求决定。
+2. 单租户部署为常态：不提供"创建租户"端点，租户由 bootstrap 建立；多租户 SaaS 不在范围。
+3. 停用/重置/吊销对 access token 的效果延迟 ≤ 15 min（access token 生命期），与 spec 的无状态设计一致；需要即时踢出时用短生命期或加黑名单，暂不做。
+
 ### 收尾提醒（给下一位接手者）
 
 1. **本机环境是会话级的**：每个新 shell 要先 `$env:DOTNET_ROOT='C:\Users\alex\AppData\Local\Microsoft\dotnet'; $env:PATH="C:\Users\alex\AppData\Local\Microsoft\dotnet;D:\Docker\Program\resources\bin;$env:PATH"`，否则 `dotnet` 会解析到系统目录里只有 9.0 运行时的安装（"No .NET SDKs were found"）。用户级 `DOTNET_ROOT` 指向了错误目录，建议用户自行修正。

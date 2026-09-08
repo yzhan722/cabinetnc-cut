@@ -22,6 +22,8 @@ public static class ApiErrorCodes
     public const string RateLimited = "rate_limited";
     /// <summary>Beyond the spec minimum: unhandled server error (HTTP 500); details stay in the server log under the correlation id.</summary>
     public const string InternalError = "internal_error";
+    /// <summary>Beyond the spec minimum: an administrative change conflicts with current state (duplicate email, last admin, self-deactivation); HTTP 409.</summary>
+    public const string Conflict = "conflict";
 
     public static IReadOnlyList<string> All { get; } =
     [
@@ -39,5 +41,6 @@ public static class ApiErrorCodes
         StorageFailed,
         RateLimited,
         InternalError,
+        Conflict,
     ];
 }

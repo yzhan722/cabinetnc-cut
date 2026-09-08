@@ -257,8 +257,8 @@ public class ContractJsonRoundTripTests
             "unauthorized", "invalid_request", "idempotency_conflict", "job_not_found", "job_not_ready",
             "compute_failed", "storage_failed",
         ];
-        // Added by the API on top of the spec minimum (HTTP 429 and 500 need a stable code too).
-        string[] additions = ["rate_limited", "internal_error"];
+        // Added by the API on top of the spec minimum (HTTP 429, 500 and administrative 409 need stable codes too).
+        string[] additions = ["rate_limited", "internal_error", "conflict"];
 
         Assert.Equal([.. spec, .. additions], ApiErrorCodes.All);
         Assert.Equal(ApiErrorCodes.All.Count, ApiErrorCodes.All.Distinct(StringComparer.Ordinal).Count());

@@ -1,6 +1,7 @@
 using System.Text;
 using System.Threading.RateLimiting;
 using CabinetNC.Cloud.Api;
+using CabinetNC.Cloud.Api.Admin;
 using CabinetNC.Cloud.Api.Auth;
 using CabinetNC.Cloud.Api.Http;
 using CabinetNC.Cloud.Api.Jobs;
@@ -37,6 +38,7 @@ builder.Services.AddSingleton<PasswordVerifier>();
 builder.Services.AddSingleton<AccessTokenIssuer>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<NestJobService>();
+builder.Services.AddScoped<TenantAdminService>();
 builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
 
 var trustedProxies = TrustedProxies.FromEnvironment();
@@ -201,6 +203,7 @@ app.MapPost(ApiRoutes.AuthLogout, async (
 
 app.MapNestJobEndpoints();
 app.MapAdminEndpoints();
+app.MapAdminUserEndpoints();
 
 app.MapFallback((HttpContext context) =>
         Results.Json(
