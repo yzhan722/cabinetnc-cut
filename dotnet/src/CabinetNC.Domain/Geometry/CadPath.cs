@@ -106,6 +106,50 @@ public static class CadPath
         return segs[^1].End;
     }
 
+    /// <summary>
+    /// Fusion snapshots often ship points only. Axis-aligned carcass loops
+    /// can rebuild as lines so <see cref="TryOffset"/> keeps short steps square.
+    /// </summary>
+    public static bool IsAxisAligned(IReadOnlyList<(double X, double Y)> pts, double tolMm = 0.05)
+    {
+        if (pts is not { Count: >= 3 }) return false;
+        var edges = 0;
+        for (var i = 0; i < pts.Count; i++)
+        {
+            var a = pts[i];
+            var b = pts[(i + 1) % pts.Count];
+            var dx = b.X - a.X;
+            var dy = b.Y - a.Y;
+            var len = Hyp(dx, dy);
+            if (len < tolMm) continue;
+            edges++;
+            if (Math.Abs(dx) > tolMm && Math.Abs(dy) > tolMm)
+                return false;
+        }
+        return edges >= 3;
+    }
+
+    public static IReadOnlyList<CadSegment> FromPolyline(
+        IReadOnlyList<(double X, double Y)> pts, bool closed = true)
+    {
+        var clean = new List<Point2>();
+        foreach (var p in pts)
+        {
+            var q = new Point2(p.X, p.Y);
+            if (clean.Count == 0 || Hyp(q.X - clean[^1].X, q.Y - clean[^1].Y) > Tol)
+                clean.Add(q);
+        }
+        if (clean.Count >= 2 && Hyp(clean[0].X - clean[^1].X, clean[0].Y - clean[^1].Y) < Tol)
+            clean.RemoveAt(clean.Count - 1);
+        if (clean.Count < 2) return [];
+        var n = clean.Count;
+        var last = closed ? n : n - 1;
+        var segs = new List<CadSegment>(last);
+        for (var i = 0; i < last; i++)
+            segs.Add(CadSegment.MakeLine(clean[i], clean[(i + 1) % n]));
+        return segs;
+    }
+
     public static IReadOnlyList<(double X, double Y)> ToPolyline(
         IReadOnlyList<CadSegment> segs, double maxChordMm = 0.4)
     {
@@ -344,7 +388,9 @@ public static class CadPath
         var joined = new List<CadSegment>(n * 2);
         for (var i = 0; i < n; i++)
         {
-            joined.Add(raw[i] with { Start = starts[i], End = ends[i] });
+            var trimmed = raw[i] with { Start = starts[i], End = ends[i] };
+            if (!IsCollapsedOffset(raw[i], trimmed))
+                joined.Add(trimmed);
             if (extras[i] is { } extra)
                 joined.Add(extra);
         }
@@ -409,6 +455,21 @@ public static class CadPath
             return g.Cw ? (ty, -tx) : (-ty, tx);
         }
         return (g.End.X - g.Start.X, g.End.Y - g.Start.Y);
+    }
+
+    /// <summary>
+    /// A step shorter than the tool leaves a reversed or zero leftover after
+    /// the concave intersect + convex fillet. Drop it so the next join is not
+    /// a diagonal gouge across the square corner.
+    /// </summary>
+    static bool IsCollapsedOffset(CadSegment original, CadSegment trimmed)
+    {
+        var nx = trimmed.End.X - trimmed.Start.X;
+        var ny = trimmed.End.Y - trimmed.Start.Y;
+        if (Hyp(nx, ny) < 0.02) return true;
+        var ox = original.End.X - original.Start.X;
+        var oy = original.End.Y - original.Start.Y;
+        return ox * nx + oy * ny < -1e-9;
     }
 
     static bool NeedSkipJoin(Point2 a, Point2 b) =>

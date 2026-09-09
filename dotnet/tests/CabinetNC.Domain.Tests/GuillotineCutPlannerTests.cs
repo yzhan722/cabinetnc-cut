@@ -128,9 +128,10 @@ public class GuillotineCutPlannerTests
     }
 
     [Fact]
-    public void PlanSheet_splits_corner_into_two_rects_when_both_meet_min_edge()
+    public void PlanSheet_keeps_L_as_one_cut_when_both_arms_meet_min_edge()
     {
-        // Used ~ (0,0)-(500,500) on 1220×2440 after clearance — both split pieces ≥ 400.
+        // Used ~ (0,0)-(500,500) on 1220×2440 after clearance — both arms ≥ 400.
+        // Must stay one L leftover, not two rectangles meeting at the elbow.
         var panel = Rect("A", 460, 460);
         var places = new[]
         {
@@ -144,11 +145,13 @@ public class GuillotineCutPlannerTests
             [panel], places, 0, 1220, 2440, clearanceMm: 20, minRemnantEdgeMm: 400);
 
         Assert.NotNull(plan);
-        Assert.Equal(2, plan!.Pieces.Count);
-        Assert.All(plan.Pieces, p => Assert.Equal("RECT", p.Shape));
+        Assert.Contains(plan!.Pieces, p => p.Shape == "L");
+        Assert.DoesNotContain(plan.Pieces, p => p.Shape == "RECT");
+        var lCut = Assert.Single(plan.Cuts);
+        Assert.Equal("L", lCut.Kind);
+        Assert.Equal(3, lCut.Polyline.Count);
         Assert.All(plan.Pieces, p => Assert.True(p.MinEdgeMm >= 400 - 1e-6));
-        Assert.True(plan.Cuts.Count >= 2);
-        Assert.DoesNotContain(plan.Pieces, p => p.Shape == "L");
+        Assert.Single(GuillotineCutPlanner.ToCutOps(plan, 0, 1220, 2440, 18, 10));
     }
 
     [Fact]
@@ -227,5 +230,34 @@ public class GuillotineCutPlannerTests
             1220, 1000);
         Assert.True(report.Ok, NcPreflight.Format(report));
         Assert.DoesNotContain(report.Issues, i => i.Code == "out_of_sheet");
+    }
+
+    [Fact]
+    public void L_cut_nc_stays_down_through_the_corner()
+    {
+        var plan = new GuillotineCutPlanner.Result
+        {
+            Kind = "L",
+            Polyline = [(500, 2440), (500, 500), (1220, 500)],
+            RemnantAreaMm2 = 1,
+            RemnantMinEdgeMm = 500,
+            Label = "L切",
+        };
+        var op = GuillotineCutPlanner.ToCutOp(plan, 0, 1220, 2440, 18, toolDiameterMm: 10);
+        Assert.NotNull(op);
+        Assert.Equal(3, op!.Path!.Count);
+        var nc = NcEmitter.OpsToNc(
+            [op],
+            CabinetNC.Domain.Machines.MachineCatalog.Get("osai_e4_1325"),
+            recipe: PostRecipe.TroyDefault());
+        var through = nc.IndexOf("Z-0.5500", StringComparison.Ordinal);
+        Assert.True(through >= 0, nc);
+        var afterPlunge = nc[(through + 1)..];
+        var retract = afterPlunge.IndexOf("G0 Z30", StringComparison.Ordinal);
+        Assert.True(retract >= 0, nc);
+        var cut = afterPlunge[..retract];
+        Assert.DoesNotContain("G0 Z", cut);
+        Assert.Contains("Y500.0000", cut);
+        Assert.Contains("X1225.0000", cut);
     }
 }

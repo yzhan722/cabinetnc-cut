@@ -6,7 +6,7 @@ using CabinetNC.Domain.Nesting;
 using CabinetNC.Domain.Parts;
 
 /// <summary>
-/// Paste-point for the 60×40 mm shop label (printer orientation is fixed, no 90°). Prefers the outline centroid;
+/// Paste-point for the 60×60 mm shop label (printer orientation is fixed, no 90°). Prefers the outline centroid;
 /// if that lands in a keep-out or cannot hold the sticker with interior
 /// clearance, picks an interior point of the remaining solid — never the
 /// legal-area rim.
@@ -22,7 +22,7 @@ public readonly record struct LabelAnchor(
 public static class LabelAnchorFinder
 {
     public const double WidthMm = 60;
-    public const double HeightMm = 40;
+    public const double HeightMm = 60;
     public const double KeepOutInflateMm = 1;
     public const double InteriorClearanceMm = 10;
     public const double LargeThroughHoleMm = 15;

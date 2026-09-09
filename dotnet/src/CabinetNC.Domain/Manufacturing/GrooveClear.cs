@@ -10,9 +10,6 @@ using CabinetNC.Domain.Parts;
 /// </summary>
 public static class GrooveClear
 {
-    /// <summary>No onion skin — dado width must match CAD (16mm board into 16mm slot).</summary>
-    public const double OnionSkinMm = 0;
-
     public static bool NeedsClear(double widthMm, double toolDiameterMm) =>
         CamStrategy.NeedsGrooveClear(widthMm, toolDiameterMm);
 
@@ -55,7 +52,6 @@ public static class GrooveClear
         {
             Outline = outline,
             ToolDiameterMm = toolDiameterMm,
-            OnionSkinMm = OnionSkinMm,
             PanelBounds = panelBounds,
         });
     }

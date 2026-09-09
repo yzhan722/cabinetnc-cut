@@ -16,6 +16,8 @@ public sealed class ToolStroke
     public double Y1 { get; init; }
     public double Z1 { get; init; }
     public double Feed { get; init; }
+    /// <summary>0-based source line of the block that produced this stroke; -1 when unknown.</summary>
+    public int LineIndex { get; init; } = -1;
     public double Dx => X1 - X0;
     public double Dy => Y1 - Y0;
     public double Dz => Z1 - Z0;
@@ -128,6 +130,7 @@ public static class OsaiTroyParser
                     Y1 = y1,
                     Z1 = z1,
                     Feed = f,
+                    LineIndex = line.SourceLine,
                 });
                 x = x1;
                 y = y1;
@@ -150,6 +153,7 @@ public static class OsaiTroyParser
                 Y1 = y1,
                 Z1 = z1,
                 Feed = f,
+                LineIndex = line.SourceLine,
             });
             x = x1;
             y = y1;

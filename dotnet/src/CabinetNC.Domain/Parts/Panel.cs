@@ -221,6 +221,9 @@ public sealed class Panel
     /// <summary>Export kind token — Carcass / Door / Partition.</summary>
     public string DisplayKind => ResolveRoleTitle();
 
+    /// <summary>DS / SS from surface mode or role default.</summary>
+    public string DisplaySurface => ResolveSurfaceToken();
+
     /// <summary>Size / qty / feature summary for list rows.</summary>
     public string DisplayDetail
     {

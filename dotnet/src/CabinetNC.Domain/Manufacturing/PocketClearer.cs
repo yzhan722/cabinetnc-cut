@@ -6,11 +6,10 @@ using Clipper2Lib;
 /// <summary>
 /// Pocket area clear — Clipper inset + inward offset rings stitched into a spiral
 /// (inside-out), then a separate finish loop. Not a horizontal zigzag raster.
-/// ASSUMPTION: stepover = 40% tool Ø; finish/onion allowance = 0.5 mm on walls.
+/// ASSUMPTION: stepover = 40% tool Ø. Walls cut to CAD size (no leftover stock).
 /// </summary>
 public static class PocketClearer
 {
-    public const double DefaultOnionSkinMm = 0.5;
     public const double DefaultStepoverRatio = 0.4;
     /// <summary>
     /// Fusion lay-flat sometimes emits a paper-thin edge ribbon (≈0.1 mm) as a pocket.
@@ -70,7 +69,6 @@ public static class PocketClearer
         public IReadOnlyList<IReadOnlyList<(double X, double Y)>> Holes { get; init; } = [];
         public double ToolDiameterMm { get; init; } = 6.35;
         public double? StepoverMm { get; init; }
-        public double OnionSkinMm { get; init; } = DefaultOnionSkinMm;
         /// <summary>
         /// Emit a separate wall loop after the spiral. Disable when the spiral's
         /// outermost ring already cuts the feature directly to its final size.
@@ -107,8 +105,7 @@ public static class PocketClearer
             return new PocketClearResult { Path = req.Outline, PassCount = 0, StepoverMm = 0, InsetMm = 0 };
 
         var toolR = Math.Max(0.1, req.ToolDiameterMm / 2);
-        var onion = Math.Max(0, req.OnionSkinMm);
-        var inset = toolR + onion;
+        var inset = toolR;
         var step = req.StepoverMm ?? Math.Max(0.5, req.ToolDiameterMm * DefaultStepoverRatio);
 
         var holes = req.Holes
@@ -252,7 +249,7 @@ public static class PocketClearer
         }
 
         // Thin rebate (one tool in the band): two shop walls only.
-        // Wide pocket with an island: onion-fill the floor, then the same walls.
+        // Wide pocket with an island: concentric-fill the floor, then the same walls.
         // Do not retrace the outer as FinishLoop — that was a third overlapping pass.
         _ = emitFinish;
         var clips = new Paths64();

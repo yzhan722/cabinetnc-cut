@@ -95,6 +95,42 @@ public class GroupedBlfNesterTests
     }
 
     [Fact]
+    public void Export_gate_allows_exact_nest_gap()
+    {
+        var panels = new[]
+        {
+            Rect("A", "oak", 18, 100, 100),
+            Rect("B", "oak", 18, 100, 100),
+        };
+        var placements = new[]
+        {
+            new NestPlacement { PanelId = "A", SheetIndex = 0, OffsetX = 0, OffsetY = 0 },
+            new NestPlacement { PanelId = "B", SheetIndex = 0, OffsetX = 111, OffsetY = 0 },
+        };
+        var gate = NestExportGate.Check(panels, placements, clearanceMm: 11);
+        Assert.True(gate.Ok, string.Join("; ", gate.Errors));
+    }
+
+    [Fact]
+    public void Export_gate_uses_sheet_nest_spacing_not_global_box()
+    {
+        var panels = new[]
+        {
+            Rect("A", "oak", 18, 100, 100),
+            Rect("B", "oak", 18, 100, 100),
+        };
+        var placements = new[]
+        {
+            new NestPlacement { PanelId = "A", SheetIndex = 0, OffsetX = 0, OffsetY = 0 },
+            new NestPlacement { PanelId = "B", SheetIndex = 0, OffsetX = 111, OffsetY = 0 },
+        };
+        var sheetGap = new Dictionary<int, double> { [0] = 11 };
+        var gate = NestExportGate.Check(
+            panels, placements, clearanceMm: 12, sheetClearanceMm: sheetGap);
+        Assert.True(gate.Ok, string.Join("; ", gate.Errors));
+    }
+
+    [Fact]
     public void Grain_lock_disables_90_when_grain_set()
     {
         var settings = new NestSettings { AllowRotation = true, GrainLock = true };

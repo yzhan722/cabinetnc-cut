@@ -188,15 +188,26 @@ public static class PolylineArcFit
                 var b0 = v[i + 1];
                 var b1 = v[inx + 1];
                 var ipLong = ip;
-                // Clipper leaves 0.2–2 mm G1 stubs before the R5 (B3 T-join).
-                // Snap from the long inbound edge, then collapse the stubs.
+                // Clipper leaves 0.2–2 mm G1 stubs collinear with the long
+                // inbound edge. A leftover from a step shorter than 2R is
+                // perpendicular (2–3 mm H/V) — keep it or we invent a diagonal.
                 if (!list[ip].Arc && Dist(a0, a1) < 2.6)
                 {
                     var back = (ip - 1 + n) % n;
                     if ((closed || ip > 0) && !list[back].Arc && Dist(v[back], v[ip]) >= 8)
                     {
-                        a0 = v[back];
-                        ipLong = back;
+                        var longLen = Dist(v[back], v[ip]);
+                        var stubLen = Dist(a0, a1);
+                        var dot = stubLen > 1e-9 && longLen > 1e-9
+                            ? Math.Abs((v[ip].X - v[back].X) * (a1.X - a0.X)
+                                + (v[ip].Y - v[back].Y) * (a1.Y - a0.Y))
+                              / (longLen * stubLen)
+                            : 1;
+                        if (dot > 0.85)
+                        {
+                            a0 = v[back];
+                            ipLong = back;
+                        }
                     }
                 }
                 var large = list[i].R > MaxRadiusMm + 0.05;
@@ -361,6 +372,11 @@ public static class PolylineArcFit
         var sagitta = r * (1 - Math.Cos(sweepDeg * Math.PI / 360));
         if (sweepDeg < MinSweepDeg && sagitta < MinSagittaMm) return false;
         if (sagitta < MinSagittaMm && end < i + 3) return false;
+        // Short square step leftover (2–8 mm H/V) plus an R5 fan can fit a
+        // fake bow; FlattenSpuriousBows then emits the diagonal G1 we saw
+        // on DS / OHC tongues. Keep the leftover as G1, fit the fan alone.
+        if (IsLeftoverPlusFan(pts, i, end))
+            return false;
         return true;
     }
 
@@ -415,6 +431,22 @@ public static class PolylineArcFit
         if (r <= MaxCornerRadiusMm && sweepDeg >= LargeArcMinSweepDeg)
             return true;
         return sagitta >= DesignedBowMinSagittaMm && sweepDeg >= DesignedBowMinSweepDeg;
+    }
+
+    static bool IsLeftoverPlusFan(IReadOnlyList<(double X, double Y)> pts, int i, int end)
+    {
+        if (end < i + 3) return false;
+        var dx = pts[i + 1].X - pts[i].X;
+        var dy = pts[i + 1].Y - pts[i].Y;
+        var first = Math.Sqrt(dx * dx + dy * dy);
+        if (first < 1.2 || first > 12) return false;
+        if (Math.Abs(dx) > 0.05 && Math.Abs(dy) > 0.05) return false;
+        for (var k = i + 2; k <= end; k++)
+        {
+            if (DistToSegment(pts[k], pts[i], pts[i + 1]) > 0.15)
+                return true;
+        }
+        return false;
     }
 
     static bool HasSharpCorner(IReadOnlyList<(double X, double Y)> pts, int i, int j)

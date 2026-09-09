@@ -21,7 +21,7 @@ public sealed record CutOp
     public IReadOnlyList<(double X, double Y)>? Path { get; init; }
     /// <summary>Disjoint path segments for pocket clear (scan strokes). Prefer over flat Path.</summary>
     public IReadOnlyList<IReadOnlyList<(double X, double Y)>>? PathSegments { get; init; }
-    /// <summary>Optional closed finish loop for pocket onion-skin boundary.</summary>
+    /// <summary>Optional closed finish loop for the pocket wall at CAD size.</summary>
     public IReadOnlyList<(double X, double Y)>? FinishLoop { get; init; }
     /// <summary>When true (contours), emitter closes to first point; pockets use false.</summary>
     public bool ClosePath { get; init; } = true;
@@ -251,7 +251,6 @@ public static class OpsPlanner
             Outline = outline,
             Holes = holes,
             ToolDiameterMm = toolDia,
-            OnionSkinMm = directToSize ? 0 : PocketClearer.DefaultOnionSkinMm,
             EmitFinishLoop = !directToSize && holes.Count == 0,
             CloseClearRings = directToSize,
             PanelBounds = bounds,

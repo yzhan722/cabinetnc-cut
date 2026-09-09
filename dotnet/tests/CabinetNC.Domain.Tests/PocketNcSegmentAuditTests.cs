@@ -17,7 +17,6 @@ public class PocketNcSegmentAuditTests
             Outline = outline,
             ToolDiameterMm = 6.35,
             StepoverMm = 8,
-            OnionSkinMm = 0.5,
         });
         Assert.True(result.Segments.Count >= 1, $"segments={result.Segments.Count}");
         var fill = result.Segments[0];

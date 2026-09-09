@@ -35,7 +35,15 @@ public static class ContourToolOffset
                 return op with { Path = oriented, CadPath = cad };
             }
 
-            if (op.CadPath is { Count: > 0 } sourceCad
+            // Fusion .cnjob outlines are points only. Clipper round-join then
+            // collapses a step shorter than ~2R into a diagonal tool-centre
+            // G1 (gouge). Those axis-aligned steps go through CadPath instead.
+            var sourceCad = op.CadPath is { Count: > 0 } existing
+                ? existing
+                : NeedsAnalyticOffset(path, Math.Abs(offsetMm))
+                    ? CadPath.FromPolyline(path)
+                    : null;
+            if (sourceCad is { Count: > 0 }
                 && CadPath.TryOffset(
                     sourceCad,
                     op.FeatureId is null ? offsetMm : -offsetMm,
@@ -73,6 +81,30 @@ public static class ContourToolOffset
             pts = ClimbCut.OrientClosed(pts, inner: op.FeatureId is not null).ToList();
             return op with { Path = pts };
         }).ToList();
+    }
+
+    /// <summary>
+    /// Axis-aligned step shorter than ~2R is what Clipper round-join
+    /// collapses into a diagonal tool-centre. Plain rectangles stay on
+    /// Clipper so reverse-from-NC still sees the old two-pass loops.
+    /// </summary>
+    internal static bool NeedsAnalyticOffset(
+        IReadOnlyList<(double X, double Y)> path, double offsetMm)
+    {
+        if (!CadPath.IsAxisAligned(path) || offsetMm < 0.05)
+            return false;
+        var lim = offsetMm * 2 + 0.6;
+        for (var i = 0; i < path.Count; i++)
+        {
+            var a = path[i];
+            var b = path[(i + 1) % path.Count];
+            var dx = b.X - a.X;
+            var dy = b.Y - a.Y;
+            var len = Math.Sqrt(dx * dx + dy * dy);
+            if (len > 0.2 && len < lim)
+                return true;
+        }
+        return false;
     }
 
     static bool TryInsetCapsule(

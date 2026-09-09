@@ -1,0 +1,12 @@
+# A corrupt project.db passed on the command line must produce a readable error and leave the
+# app alive and usable — not an unhandled SqliteException and a crash to desktop.
+launch-arg:../fixtures/corrupt-project.db
+wait:2500
+dismiss
+wait:500
+assert-status:工程文件无法读取
+invoke:打开示例
+wait:2500
+dismiss
+assert-status:已载入示例
+shot:11-after-corrupt-project.png

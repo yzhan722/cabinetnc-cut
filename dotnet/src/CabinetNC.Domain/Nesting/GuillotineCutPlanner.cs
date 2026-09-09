@@ -162,15 +162,24 @@ public static class GuillotineCutPlanner
     {
         if (best is null) return true;
         // Salvage first so an L is kept when the only alternative drops an arm.
-        // Among equal area, prefer more rectangles (split) over one L.
         if (Math.Abs(cand.RemnantAreaMm2 - best.RemnantAreaMm2) > 1)
             return cand.RemnantAreaMm2 > best.RemnantAreaMm2;
+        // A two-rectangle elbow split has the same area as one L. Keep the L.
+        // Do not let that rule beat a four-strip of rectangles around a centre nest.
+        var candL = cand.Pieces.Count(p => p.Shape == "L");
+        var bestL = best.Pieces.Count(p => p.Shape == "L");
+        if (candL != bestL)
+        {
+            var split = candL > bestL ? best : cand;
+            var splitRects = split.Pieces.Count(p => p.Shape == "RECT");
+            if (split.Pieces.Count(p => p.Shape == "L") == 0
+                && splitRects <= 2
+                && split.Cuts.Count <= 2)
+                return candL > bestL;
+        }
         var candRects = cand.Pieces.Count(p => p.Shape == "RECT");
         var bestRects = best.Pieces.Count(p => p.Shape == "RECT");
         if (candRects != bestRects) return candRects > bestRects;
-        var candL = cand.Pieces.Count(p => p.Shape == "L");
-        var bestL = best.Pieces.Count(p => p.Shape == "L");
-        if (candL != bestL) return candL < bestL;
         return cand.Cuts.Count < best.Cuts.Count;
     }
 

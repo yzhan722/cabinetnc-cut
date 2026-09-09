@@ -1,0 +1,28 @@
+<Window x:Class="CabinetNC.Desktop.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="关于 OmniCam"
+        Width="520" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="{StaticResource WindowBrush}" FontFamily="Segoe UI" FontSize="13"
+        ShowInTaskbar="False">
+  <StackPanel Margin="20">
+    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+      <Image Source="pack://application:,,,/Assets/app.ico" Width="40" Height="40" Margin="0,0,12,0" />
+      <StackPanel VerticalAlignment="Center">
+        <TextBlock Text="OmniCam" Style="{StaticResource H1Text}" />
+        <TextBlock Text="CabinetNC Cut · 板式家具切割站（排版 · 刀路 · OSAI 后置 · 贴标）" Style="{StaticResource SecondaryText}" />
+      </StackPanel>
+    </StackPanel>
+
+    <TextBlock Text="构建信息（上机记录请抄这一段）" Style="{StaticResource FieldLabel}" />
+    <TextBox x:Name="BuildInfoBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+             FontFamily="Consolas" FontSize="12" MinHeight="96" VerticalContentAlignment="Top" />
+
+    <DockPanel Margin="0,14,0,0">
+      <Button DockPanel.Dock="Right" Content="关闭" IsCancel="True" Padding="16,6" Margin="8,0,0,0" />
+      <Button DockPanel.Dock="Right" Content="复制构建信息" Click="OnCopyClick" Style="{StaticResource PrimaryButton}" Padding="14,6" />
+      <TextBlock Text="docs/sprint/SHOP_LOG.md 每条记录都需要 SHA。" Style="{StaticResource CaptionText}" VerticalAlignment="Center" />
+    </DockPanel>
+  </StackPanel>
+</Window>

@@ -52,10 +52,13 @@ public class NestP0SafetyGateTests
     [Theory]
     [InlineData(12.0, true)]
     [InlineData(8.0, true)]
-    [InlineData(7.999, false)]
+    [InlineData(7.6, true)]
+    [InlineData(7.0, false)]
     [InlineData(0.0, false)]
     public void Clearance_boundary_is_deterministic(double actualGapMm, bool expectedOk)
     {
+        // Export subtracts SpacingSlackMm (0.5) so an exact nest gap is not a Clipper kiss-fail.
+        // clearance 8 → effective 7.5; 7.6 is inside slack, 7.0 is below it.
         var panels = new[] { Rect("A"), Rect("B") };
         var placements = new[]
         {

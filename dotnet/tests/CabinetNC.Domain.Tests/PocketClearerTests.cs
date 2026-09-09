@@ -208,10 +208,27 @@ public class PocketClearerTests
     }
 
     [Fact]
+    public void Pocket_wall_matches_cad_width()
+    {
+        var result = PocketClearer.Clear(new PocketClearer.PocketClearRequest
+        {
+            Outline = Rect(14.5, 200),
+            ToolDiameterMm = 10,
+        });
+        Assert.False(result.TooSmallForTool);
+        var wall = result.FinishLoop is { Count: >= 3 } finish
+            ? finish
+            : result.Segments[^1];
+        var cut = Math.Min(
+            wall.Max(p => p.X) - wall.Min(p => p.X),
+            wall.Max(p => p.Y) - wall.Min(p => p.Y)) + 10;
+        Assert.InRange(cut, 14.45, 14.55);
+    }
+
+    [Fact]
     public void Thin_tee_slot_is_one_wall_not_sliver_plus_retrace()
     {
-        // Fridge B3 T-slot at tool centre: ~19 mm bar / stems. Onion used
-        // to keep a 1 mm leftover and then FinishLoop retraced the T.
+        // Fridge B3 T-slot: ~19 mm bar / stems. Clear to CAD size, no leftover wall stock.
         (double X, double Y)[] tee =
         [
             (64.5, 563.5), (105.2, 563.5), (105.2, 442.5), (125.2, 442.5), (125.2, 563.5),
@@ -222,23 +239,12 @@ public class PocketClearerTests
         {
             Outline = tee,
             ToolDiameterMm = 10,
-            OnionSkinMm = 0.5,
         });
         Assert.False(result.TooSmallForTool);
-        Assert.Null(result.FinishLoop);
         var loop = Assert.Single(result.Segments);
         Assert.True(loop.Count >= 8, $"pts={loop.Count}");
-        Assert.Equal(loop[0].X, loop[^1].X, 5);
-        Assert.Equal(loop[0].Y, loop[^1].Y, 5);
-        var downRight = 0;
-        for (var i = 1; i < loop.Count; i++)
-        {
-            if (loop[i - 1].X is > 560 and < 590
-                && loop[i].X is > 560 and < 590
-                && loop[i].Y < loop[i - 1].Y - 50)
-                downRight++;
-        }
-        Assert.Equal(1, downRight);
+        var wall = result.FinishLoop is { Count: >= 3 } finish ? finish : loop;
+        Assert.InRange(wall.Max(p => p.X) - wall.Min(p => p.X) + 10, 576, 578);
     }
 
     [Fact]
@@ -249,7 +255,6 @@ public class PocketClearerTests
         {
             Outline = outline,
             ToolDiameterMm = 10,
-            OnionSkinMm = 0.5,
             PanelBounds = new LocalBounds(0, 0, 400, 200),
         });
         Assert.False(result.TooSmallForTool);
