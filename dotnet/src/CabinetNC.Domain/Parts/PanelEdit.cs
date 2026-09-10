@@ -64,16 +64,8 @@ public static class PanelEdit
 
     public static Panel TranslateFeatures(Panel panel, double dx, double dy)
     {
-        var feats = panel.Features.Select(f =>
-        {
-            if (IsHole(f)) return CloneFeature(f, x: f.X + dx, y: f.Y + dy);
-            if (IsGroove(f) && f.Path is not null)
-                return CloneFeature(
-                    f,
-                    path: f.Path.Select(p => new Point2(p.X + dx, p.Y + dy)).ToList(),
-                    profile: f.Profile?.Select(p => new Point2(p.X + dx, p.Y + dy)).ToList());
-            return f;
-        }).ToList();
+        Point2 Map(Point2 p) => new(p.X + dx, p.Y + dy);
+        var feats = panel.Features.Select(f => MapFeature(f, Map)).ToList();
         return ClonePanel(panel, feats);
     }
 
@@ -97,21 +89,9 @@ public static class PanelEdit
             Points = panel.Outline.Points.Select(Map).ToList(),
             Closed = panel.Outline.Closed,
             Frame = panel.Outline.Frame,
+            Segments = CadPath.Map(panel.Outline.Segments, Map),
         };
-        var feats = panel.Features.Select(f =>
-        {
-            if (IsHole(f))
-            {
-                var q = Map(new Point2(f.X, f.Y));
-                return CloneFeature(f, x: q.X, y: q.Y);
-            }
-            if (IsGroove(f) && f.Path is not null)
-                return CloneFeature(
-                    f,
-                    path: f.Path.Select(Map).ToList(),
-                    profile: f.Profile?.Select(Map).ToList());
-            return f;
-        }).ToList();
+        var feats = panel.Features.Select(f => MapFeature(f, Map)).ToList();
         return ClonePanel(panel, feats, outline);
     }
 
@@ -140,21 +120,15 @@ public static class PanelEdit
             ],
             Closed = true,
             Frame = panel.Outline.Frame,
+            Segments =
+            [
+                CadSegment.MakeLine(new(minX, minY), new(maxX, minY)),
+                CadSegment.MakeLine(new(maxX, minY), new(maxX, maxY)),
+                CadSegment.MakeLine(new(maxX, maxY), new(minX, maxY)),
+                CadSegment.MakeLine(new(minX, maxY), new(minX, minY)),
+            ],
         };
-        var feats = panel.Features.Select(f =>
-        {
-            if (IsHole(f))
-            {
-                var q = Map(new Point2(f.X, f.Y));
-                return CloneFeature(f, x: q.X, y: q.Y);
-            }
-            if (IsGroove(f) && f.Path is not null)
-                return CloneFeature(
-                    f,
-                    path: f.Path.Select(Map).ToList(),
-                    profile: f.Profile?.Select(Map).ToList());
-            return f;
-        }).ToList();
+        var feats = panel.Features.Select(f => MapFeature(f, Map)).ToList();
         return ClonePanel(panel, feats, outline);
     }
 
@@ -223,6 +197,9 @@ public static class PanelEdit
                 WidthMm = widthMm ?? f.WidthMm,
                 Path = f.Path,
                 Profile = f.Profile,
+                Holes = f.Holes,
+                ProfileSegments = f.ProfileSegments,
+                HoleSegments = f.HoleSegments,
             };
         }).ToList();
         return ClonePanel(panel, feats);
@@ -253,21 +230,9 @@ public static class PanelEdit
             Points = panel.Outline.Points.Select(Map).ToList(),
             Closed = panel.Outline.Closed,
             Frame = panel.Outline.Frame,
+            Segments = CadPath.Map(panel.Outline.Segments, Map, flipCw: true),
         };
-        var feats = panel.Features.Select(f =>
-        {
-            if (IsHole(f))
-            {
-                var q = Map(new Point2(f.X, f.Y));
-                return CloneFeature(f, x: q.X, y: q.Y);
-            }
-            if (IsGroove(f) && f.Path is not null)
-                return CloneFeature(
-                    f,
-                    path: f.Path.Select(Map).ToList(),
-                    profile: f.Profile?.Select(Map).ToList());
-            return f;
-        }).ToList();
+        var feats = panel.Features.Select(f => MapFeature(f, Map, flipCw: true)).ToList();
 
         var banding = panel.EdgeBanding;
         if (banding is not null)
@@ -350,6 +315,10 @@ public static class PanelEdit
             WidthMm = f.WidthMm,
             Path = f.Path?.ToList(),
             Profile = f.Profile?.ToList(),
+            Holes = f.Holes?.Select(ring => (IReadOnlyList<Point2>)ring.ToList()).ToList(),
+            ProfileSegments = f.ProfileSegments?.ToList(),
+            HoleSegments = f.HoleSegments?
+                .Select(ring => (IReadOnlyList<CadSegment>)ring.ToList()).ToList(),
         }).ToList();
         // ensure unique feature ids within panel
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -376,6 +345,9 @@ public static class PanelEdit
                     WidthMm = feats[i].WidthMm,
                     Path = feats[i].Path,
                     Profile = feats[i].Profile,
+                    Holes = feats[i].Holes,
+                    ProfileSegments = feats[i].ProfileSegments,
+                    HoleSegments = feats[i].HoleSegments,
                 };
         }
 
@@ -411,6 +383,7 @@ public static class PanelEdit
                 Points = panel.Outline.Points.ToList(),
                 Closed = panel.Outline.Closed,
                 Frame = panel.Outline.Frame,
+                Segments = panel.Outline.Segments?.ToList(),
             },
             Features = feats,
             Identity = identity,
@@ -538,12 +511,34 @@ public static class PanelEdit
             Faces = panel.Faces,
         };
 
+    static PanelFeature MapFeature(PanelFeature f, Func<Point2, Point2> map, bool flipCw = false)
+    {
+        if (IsHole(f) && f.Path is null && f.Profile is null)
+        {
+            var q = map(new Point2(f.X, f.Y));
+            return CloneFeature(f, x: q.X, y: q.Y);
+        }
+        var mappedHole = IsHole(f) ? map(new Point2(f.X, f.Y)) : new Point2(f.X, f.Y);
+        return CloneFeature(
+            f,
+            x: mappedHole.X,
+            y: mappedHole.Y,
+            path: f.Path?.Select(map).ToList(),
+            profile: f.Profile?.Select(map).ToList(),
+            profileSegments: CadPath.Map(f.ProfileSegments, map, flipCw),
+            holeSegments: f.HoleSegments?
+                .Select(ring => CadPath.Map(ring, map, flipCw))
+                .ToList());
+    }
+
     static PanelFeature CloneFeature(
         PanelFeature f,
         double? x = null,
         double? y = null,
         IReadOnlyList<Point2>? path = null,
         IReadOnlyList<Point2>? profile = null,
+        IReadOnlyList<CadSegment>? profileSegments = null,
+        IReadOnlyList<IReadOnlyList<CadSegment>>? holeSegments = null,
         string? purpose = null,
         bool replacePurpose = false) =>
         new()
@@ -564,5 +559,8 @@ public static class PanelEdit
             WidthMm = f.WidthMm,
             Path = path ?? f.Path,
             Profile = profile ?? f.Profile,
+            Holes = f.Holes,
+            ProfileSegments = profileSegments ?? f.ProfileSegments,
+            HoleSegments = holeSegments ?? f.HoleSegments,
         };
 }

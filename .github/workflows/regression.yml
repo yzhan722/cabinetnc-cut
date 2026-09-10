@@ -31,3 +31,7 @@ jobs:
 
       - name: Infrastructure tests
         run: dotnet test tests/CabinetNC.Infrastructure.Tests/CabinetNC.Infrastructure.Tests.csproj -c Release --verbosity minimal
+
+      # WPF-free UI logic (status inference, viewport math, sim timeline, unsaved fingerprint…)
+      - name: Desktop.Core tests
+        run: dotnet test tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj -c Release --verbosity minimal

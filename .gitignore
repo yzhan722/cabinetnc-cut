@@ -22,3 +22,5 @@ dotnet/**/*.user
 # Desktop / plugin usage logs (keep folder, ignore payloads)
 logs/*
 !logs/.gitkeep
+.cnc-pickup/
+dotnet/artifacts/

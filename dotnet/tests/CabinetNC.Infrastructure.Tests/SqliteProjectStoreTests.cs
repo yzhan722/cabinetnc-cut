@@ -53,6 +53,47 @@ public class SqliteProjectStoreTests
     }
 
     [Fact]
+    public void Save_overwrites_the_same_file_and_releases_the_lock()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cabinetnc-proj-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var db = Path.Combine(dir, "job.db");
+            var store = new SqliteProjectStore();
+            var pkgJson = """
+                {"schema":"cabinetnc.cut-package","schemaVersion":1,"panels":[{"panelId":"P1","thicknessMm":18,"outline":{"points":[[0,0],[10,0],[10,10],[0,10]],"closed":true},"features":[]}]}
+                """;
+            store.Save(db, new ProjectDocument
+            {
+                Name = "v1",
+                PackageJson = pkgJson,
+                MachineId = "osai_e4_1325",
+            });
+            var first = store.Load(db);
+            Assert.Equal("v1", first!.Name);
+
+            store.Save(db, new ProjectDocument
+            {
+                Name = "v2",
+                PackageJson = pkgJson,
+                MachineId = "osai_e4_1325",
+                NcText = "G21\nM2\n",
+            });
+            var second = store.Load(db);
+            Assert.Equal("v2", second!.Name);
+            Assert.Contains("G21", second.NcText);
+
+            using var exclusive = new FileStream(db, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            Assert.True(exclusive.Length > 0);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch { /* ignore */ }
+        }
+    }
+
+    [Fact]
     public void Round_trips_session_cam_bridges_and_ops()
     {
         var dir = Path.Combine(Path.GetTempPath(), "cabinetnc-proj-" + Guid.NewGuid().ToString("N"));

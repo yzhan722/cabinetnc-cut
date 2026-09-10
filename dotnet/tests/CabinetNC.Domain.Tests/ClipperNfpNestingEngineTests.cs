@@ -33,7 +33,7 @@ public class ClipperNfpNestingEngineTests
             [new NestSheetSpec { WidthMm = 1220, LengthMm = 2440, BorderMm = 10, Material = "oak", ThicknessMm = 18 }],
             GroupedBlfNester.SizeOfOutline);
 
-        Assert.Equal("clipper_nfp_v0", result.Engine);
+        Assert.Equal("clipper_nfp_v1", result.Engine);
         Assert.Equal(panels.Count, result.Placements.Count);
         Assert.Empty(result.Unplaced);
         Assert.Empty(NestValidator.FindPolygonCollisions(panels, result.Placements, 8));
@@ -59,6 +59,24 @@ public class ClipperNfpNestingEngineTests
     }
 
     [Fact]
+    public void Engine_nests_two_triangles_with_180_on_one_sheet()
+    {
+        var panels = new[] { RightTri("T1"), RightTri("T2") };
+        var stock = new NestSheetSpec
+        {
+            WidthMm = 240, LengthMm = 200, BorderMm = 10,
+            Material = "oak", ThicknessMm = 18,
+        };
+        var settings = new NestSettings { MarginMm = 10, ClearanceMm = 4, AllowRotation = true };
+
+        Assert.Equal(new[] { 0d, 90d, 180d, 270d }, settings.CandidateRotations(panels[0]));
+        var nfp = new ClipperNfpNestingEngine().Pack(panels, settings, [stock], GroupedBlfNester.SizeOfOutline);
+        Assert.Equal(2, nfp.Placements.Count);
+        Assert.Empty(nfp.Unplaced);
+        Assert.Empty(NestValidator.FindPolygonCollisions(panels, nfp.Placements, 4));
+    }
+
+    [Fact]
     public void Router_nfp_preference_selects_clipper_nfp()
     {
         var panels = new[] { Rect("A", 100, 80), Rect("B", 100, 80) };
@@ -80,9 +98,29 @@ public class ClipperNfpNestingEngineTests
             AdvancedTimeout = TimeSpan.FromSeconds(10),
         });
 
-        Assert.Equal("clipper_nfp_v0", result.Engine);
-        Assert.Equal("clipper_nfp_v0", log.SelectedEngine);
+        Assert.Equal("clipper_nfp_v1", result.Engine);
+        Assert.Equal("clipper_nfp_v1", log.SelectedEngine);
         Assert.Equal(2, result.Placements.Count);
+    }
+
+    [Fact]
+    public void Engine_fits_two_L_on_sheet_too_small_for_two_aabbs()
+    {
+        // 280×280 usable 264×264; two 180×180 AABBs cannot sit side-by-side or stacked.
+        var panels = new[] { L("L1"), L("L2") };
+        var stock = new NestSheetSpec
+        {
+            WidthMm = 280, LengthMm = 280, BorderMm = 8,
+            Material = "oak", ThicknessMm = 18,
+        };
+        var settings = new NestSettings { MarginMm = 8, ClearanceMm = 4, AllowRotation = true };
+
+        var nfp = new ClipperNfpNestingEngine().Pack(panels, settings, [stock], GroupedBlfNester.SizeOfOutline);
+        var blf = new BlfNestingEngine().Pack(panels, settings, [stock], GroupedBlfNester.SizeOfOutline);
+
+        Assert.Empty(NestValidator.FindPolygonCollisions(panels, nfp.Placements, 4));
+        Assert.True(nfp.Placements.Count >= blf.Placements.Count);
+        Assert.True(nfp.SheetCount <= blf.SheetCount);
     }
 
     static Panel Rect(string id, double w, double h) => new()
@@ -93,6 +131,18 @@ public class ClipperNfpNestingEngineTests
         Outline = new Outline
         {
             Points = [new(0, 0), new(w, 0), new(w, h), new(0, h)],
+            Closed = true,
+        },
+    };
+
+    static Panel RightTri(string id) => new()
+    {
+        PanelId = id,
+        Material = "oak",
+        ThicknessMm = 18,
+        Outline = new Outline
+        {
+            Points = [new(0, 0), new(200, 0), new(0, 160)],
             Closed = true,
         },
     };

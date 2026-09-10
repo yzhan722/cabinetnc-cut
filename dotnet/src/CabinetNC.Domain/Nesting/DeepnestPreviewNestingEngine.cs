@@ -284,7 +284,7 @@ public sealed class DeepnestPreviewNestingEngine : INestingEngine
         Candidate? best = null;
         var validFits = 0;
         var tested = 0;
-        var rotations = settings.PanelMayRotate90(panel) ? new[] { 0d, 90d } : new[] { 0d };
+        var rotations = settings.CandidateRotations(panel);
         foreach (var rotation in rotations)
         {
             ct.ThrowIfCancellationRequested();
@@ -486,6 +486,7 @@ public sealed class DeepnestPreviewNestingEngine : INestingEngine
                 : src.Label,
             Material = key.Material,
             ThicknessMm = key.ThicknessMm,
+            SheetGrain = src.SheetGrain,
         };
     }
 

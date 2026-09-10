@@ -46,57 +46,71 @@ public sealed class SqliteProjectStore
 
     public void Save(string dbPath, ProjectDocument doc)
     {
-        EnsureSchema(dbPath);
-        using var conn = Open(dbPath);
-        using var tx = conn.BeginTransaction();
-        using (var clear = conn.CreateCommand())
+        try
         {
-            clear.Transaction = tx;
-            clear.CommandText = "DELETE FROM project WHERE id = 1;";
-            clear.ExecuteNonQuery();
+            EnsureSchema(dbPath);
+            using var conn = Open(dbPath);
+            using var tx = conn.BeginTransaction();
+            using (var clear = conn.CreateCommand())
+            {
+                clear.Transaction = tx;
+                clear.CommandText = "DELETE FROM project WHERE id = 1;";
+                clear.ExecuteNonQuery();
+            }
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText =
+                    """
+                    INSERT INTO project (id, name, package_json, source_snapshot_json, machine_id, nest_json, nc_text, session_json, updated_at)
+                    VALUES (1, $name, $pkg, $sourceSnapshot, $machine, $nest, $nc, $session, $updated);
+                    """;
+                cmd.Parameters.AddWithValue("$name", doc.Name);
+                cmd.Parameters.AddWithValue("$pkg", doc.PackageJson);
+                cmd.Parameters.AddWithValue("$sourceSnapshot", (object?)doc.SourceSnapshotJson ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("$machine", doc.MachineId);
+                cmd.Parameters.AddWithValue("$nest", (object?)doc.NestPlacementsJson ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("$nc", (object?)doc.NcText ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("$session", (object?)doc.SessionJson ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("$updated", doc.UpdatedAt.ToString("O"));
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
         }
-        using (var cmd = conn.CreateCommand())
+        finally
         {
-            cmd.Transaction = tx;
-            cmd.CommandText =
-                """
-                INSERT INTO project (id, name, package_json, source_snapshot_json, machine_id, nest_json, nc_text, session_json, updated_at)
-                VALUES (1, $name, $pkg, $sourceSnapshot, $machine, $nest, $nc, $session, $updated);
-                """;
-            cmd.Parameters.AddWithValue("$name", doc.Name);
-            cmd.Parameters.AddWithValue("$pkg", doc.PackageJson);
-            cmd.Parameters.AddWithValue("$sourceSnapshot", (object?)doc.SourceSnapshotJson ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("$machine", doc.MachineId);
-            cmd.Parameters.AddWithValue("$nest", (object?)doc.NestPlacementsJson ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("$nc", (object?)doc.NcText ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("$session", (object?)doc.SessionJson ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("$updated", doc.UpdatedAt.ToString("O"));
-            cmd.ExecuteNonQuery();
+            Release(dbPath);
         }
-        tx.Commit();
     }
 
     public ProjectDocument? Load(string dbPath)
     {
         if (!File.Exists(dbPath)) return null;
-        EnsureSchema(dbPath);
-        using var conn = Open(dbPath);
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText =
-            "SELECT name, package_json, source_snapshot_json, machine_id, nest_json, nc_text, updated_at, session_json FROM project WHERE id = 1;";
-        using var reader = cmd.ExecuteReader();
-        if (!reader.Read()) return null;
-        return new ProjectDocument
+        try
         {
-            Name = reader.GetString(0),
-            PackageJson = reader.GetString(1),
-            SourceSnapshotJson = reader.IsDBNull(2) ? null : reader.GetString(2),
-            MachineId = reader.GetString(3),
-            NestPlacementsJson = reader.IsDBNull(4) ? null : reader.GetString(4),
-            NcText = reader.IsDBNull(5) ? null : reader.GetString(5),
-            UpdatedAt = DateTimeOffset.TryParse(reader.GetString(6), out var t) ? t : DateTimeOffset.UtcNow,
-            SessionJson = reader.FieldCount > 7 && !reader.IsDBNull(7) ? reader.GetString(7) : null,
-        };
+            EnsureSchema(dbPath);
+            using var conn = Open(dbPath);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText =
+                "SELECT name, package_json, source_snapshot_json, machine_id, nest_json, nc_text, updated_at, session_json FROM project WHERE id = 1;";
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read()) return null;
+            return new ProjectDocument
+            {
+                Name = reader.GetString(0),
+                PackageJson = reader.GetString(1),
+                SourceSnapshotJson = reader.IsDBNull(2) ? null : reader.GetString(2),
+                MachineId = reader.GetString(3),
+                NestPlacementsJson = reader.IsDBNull(4) ? null : reader.GetString(4),
+                NcText = reader.IsDBNull(5) ? null : reader.GetString(5),
+                UpdatedAt = DateTimeOffset.TryParse(reader.GetString(6), out var t) ? t : DateTimeOffset.UtcNow,
+                SessionJson = reader.FieldCount > 7 && !reader.IsDBNull(7) ? reader.GetString(7) : null,
+            };
+        }
+        finally
+        {
+            Release(dbPath);
+        }
     }
 
     public static string SerializeNest(IEnumerable<NestPlacementDto> placements) =>
@@ -128,8 +142,32 @@ public sealed class SqliteProjectStore
 
     static SqliteConnection Open(string dbPath)
     {
-        var conn = new SqliteConnection($"Data Source={dbPath}");
+        var conn = new SqliteConnection(ConnectionString(dbPath));
         conn.Open();
         return conn;
+    }
+
+    static string ConnectionString(string dbPath) =>
+        new SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Pooling = false,
+        }.ToString();
+
+    /// <summary>
+    /// Drop any leftover pooled handles so Windows can overwrite the same .db
+    /// (Save dialog + Explorer) after Open/Save.
+    /// </summary>
+    static void Release(string dbPath)
+    {
+        try
+        {
+            using var probe = new SqliteConnection(ConnectionString(dbPath));
+            SqliteConnection.ClearPool(probe);
+        }
+        catch
+        {
+            SqliteConnection.ClearAllPools();
+        }
     }
 }

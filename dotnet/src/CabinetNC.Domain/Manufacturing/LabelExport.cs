@@ -2,6 +2,7 @@ namespace CabinetNC.Domain.Manufacturing;
 
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using CabinetNC.Domain.Nesting;
 using CabinetNC.Domain.Parts;
 
@@ -15,6 +16,8 @@ public sealed class LabelPaste
     public double SheetY { get; init; }
     public string Title { get; init; } = "";
     public string Group { get; init; } = "";
+    /// <summary>Job / .cnjob name, second line on the label.</summary>
+    public string Project { get; init; } = "";
     public string? Material { get; init; }
     public double ThicknessMm { get; init; }
     public double WidthMm { get; init; }
@@ -30,7 +33,9 @@ public static class LabelExport
     public static IReadOnlyList<LabelPaste> Build(
         IReadOnlyList<Panel> panels,
         IReadOnlyList<NestPlacement> placements,
-        IReadOnlyDictionary<string, (double X, double Y)>? overrides = null)
+        IReadOnlyDictionary<string, (double X, double Y)>? overrides = null,
+        Func<Panel, string>? materialTitle = null,
+        string? projectFallback = null)
     {
         var byId = panels.ToDictionary(p => p.PanelId, StringComparer.Ordinal);
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -59,11 +64,10 @@ public static class LabelExport
                 SheetIndex = place.SheetIndex,
                 SheetX = sx,
                 SheetY = sy,
-                Title = string.IsNullOrWhiteSpace(panel.DisplayPartName)
-                    ? panel.DisplayTitle
-                    : panel.DisplayPartName,
-                Group = panel.DisplayGroup,
-                Material = panel.MaterialGroupLabel,
+                Title = ShopPartTitle(panel),
+                Group = ShopGroup(panel),
+                Project = ShopProject(panel, projectFallback),
+                Material = materialTitle?.Invoke(panel) ?? ShopStockShort(panel),
                 ThicknessMm = panel.ThicknessMm,
                 WidthMm = Math.Max(0, bounds.MaxX - bounds.MinX),
                 HeightMm = Math.Max(0, bounds.MaxY - bounds.MinY),
@@ -71,6 +75,78 @@ public static class LabelExport
             });
         }
         return list;
+    }
+
+    /// <summary>One-line shop title: cabinet + part, no Fusion <c>_1</c> / ComponentNN.</summary>
+    public static string ShopPartTitle(Panel panel)
+    {
+        var group = ShopGroup(panel);
+        var part = CleanShopName(panel.DisplayPartName);
+        if (IsGenericPart(part))
+            return group.Length > 0 ? group : CleanShopName(panel.DisplayTitle);
+        if (group.Length == 0 || group.Equals(part, StringComparison.OrdinalIgnoreCase))
+            return part.Length > 0 ? part : CleanShopName(panel.DisplayTitle);
+        if (part.StartsWith(group + " ", StringComparison.OrdinalIgnoreCase)
+            || part.StartsWith(group, StringComparison.OrdinalIgnoreCase))
+            return part;
+        return $"{group} {part}";
+    }
+
+    public static string ShopGroup(Panel panel)
+    {
+        var group = CleanShopName(panel.DisplayGroup);
+        return group is "其他" ? "" : group;
+    }
+
+    public static string ShopProject(Panel panel, string? fallback = null)
+    {
+        var pkg = panel.DisplayPackage;
+        if (string.IsNullOrWhiteSpace(pkg) || pkg is "方案")
+            pkg = fallback?.Trim() ?? "";
+        return pkg;
+    }
+
+    /// <summary>Short stock for 60 mm paper, e.g. <c>白点 DS</c>. Thickness lives on the size line.</summary>
+    public static string ShopStockShort(Panel panel)
+    {
+        var color = ShortColor(panel.DisplayColor);
+        var surface = panel.DisplaySurface;
+        if (color.Length == 0) return surface;
+        return string.IsNullOrWhiteSpace(surface) ? color : $"{color} {surface}";
+    }
+
+    static string CleanShopName(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        var t = raw.Trim();
+        t = Regex.Replace(t, @"_\d+$", "");
+        t = t.Replace('_', ' ');
+        return Regex.Replace(t, @"\s+", " ").Trim();
+    }
+
+    static bool IsGenericPart(string part) =>
+        string.IsNullOrWhiteSpace(part)
+        || Regex.IsMatch(part, @"^Component\s*\d+$", RegexOptions.IgnoreCase);
+
+    static string ShortColor(string? color)
+    {
+        if (string.IsNullOrWhiteSpace(color)
+            || color.Equals("Unassigned", StringComparison.OrdinalIgnoreCase))
+            return "";
+        var key = color.Replace(" ", "", StringComparison.Ordinal)
+            .Replace("-", "", StringComparison.Ordinal)
+            .Replace("_", "", StringComparison.Ordinal)
+            .ToLowerInvariant();
+        return key switch
+        {
+            "whitestipple" => "白点",
+            "woodgrain" => "木纹",
+            "doorwoodgrain" or "doorwoodgrain16" => "木纹",
+            "forestgreen" => "森绿",
+            "metallicwhite" => "金属白",
+            "glosswhite" => "亮白",
+            _ => color.Trim(),
+        };
     }
 
     public static string SafeStem(string? raw, int max = StemMaxLen)
@@ -131,6 +207,44 @@ public static class LabelExport
         sb.Append("M02\r\n");
         sb.Append("M30\r\n");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Every <c>LS11='stem'</c> the labeler will request, in program order, duplicates kept.
+    /// The shop label software resolves the stem to <c>&lt;picture dir&gt;\stem.bmp</c>.
+    /// </summary>
+    public static IReadOnlyList<string> Ls11Stems(string? anc)
+    {
+        var stems = new List<string>();
+        if (string.IsNullOrEmpty(anc)) return stems;
+        foreach (var raw in anc.Split('\n'))
+        {
+            var line = raw.Trim();
+            var i = line.IndexOf("LS11=", StringComparison.OrdinalIgnoreCase);
+            if (i < 0) continue;
+            var rest = line[(i + 5)..].Trim();
+            if (rest.Length >= 2 && rest[0] == '\'')
+            {
+                var end = rest.IndexOf('\'', 1);
+                if (end > 1)
+                    stems.Add(rest[1..end]);
+            }
+        }
+        return stems;
+    }
+
+    /// <summary>
+    /// Stems the program asks for that have no bitmap among <paramref name="availableStems"/>
+    /// (file names without <c>.bmp</c>, case-insensitive). Non-empty means the machine would
+    /// block inside <c>M701</c> waiting for a picture that does not exist — the 2026-08-19 incident.
+    /// </summary>
+    public static IReadOnlyList<string> MissingBitmaps(string? anc, IEnumerable<string> availableStems)
+    {
+        var have = new HashSet<string>(availableStems, StringComparer.OrdinalIgnoreCase);
+        return Ls11Stems(anc)
+            .Where(s => !have.Contains(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     public static string WrapCutWithLabelProcess(string cutNc, string pro2)

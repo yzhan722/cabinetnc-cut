@@ -28,7 +28,7 @@ public class LabelAnchorFinderTests
         Assert.Equal(200, a.LocalX, 1);
         Assert.Equal(150, a.LocalY, 1);
         Assert.Equal(60, a.WidthMm);
-        Assert.Equal(40, a.HeightMm);
+        Assert.Equal(60, a.HeightMm);
     }
 
     [Fact]
@@ -148,22 +148,22 @@ public class LabelAnchorFinderTests
     }
 
     [Fact]
-    public void Label_stays_60_by_40_and_does_not_rotate()
+    public void Label_stays_60_by_60_and_does_not_rotate()
     {
-        // 50 mm wide: 40×60 would fit, 60×40 does not. Printer orientation is fixed.
+        // 50 mm wide: a 60 mm square does not fit. Printer orientation is fixed.
         var a = LabelAnchorFinder.Find(Rect("NOROT", 50, 200));
         Assert.Equal(60, a.WidthMm);
-        Assert.Equal(40, a.HeightMm);
+        Assert.Equal(60, a.HeightMm);
         Assert.False(a.FitsAtAll);
     }
 
     [Fact]
     public void Override_on_empty_rect_keeps_point()
     {
-        var a = LabelAnchorFinder.Find(Rect("OV", 400, 300), 0, (80, 40));
+        var a = LabelAnchorFinder.Find(Rect("OV", 400, 300), 0, (80, 80));
         Assert.True(a.FitsComfortably);
         Assert.Equal(80, a.LocalX, 1);
-        Assert.Equal(40, a.LocalY, 1);
+        Assert.Equal(80, a.LocalY, 1);
     }
 
     [Fact]

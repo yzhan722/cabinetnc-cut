@@ -218,6 +218,7 @@ public static class GroupedBlfNester
                 : $"{s.Label}|{key.Material}_{key.ThicknessMm:0.##}",
             Material = key.Material,
             ThicknessMm = key.ThicknessMm,
+            SheetGrain = s.SheetGrain,
         };
 
     static NestSheetSpec CloneTemplate(NestSheetSpec s, NestGroupKey key) =>
@@ -237,6 +238,7 @@ public static class GroupedBlfNester
             Label = s.Label,
             Material = key.Material,
             ThicknessMm = key.ThicknessMm,
+            SheetGrain = s.SheetGrain,
         }, key);
 
     public static (double w, double h) SizeOfOutline(Panel panel)
@@ -254,13 +256,58 @@ public static class GroupedBlfNester
 /// <summary>Export hard-gate for nest polygon/AABB spacing (Day 5).</summary>
 public static class NestExportGate
 {
+    /// <summary>
+    /// Clipper inflate-both-by-half treats an exact nest gap as a kiss.
+    /// Export allows this much less than the nest spacing.
+    /// </summary>
+    public const double SpacingSlackMm = 0.5;
+
+    public static double EffectiveClearance(double nestSpacingMm, double slackMm = SpacingSlackMm) =>
+        Math.Max(0, nestSpacingMm - Math.Max(0, slackMm));
+
+    /// <summary>
+    /// Export-time gate: spacing / collision / mixed-group on the sheets being written.
+    /// Does not require every package panel to appear in <paramref name="placements"/> —
+    /// partial nest is already a confirm, and a sheet/kind export must not treat
+    /// other groups as unplaced.
+    /// </summary>
+    public static (bool Ok, IReadOnlyList<string> Errors) CheckForExport(
+        IReadOnlyList<Panel> panels,
+        IReadOnlyList<NestPlacement> placements,
+        double clearanceMm,
+        IReadOnlyCollection<int>? exportSheetIndexes = null,
+        bool allowAabbOverlap = false,
+        IReadOnlyList<PartInPartSlot>? partInPartSlots = null,
+        IReadOnlyDictionary<int, double>? sheetClearanceMm = null,
+        double slackMm = SpacingSlackMm)
+    {
+        IReadOnlyList<NestPlacement> scoped = placements;
+        if (exportSheetIndexes is { Count: > 0 })
+            scoped = placements.Where(p => exportSheetIndexes.Contains(p.SheetIndex)).ToList();
+
+        if (scoped.Count == 0)
+            return (false, ["nest_empty: 无排版结果"]);
+
+        return Check(
+            panels,
+            scoped,
+            clearanceMm,
+            requirePlacements: false,
+            allowAabbOverlap: allowAabbOverlap,
+            partInPartSlots: partInPartSlots,
+            sheetClearanceMm: sheetClearanceMm,
+            slackMm: slackMm);
+    }
+
     public static (bool Ok, IReadOnlyList<string> Errors) Check(
         IReadOnlyList<Panel> panels,
         IReadOnlyList<NestPlacement> placements,
         double clearanceMm,
         bool requirePlacements = true,
         bool allowAabbOverlap = false,
-        IReadOnlyList<PartInPartSlot>? partInPartSlots = null)
+        IReadOnlyList<PartInPartSlot>? partInPartSlots = null,
+        IReadOnlyDictionary<int, double>? sheetClearanceMm = null,
+        double slackMm = SpacingSlackMm)
     {
         var errors = new List<string>();
         if (requirePlacements && placements.Count == 0)
@@ -304,20 +351,29 @@ public static class NestExportGate
             ? PartsInPartPacker.IgnoreCollisionPairs(partInPartSlots)
             : null;
 
-        // True-shape engines may intentionally overlap bounding boxes while the
-        // actual polygons remain safely separated.
-        if (!allowAabbOverlap)
+        foreach (var sheet in placements.GroupBy(p => p.SheetIndex))
         {
-            foreach (var hit in NestValidator.FindAabbCollisions(parts, placements, clearanceMm, ignore))
-                errors.Add($"aabb_gap: {hit.PanelIdA} × {hit.PanelIdB} · S{hit.SheetIndex + 1}");
+            var raw = sheetClearanceMm is not null
+                      && sheetClearanceMm.TryGetValue(sheet.Key, out var sheetGap)
+                ? sheetGap
+                : clearanceMm;
+            var gap = EffectiveClearance(raw, slackMm);
+            var sheetPlaces = sheet.ToList();
+
+            // True-shape engines may intentionally overlap bounding boxes while the
+            // actual polygons remain safely separated.
+            if (!allowAabbOverlap)
+            {
+                foreach (var hit in NestValidator.FindAabbCollisions(parts, sheetPlaces, gap, ignore))
+                    errors.Add($"aabb_gap: {hit.PanelIdA} × {hit.PanelIdB} · S{hit.SheetIndex + 1}");
+            }
+
+            foreach (var hit in NestValidator.FindPolygonCollisions(panels, sheetPlaces, gap, ignore))
+                errors.Add($"poly_gap: {hit.PanelIdA} × {hit.PanelIdB} · S{hit.SheetIndex + 1}");
         }
 
-        foreach (var hit in NestValidator.FindPolygonCollisions(panels, placements, clearanceMm, ignore))
-            errors.Add($"poly_gap: {hit.PanelIdA} × {hit.PanelIdB} · S{hit.SheetIndex + 1}");
-
         // Mixed material/thickness on same sheet index = hard fail
-        var bySheet = placements.GroupBy(p => p.SheetIndex);
-        foreach (var sheet in bySheet)
+        foreach (var sheet in placements.GroupBy(p => p.SheetIndex))
         {
             var keys = sheet
                 .Select(p => panelMap.TryGetValue(p.PanelId, out var panel)

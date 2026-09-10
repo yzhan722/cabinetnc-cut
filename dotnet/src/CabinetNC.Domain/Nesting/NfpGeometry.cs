@@ -5,31 +5,64 @@ using Clipper2Lib;
 /// <summary>
 /// Clipper2 Minkowski-difference NFP helpers.
 /// Reference point = lower-left of the moving polygon's AABB (matches <see cref="NestTransform"/>).
+/// Concave parts are split into convex pieces, then pairwise NFPs are unioned.
 /// </summary>
 public static class NfpGeometry
 {
     public const double Scale = 1000;
+    const int MaxPreparePoints = 48;
+    const double SlideStepMm = 8;
+    const int MaxSlidePerEdge = 10;
 
     /// <summary>
     /// NFP of fixed obstacle vs moving part: translations of moving's reference that cause overlap.
-    /// Uses <c>MinkowskiDiff(moving, fixed) = fixed ⊕ (-moving)</c>.
+    /// Uses <c>MinkowskiDiff(moving, fixed) = fixed ⊕ (-moving)</c> on convex pieces.
     /// </summary>
     public static Paths64 ComputeNfp(Path64 fixedObstacle, Path64 movingLocal)
     {
-        if (fixedObstacle.Count < 3 || movingLocal.Count < 3)
-            return [];
-        var a = EnsurePositive(Simplify(fixedObstacle, 32));
-        var b = EnsurePositive(Simplify(movingLocal, 32));
+        var a = Prepare(fixedObstacle);
+        var b = Prepare(movingLocal);
         if (a.Count < 3 || b.Count < 3) return [];
+
+        var fixedParts = NfpConvexDecompose.Decompose(a);
+        var movingParts = NfpConvexDecompose.Decompose(b);
+        if (fixedParts.Count == 0 || movingParts.Count == 0) return [];
+
+        var acc = new Paths64();
+        foreach (var f in fixedParts)
+        {
+            foreach (var m in movingParts)
+            {
+                if (f.Count < 3 || m.Count < 3) continue;
+                try
+                {
+                    foreach (var path in Clipper.MinkowskiDiff(m, f, true))
+                    {
+                        if (path.Count >= 3)
+                            acc.Add(path);
+                    }
+                }
+                catch
+                {
+                    // skip this pair; remaining pieces still constrain the NFP
+                }
+            }
+        }
+
+        if (acc.Count == 0) return [];
         try
         {
-            return Clipper.MinkowskiDiff(b, a, true);
+            var united = Clipper.Union(acc, FillRule.NonZero);
+            return united.Count > 0 ? united : acc;
         }
         catch
         {
-            return [];
+            return acc;
         }
     }
+
+    public static IReadOnlyList<Path64> DecomposeConvex(Path64 path) =>
+        NfpConvexDecompose.Decompose(path);
 
     public static Path64 ToPath(IReadOnlyList<(double X, double Y)> points)
     {
@@ -44,20 +77,96 @@ public static class NfpGeometry
         if (mm <= 0 || path.Count < 3) return path;
         var inflated = Clipper.InflatePaths([path], mm * Scale, JoinType.Round, EndType.Polygon);
         if (inflated.Count == 0) return path;
-        // Largest area component
         return inflated.OrderByDescending(p => Math.Abs(Clipper.Area(p))).First();
     }
 
+    public static Path64 Clean(Path64 path)
+    {
+        if (path.Count == 0) return path;
+        const long eps2 = 50L * 50; // 0.05 mm
+        var tight = new Path64(path.Count);
+        foreach (var p in path)
+        {
+            if (tight.Count > 0)
+            {
+                var dx = p.X - tight[^1].X;
+                var dy = p.Y - tight[^1].Y;
+                if (dx * dx + dy * dy < eps2) continue;
+            }
+            tight.Add(p);
+        }
+
+        if (tight.Count >= 2)
+        {
+            var dx = tight[0].X - tight[^1].X;
+            var dy = tight[0].Y - tight[^1].Y;
+            if (dx * dx + dy * dy < eps2)
+                tight.RemoveAt(tight.Count - 1);
+        }
+
+        return EnsurePositive(tight);
+    }
+
+    public static Path64 Prepare(Path64 path, int maxPoints = MaxPreparePoints)
+    {
+        var clean = Clean(path);
+        if (clean.Count <= maxPoints) return clean;
+        try
+        {
+            var simplified = Clipper.SimplifyPaths([clean], 0.4 * Scale);
+            if (simplified.Count > 0)
+            {
+                var best = simplified.OrderByDescending(p => Math.Abs(Clipper.Area(p))).First();
+                if (best.Count >= 3 && best.Count <= maxPoints)
+                    return EnsurePositive(best);
+                if (best.Count > maxPoints)
+                    return Simplify(EnsurePositive(best), maxPoints);
+            }
+        }
+        catch
+        {
+            // fall through to stride simplify
+        }
+        return Simplify(clean, maxPoints);
+    }
+
+    public static bool IsConvex(Path64 path)
+    {
+        if (path.Count < 3) return false;
+        var n = path.Count;
+        var sign = 0;
+        for (var i = 0; i < n; i++)
+        {
+            var a = path[i];
+            var b = path[(i + 1) % n];
+            var c = path[(i + 2) % n];
+            var cross = (b.X - a.X) * (c.Y - b.Y) - (b.Y - a.Y) * (c.X - b.X);
+            if (cross == 0) continue;
+            var s = cross > 0 ? 1 : -1;
+            if (sign == 0) sign = s;
+            else if (s != sign) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// True when the moving reference sits strictly inside an NFP outer
+    /// (holes from union are legal islands).
+    /// </summary>
     public static bool ReferenceForbidden(double xMm, double yMm, Paths64 nfps)
     {
         var pt = new Point64((long)Math.Round(xMm * Scale), (long)Math.Round(yMm * Scale));
+        var inOuter = false;
+        var inHole = false;
         foreach (var nfp in nfps)
         {
             if (nfp.Count < 3) continue;
-            if (Clipper.PointInPolygon(pt, nfp) == PointInPolygonResult.IsInside)
-                return true;
+            if (Clipper.PointInPolygon(pt, nfp) != PointInPolygonResult.IsInside)
+                continue;
+            if (Clipper.Area(nfp) >= 0) inOuter = true;
+            else inHole = true;
         }
-        return false;
+        return inOuter && !inHole;
     }
 
     public static IEnumerable<(double X, double Y)> CandidateReferences(Paths64 nfps, double borderMm, int max) =>
@@ -85,11 +194,26 @@ public static class NfpGeometry
             {
                 var a = nfp[i];
                 var b = nfp[(i + 1) % nfp.Count];
-                Add(a.X / Scale, a.Y / Scale);
-                Add((a.X + b.X) * 0.5 / Scale, (a.Y + b.Y) * 0.5 / Scale);
-                // nudge slightly outside along edge normal approximation (toward lower-left bias)
-                var mx = (a.X + b.X) * 0.5 / Scale;
-                var my = (a.Y + b.Y) * 0.5 / Scale;
+                var ax = a.X / Scale;
+                var ay = a.Y / Scale;
+                var bx = b.X / Scale;
+                var by = b.Y / Scale;
+                Add(ax, ay);
+
+                var dx = bx - ax;
+                var dy = by - ay;
+                var len = Math.Sqrt(dx * dx + dy * dy);
+                if (len < 0.2) continue;
+
+                var samples = (int)Math.Min(MaxSlidePerEdge, Math.Max(1, Math.Floor(len / SlideStepMm)));
+                for (var s = 1; s <= samples; s++)
+                {
+                    var t = s / (double)(samples + 1);
+                    Add(ax + dx * t, ay + dy * t);
+                }
+
+                var mx = (ax + bx) * 0.5;
+                var my = (ay + by) * 0.5;
                 Add(mx + 0.05, my);
                 Add(mx, my + 0.05);
                 Add(mx - 0.05, my);

@@ -203,6 +203,42 @@ public class NestDragTests
     }
 
     [Fact]
+    public void Resolve_true_shape_keeps_interlocked_triangles()
+    {
+        var a = RightTri("A");
+        var b = RightTri("B");
+        var byId = new Dictionary<string, Panel>(StringComparer.Ordinal)
+        {
+            ["A"] = a,
+            ["B"] = b,
+        };
+        var others = new[] { ("A", 0, 0.0, 0.0, 0.0) };
+
+        var aabb = NestDrag.Resolve(
+            b, "B", 20, 20, 180, 0, others, byId,
+            1200, 2400, 8, 10, (0, 0), allowOverlap: false, ignorePairs: null, trueShape: false);
+        Assert.True(aabb.Blocked);
+
+        var poly = NestDrag.Resolve(
+            b, "B", 20, 20, 180, 0, others, byId,
+            1200, 2400, 0, 10, (0, 0), allowOverlap: false, ignorePairs: null, trueShape: true);
+        Assert.False(poly.Blocked);
+        Assert.Equal(20, poly.Ox, 6);
+        Assert.Equal(20, poly.Oy, 6);
+    }
+
+    static Panel RightTri(string id) => new()
+    {
+        PanelId = id,
+        ThicknessMm = 18,
+        Outline = new Outline
+        {
+            Points = [new(0, 0), new(200, 0), new(0, 160)],
+            Closed = true,
+        },
+    };
+
+    [Fact]
     public void ClampInBounds_keeps_child_inside_void()
     {
         var child = new Panel

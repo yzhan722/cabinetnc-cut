@@ -50,22 +50,51 @@ public static class MaterialCorrect
             return package;
 
         var pick = selected.ToHashSet();
-        var panels = package.Panels.Select(p =>
-        {
-            var key = NestGroupKey.From(p.Material, p.ThicknessMm);
-            if (!pick.Contains(key) || key.Equals(target))
-                return p;
-            return RewritePanel(p, target, blindPolicy);
-        }).ToList();
-
-        return package.WithPanels(panels).WithSheets(MergeSheets(package.Sheets, pick, target));
+        var ids = package.Panels
+            .Where(p => pick.Contains(NestGroupKey.From(p.Material, p.ThicknessMm)))
+            .Select(p => p.PanelId)
+            .ToList();
+        return RetargetPanels(package, ids, target, blindPolicy);
     }
 
-    static Panel RewritePanel(Panel panel, NestGroupKey target, BlindFeatureDepthPolicy blindPolicy)
+    /// <summary>Rewrite selected panels onto <paramref name="target"/>; drop emptied-kind sheets.</summary>
+    public static CutPackage RetargetPanels(
+        CutPackage package,
+        IReadOnlyList<string> panelIds,
+        NestGroupKey target,
+        BlindFeatureDepthPolicy blindPolicy)
+    {
+        if (package.Panels.Count == 0 || panelIds.Count == 0)
+            return package;
+
+        var idSet = panelIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var donor = package.Panels.FirstOrDefault(p =>
+            !idSet.Contains(p.PanelId) && SameKind(p, target));
+        var changed = false;
+        var panels = package.Panels.Select(p =>
+        {
+            if (!idSet.Contains(p.PanelId) || SameKind(p, target))
+                return p;
+            changed = true;
+            return RewritePanel(p, target, blindPolicy, donor);
+        }).ToList();
+        if (!changed)
+            return package;
+
+        return package.WithPanels(panels).WithSheets(SyncSheets(package.Sheets, panels, target));
+    }
+
+    static Panel RewritePanel(
+        Panel panel,
+        NestGroupKey target,
+        BlindFeatureDepthPolicy blindPolicy,
+        Panel? donor)
     {
         var tOld = panel.ThicknessMm;
         var tNew = target.ThicknessMm;
-        var material = target.Material == "(unspecified)" ? panel.Material : target.Material;
+        var material = target.Material == "(unspecified)"
+            ? (donor?.Material ?? panel.Material)
+            : target.Material;
         var feats = panel.Features
             .Select(f => RewriteFeature(f, tOld, tNew, blindPolicy))
             .ToList();
@@ -75,21 +104,42 @@ public static class MaterialCorrect
             Name = panel.Name,
             Material = material,
             ThicknessMm = tNew,
-            DecorId = panel.DecorId,
-            SubstrateId = panel.SubstrateId,
-            ColorName = panel.ColorName,
-            SurfaceMode = panel.SurfaceMode,
+            DecorId = donor?.DecorId ?? panel.DecorId,
+            SubstrateId = donor?.SubstrateId ?? panel.SubstrateId,
+            ColorName = donor?.ColorName ?? panel.ColorName,
+            SurfaceMode = donor?.SurfaceMode ?? panel.SurfaceMode,
             Quantity = panel.Quantity,
             AllowedRotations = panel.AllowedRotations,
             GrainDirection = panel.GrainDirection,
             Outline = panel.Outline,
             Features = feats,
             Faces = panel.Faces,
-            Identity = panel.Identity,
+            Identity = WithDonorRole(panel.Identity, donor?.Identity),
             Orientation = panel.Orientation,
             EdgeBanding = panel.EdgeBanding,
             Notes = panel.Notes,
             Side = panel.Side,
+        };
+    }
+
+    static WorkpieceIdentity? WithDonorRole(WorkpieceIdentity? dest, WorkpieceIdentity? donor)
+    {
+        if (donor is null || string.IsNullOrWhiteSpace(donor.Role))
+            return dest;
+        if (dest is null)
+            return new WorkpieceIdentity { Role = donor.Role };
+        if (string.Equals(dest.Role, donor.Role, StringComparison.Ordinal))
+            return dest;
+        return new WorkpieceIdentity
+        {
+            PackageId = dest.PackageId,
+            PackageLabel = dest.PackageLabel,
+            ProjectId = dest.ProjectId,
+            ModuleId = dest.ModuleId,
+            WorkpieceId = dest.WorkpieceId,
+            Role = donor.Role,
+            SourcePath = dest.SourcePath,
+            SourceFormat = dest.SourceFormat,
         };
     }
 
@@ -136,28 +186,36 @@ public static class MaterialCorrect
             WidthMm = f.WidthMm,
             Path = f.Path,
             Profile = f.Profile,
+            Holes = f.Holes,
         };
 
-    static IReadOnlyList<SheetStock> MergeSheets(
+    static IReadOnlyList<SheetStock> SyncSheets(
         IReadOnlyList<SheetStock> sheets,
-        HashSet<NestGroupKey> selected,
+        IReadOnlyList<Panel> panels,
         NestGroupKey target)
     {
-        var keep = sheets.FirstOrDefault(s => NestGroupKey.From(s.Material, s.ThicknessMm).Equals(target));
-        var donor = sheets.FirstOrDefault(s => selected.Contains(NestGroupKey.From(s.Material, s.ThicknessMm)));
-        var rest = sheets
-            .Where(s => !selected.Contains(NestGroupKey.From(s.Material, s.ThicknessMm)))
-            .ToList();
-        if (keep is not null)
+        var remaining = panels
+            .Select(p => NestGroupKey.From(p.Material, p.ThicknessMm))
+            .ToHashSet();
+        var kept = new List<SheetStock>();
+        var seen = new HashSet<NestGroupKey>();
+        foreach (var s in sheets)
         {
-            rest.Insert(0, keep);
-            return rest;
+            var key = NestGroupKey.From(s.Material, s.ThicknessMm);
+            if (!remaining.Contains(key) || !seen.Add(key))
+                continue;
+            kept.Add(s);
         }
 
-        if (donor is null)
-            return rest;
+        if (!remaining.Contains(target) || seen.Contains(target))
+            return kept;
 
-        rest.Insert(0, new SheetStock
+        var donor = sheets.FirstOrDefault(s => NestGroupKey.From(s.Material, s.ThicknessMm).Equals(target))
+            ?? sheets.FirstOrDefault();
+        if (donor is null)
+            return kept;
+
+        kept.Insert(0, new SheetStock
         {
             SheetId = donor.SheetId,
             Material = target.Material == "(unspecified)" ? donor.Material : target.Material,
@@ -169,6 +227,6 @@ public static class MaterialCorrect
             PartClearanceMm = donor.PartClearanceMm,
             DefectRegions = donor.DefectRegions,
         });
-        return rest;
+        return kept;
     }
 }

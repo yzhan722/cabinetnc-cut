@@ -16,6 +16,8 @@ public sealed class ToolStroke
     public double Y1 { get; init; }
     public double Z1 { get; init; }
     public double Feed { get; init; }
+    /// <summary>0-based source line of the block that produced this stroke; -1 when unknown.</summary>
+    public int LineIndex { get; init; } = -1;
     public double Dx => X1 - X0;
     public double Dy => Y1 - Y0;
     public double Dz => Z1 - Z0;
@@ -113,28 +115,26 @@ public static class OsaiTroyParser
 
             if (motion is 2 or 3 && nr is double r && r > 1e-6)
             {
-                foreach (var pt in TessellateArc(x, y, x1, y1, r, cw: motion == 2))
+                strokes.Add(new ToolStroke
                 {
-                    strokes.Add(new ToolStroke
-                    {
-                        ToolNum = tool,
-                        Rpm = s,
-                        Rapid = false,
-                        Arc = true,
-                        Cw = motion == 2,
-                        R = r,
-                        X0 = x,
-                        Y0 = y,
-                        Z0 = z1,
-                        X1 = pt.X,
-                        Y1 = pt.Y,
-                        Z1 = z1,
-                        Feed = f,
-                    });
-                    x = pt.X;
-                    y = pt.Y;
-                    z = z1;
-                }
+                    ToolNum = tool,
+                    Rpm = s,
+                    Rapid = false,
+                    Arc = true,
+                    Cw = motion == 2,
+                    R = r,
+                    X0 = x,
+                    Y0 = y,
+                    Z0 = z,
+                    X1 = x1,
+                    Y1 = y1,
+                    Z1 = z1,
+                    Feed = f,
+                    LineIndex = line.SourceLine,
+                });
+                x = x1;
+                y = y1;
+                z = z1;
                 continue;
             }
 
@@ -153,6 +153,7 @@ public static class OsaiTroyParser
                 Y1 = y1,
                 Z1 = z1,
                 Feed = f,
+                LineIndex = line.SourceLine,
             });
             x = x1;
             y = y1;
@@ -163,15 +164,37 @@ public static class OsaiTroyParser
         return new OsaiReplay { Lines = cutLines, Strokes = strokes, SafeZMm = safeZ };
     }
 
-    internal static IReadOnlyList<(double X, double Y)> TessellateArc(
+    /// <summary>Sample a G2/G3 for reverse/infer only. Simulation keeps the arc intact.</summary>
+    public static IReadOnlyList<(double X, double Y)> TessellateArc(
         double x0, double y0, double x1, double y1, double r, bool cw)
     {
-        if (!TryArcCenter(x0, y0, x1, y1, r, cw, out var cx, out var cy))
+        if (!TryArcSweep(x0, y0, x1, y1, r, cw, out var cx, out var cy, out var a0, out var sweep))
             return [(x1, y1)];
 
-        var a0 = Math.Atan2(y0 - cy, x0 - cx);
+        var steps = Math.Clamp((int)Math.Ceiling(Math.Abs(sweep) / (Math.PI / 10)), 2, 24);
+        var pts = new List<(double X, double Y)>(steps);
+        var rr = Math.Abs(r);
+        for (var i = 1; i <= steps; i++)
+        {
+            var a = a0 + sweep * (i / (double)steps);
+            pts.Add(i == steps
+                ? (x1, y1)
+                : (cx + rr * Math.Cos(a), cy + rr * Math.Sin(a)));
+        }
+        return pts;
+    }
+
+    public static bool TryArcSweep(
+        double x0, double y0, double x1, double y1, double r, bool cw,
+        out double cx, out double cy, out double a0, out double sweep)
+    {
+        a0 = sweep = 0;
+        if (!TryArcCenter(x0, y0, x1, y1, r, cw, out cx, out cy))
+            return false;
+
+        a0 = Math.Atan2(y0 - cy, x0 - cx);
         var a1 = Math.Atan2(y1 - cy, x1 - cx);
-        var sweep = a1 - a0;
+        sweep = a1 - a0;
         if (cw)
         {
             while (sweep > 0) sweep -= 2 * Math.PI;
@@ -182,20 +205,7 @@ public static class OsaiTroyParser
             while (sweep < 0) sweep += 2 * Math.PI;
             while (sweep > 2 * Math.PI + 1e-9) sweep -= 2 * Math.PI;
         }
-        if (Math.Abs(sweep) < 1e-9)
-            return [(x1, y1)];
-
-        var steps = Math.Clamp((int)Math.Ceiling(Math.Abs(sweep) / (Math.PI / 10)), 2, 24);
-        var pts = new List<(double X, double Y)>(steps);
-        for (var i = 1; i <= steps; i++)
-        {
-            var a = a0 + sweep * (i / (double)steps);
-            if (i == steps)
-                pts.Add((x1, y1));
-            else
-                pts.Add((cx + Math.Abs(r) * Math.Cos(a), cy + Math.Abs(r) * Math.Sin(a)));
-        }
-        return pts;
+        return Math.Abs(sweep) >= 1e-9;
     }
 
     internal static bool TryArcCenter(

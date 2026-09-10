@@ -155,6 +155,7 @@ public static class CutPackageImporter
                             WidthMm = TryGetDouble(f, "widthMm"),
                             Path = featPath,
                             Profile = featProfile,
+                            Holes = ReadHoleRings(f),
                         });
                         fi++;
                     }
@@ -333,6 +334,26 @@ public static class CutPackageImporter
                 pts.Add(new Point2(GetDouble(pt, "x"), GetDouble(pt, "y")));
         }
         return pts.Count >= minCount ? pts : null;
+    }
+
+    static IReadOnlyList<IReadOnlyList<Point2>>? ReadHoleRings(JsonElement feature)
+    {
+        if (!feature.TryGetProperty("holes", out var holesEl) || holesEl.ValueKind != JsonValueKind.Array)
+            return null;
+        var holes = new List<IReadOnlyList<Point2>>();
+        foreach (var hole in holesEl.EnumerateArray())
+        {
+            if (hole.ValueKind != JsonValueKind.Array) continue;
+            var pts = new List<Point2>();
+            foreach (var pt in hole.EnumerateArray())
+            {
+                if (pt.ValueKind == JsonValueKind.Array && pt.GetArrayLength() >= 2)
+                    pts.Add(new Point2(pt[0].GetDouble(), pt[1].GetDouble()));
+            }
+            if (pts.Count >= 3)
+                holes.Add(pts);
+        }
+        return holes.Count > 0 ? holes : null;
     }
 
     static PackageImportResult Fail(string code, string path, string msg) =>
