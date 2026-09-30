@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "node scripts/check-sample.mjs && node scripts/check-pack.mjs && node scripts/check-ops.mjs && node scripts/check-nc.mjs && node scripts/check-geom.mjs && node scripts/check-hit.mjs && node scripts/check-native.mjs && node scripts/check-dxf.mjs && node scripts/check-project.mjs && node scripts/check-materials.mjs && node scripts/check-library.mjs && node scripts/check-desktop.mjs && node scripts/check-cam.mjs && node scripts/check-recent.mjs && node scripts/check-nest-verify.mjs && node scripts/check-job-sheet.mjs && node scripts/check-import.mjs",
+    "check": "node scripts/check-sample.mjs && node scripts/check-pack.mjs && node scripts/check-ops.mjs && node scripts/check-nc.mjs && node scripts/check-geom.mjs && node scripts/check-hit.mjs && node scripts/check-native.mjs && node scripts/check-dxf.mjs && node scripts/check-project.mjs && node scripts/check-materials.mjs && node scripts/check-library.mjs && node scripts/check-desktop.mjs && node scripts/check-cam.mjs && node scripts/check-recent.mjs && node scripts/check-nest-verify.mjs && node scripts/check-job-sheet.mjs && node scripts/check-import.mjs && node scripts/check-cloud.mjs",
     "check:native": "node scripts/check-native.mjs",
     "smoke": "node scripts/smoke-pipeline.mjs",
     "portable": "node scripts/make-portable.mjs"
