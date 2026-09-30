@@ -6,6 +6,9 @@ portable/
 *.log
 .env
 .env.*
+!.env.example
+*-credentials.json
+service-account*.json
 
 # Native build outputs
 native/cabinetnc_core/build/

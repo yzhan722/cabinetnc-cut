@@ -21,6 +21,7 @@ using CabinetNC.Domain.Manufacturing;
 using CabinetNC.Domain.Nesting;
 using CabinetNC.Domain.Parts;
 using CabinetNC.FusionPackage;
+using CabinetNC.Infrastructure.Cloud;
 using CabinetNC.Infrastructure.Diagnostics;
 using CabinetNC.Infrastructure.Library;
 using CabinetNC.Infrastructure.Projects;
@@ -4557,6 +4558,26 @@ public partial class MainWindow : Window
             ["bridgeCount"] = _profileBridges.Count,
             ["machineId"] = SelectedMachineId(),
             ["stage"] = _stage,
+        });
+        MirrorProjectDbToCloud(dlg.FileName);
+    }
+
+    /// <summary>
+    /// Phase 1 cloud mirror: a finished local save is copied into the bucket
+    /// (omnicam/projects/&lt;name&gt;.db). Fire-and-forget — a cloud failure
+    /// lands in the usage log and never affects the local save. Disabled unless
+    /// CAB_CLOUD_ENABLED=1 (see src/cloud/ for the shared config contract).
+    /// </summary>
+    void MirrorProjectDbToCloud(string dbPath)
+    {
+        var sync = CloudSync.Shared;
+        if (!sync.GetStatus().Enabled) return;
+        _ = Task.Run(async () =>
+        {
+            var r = await sync.UploadFileAsync("omnicam/projects", Path.GetFileName(dbPath), dbPath);
+            UsageLog.LogActionResult("cloud.sync",
+                new Dictionary<string, object?> { ["key"] = r.Key, ["ms"] = r.Ms, ["src"] = "project.save" },
+                error: r.Ok ? null : r.Error);
         });
     }
 
