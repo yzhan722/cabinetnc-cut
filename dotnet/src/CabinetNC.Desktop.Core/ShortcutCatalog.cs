@@ -12,7 +12,8 @@ public static class ShortcutCatalog
     [
         new("文件", "Ctrl+O", "打开方案"),
         new("文件", "Ctrl+Shift+O", "打开工程"),
-        new("文件", "Ctrl+S", "保存工程"),
+        new("文件", "Ctrl+S", "保存工程（已有文件则直接写回）"),
+        new("文件", "Ctrl+Shift+S", "另存为"),
         new("文件", "Ctrl+E", "一键导出（需先完成密排与刀路）"),
         new("导航", "Ctrl+1 … Ctrl+5", "跳到 载入 / 板材 / 密排 / 刀路 / 导出"),
         new("编辑", "Ctrl+Z / Ctrl+Y", "撤销 / 重做"),

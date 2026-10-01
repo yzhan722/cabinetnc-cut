@@ -117,6 +117,7 @@ public static class MaterialCorrect
             Identity = WithDonorRole(panel.Identity, donor?.Identity),
             Orientation = panel.Orientation,
             EdgeBanding = panel.EdgeBanding,
+            EdgeBands = panel.EdgeBands,
             Notes = panel.Notes,
             Side = panel.Side,
         };

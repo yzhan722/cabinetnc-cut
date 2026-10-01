@@ -187,6 +187,7 @@ static class CanvasPainter
         bool SelectionCrossing = false,
         CamStrategyKind? HighlightStrategy = null,
         TroyPassKind? HighlightPass = null,
+        IReadOnlyList<NestBlockedRect>? Blocked = null,
         OpsToolpathKind? HighlightToolpath = null,
         IReadOnlyList<ProfileBridge>? Bridges = null,
         IReadOnlyDictionary<string, (double X, double Y)>? LabelOverrides = null,
@@ -231,6 +232,8 @@ static class CanvasPainter
         {
             canvas.DrawRect(ox, oy, sw * scale, sh * scale, fill);
             DrawSheetGrid(canvas, ox, oy, scale, sw, sh);
+            if (opts.Blocked is { Count: > 0 } blocked)
+                DrawBlocked(canvas, ToSx, ToSy, scale, blocked);
             canvas.DrawRect(ox, oy, sw * scale, sh * scale, stroke);
         }
         if (opts.SheetGrain != SheetGrainKind.None)
@@ -1195,6 +1198,47 @@ static class CanvasPainter
             canvas.DrawLine(ox + x * scale, oy, ox + x * scale, oy + sh * scale, paint);
         for (float y = 0; y <= sh; y += step)
             canvas.DrawLine(ox, oy + (sh - y) * scale, ox + sw * scale, oy + (sh - y) * scale, paint);
+    }
+
+    static void DrawBlocked(
+        SKCanvas canvas,
+        Func<double, float> toSx,
+        Func<double, float> toSy,
+        float scale,
+        IReadOnlyList<NestBlockedRect> blocked)
+    {
+        using var fill = new SKPaint { Color = new SKColor(0xE0, 0xE0, 0xE0), IsAntialias = true };
+        using var stroke = new SKPaint
+        {
+            Color = new SKColor(0xA8, 0xA8, 0xA8),
+            IsStroke = true,
+            StrokeWidth = 1,
+            IsAntialias = true,
+        };
+        using var hatch = new SKPaint
+        {
+            Color = new SKColor(0xB8, 0xB8, 0xB8),
+            IsStroke = true,
+            StrokeWidth = 1,
+            IsAntialias = true,
+        };
+        foreach (var b in blocked)
+        {
+            var x0 = toSx(b.MinX);
+            var y0 = toSy(b.MaxY);
+            var x1 = toSx(b.MaxX);
+            var y1 = toSy(b.MinY);
+            var left = Math.Min(x0, x1);
+            var top = Math.Min(y0, y1);
+            var w = Math.Abs(x1 - x0);
+            var h = Math.Abs(y1 - y0);
+            if (w < 0.5f || h < 0.5f) continue;
+            canvas.DrawRect(left, top, w, h, fill);
+            var step = Math.Max(6f, 12f * Math.Max(0.4f, scale / 2f));
+            for (var t = -h; t < w + h; t += step)
+                canvas.DrawLine(left + t, top, left + t + h, top + h, hatch);
+            canvas.DrawRect(left, top, w, h, stroke);
+        }
     }
 
     static void DrawOutline(SKCanvas canvas, GeomInteraction.View view, Panel panel, SKColor fill, SKColor stroke, float lw)

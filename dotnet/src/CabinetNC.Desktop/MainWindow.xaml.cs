@@ -51,6 +51,7 @@ public partial class MainWindow : Window
 
     readonly ProjectSession _session = new();
     readonly WorkerProcessHost _worker = new();
+    bool _workerFailLogged;
     readonly SqliteProjectStore _store = new();
     WorkshopLibrary _library = LoadLibraryAtStartup();
     static LibraryLoadStatus _libraryLoadStatus;
@@ -251,10 +252,14 @@ public partial class MainWindow : Window
 
         Loaded += async (_, _) =>
         {
+            UsageLog.SetContextProvider(SessionLogContext);
             UsageLog.LogEvent("ui", "desktop.mainLoaded", new Dictionary<string, object?>
             {
                 ["logDirs"] = UsageLog.LogDirs().ToList(),
                 ["machineId"] = SelectedMachineId(),
+                ["libraryStatus"] = _libraryLoadStatus.ToString(),
+                ["remnantCount"] = _library.Remnants.Count,
+                ["toolCount"] = _library.Tools.Count,
             });
             UpdateStageChrome();
             RefreshWorkflowDots();
@@ -293,6 +298,7 @@ public partial class MainWindow : Window
         Closed += async (_, _) =>
         {
             UsageLog.LogEvent("ui", "desktop.mainClosed");
+            UsageLog.SetContextProvider(null);
             _camTimer.Stop();
             StopNcSim();
             if (_hwndSource is not null)
@@ -303,6 +309,20 @@ public partial class MainWindow : Window
             await _worker.DisposeAsync();
         };
     }
+
+    IReadOnlyDictionary<string, object?> SessionLogContext() =>
+        new Dictionary<string, object?>
+        {
+            ["jobId"] = _session.Package?.JobId,
+            ["stage"] = _stage,
+            ["machineId"] = SelectedMachineId(),
+            ["panelCount"] = _session.Package?.Panels.Count,
+            ["hasNest"] = _nest is { Ok: true },
+            ["placedCount"] = _nest?.Placements.Count ?? 0,
+            ["opCount"] = _opsOverlay.Count,
+            ["bridgeCount"] = _profileBridges.Count,
+            ["lockedCount"] = _locked.Count,
+        };
 
     string SelectedMachineId() =>
         MachineCombo.SelectedValue as string
@@ -389,6 +409,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.S)
+        {
+            OnSaveProjectAsClick(sender, e);
+            e.Handled = true;
+            return;
+        }
+
         if (Keyboard.Modifiers == ModifierKeys.Control)
         {
             switch (e.Key)
@@ -425,7 +452,7 @@ public partial class MainWindow : Window
             {
                 if (_session.TryUndo())
                 {
-                    AfterHistoryRestore();
+                    AfterHistoryRestore("undo");
                     e.Handled = true;
                 }
             }
@@ -433,7 +460,7 @@ public partial class MainWindow : Window
             {
                 if (_session.TryRedo())
                 {
-                    AfterHistoryRestore();
+                    AfterHistoryRestore("redo");
                     e.Handled = true;
                 }
             }
@@ -487,8 +514,13 @@ public partial class MainWindow : Window
     static bool IsTypingTarget() =>
         Keyboard.FocusedElement is TextBox or PasswordBox or ComboBox;
 
-    void AfterHistoryRestore()
+    void AfterHistoryRestore(string action = "undo")
     {
+        UsageLog.LogEvent("ui", action == "redo" ? "session.redo" : "session.undo", new Dictionary<string, object?>
+        {
+            ["panelCount"] = _session.Package?.Panels.Count,
+            ["selected"] = _selected?.PanelId,
+        });
         InvalidateManufacturingOutputs("undo/redo");
         BindPartList(_selected?.PanelId);
         RefreshGeomRail();
@@ -672,7 +704,7 @@ public partial class MainWindow : Window
         StageHint.Text = _stage switch
         {
             "load" => _session.Package is null
-                ? "载入方案: 打开 woodjob / cut-package，或从机台 .anc 反推补板"
+                ? "载入方案: 打开 Fusion .cnjob / woodjob / cut-package"
                 : "载入方案: 左栏 Package → Assembly → 板件 · 可用「加入方案」再并一单",
             "stock" => "板材与设备: 相同板件已合并数量 · Ctrl 点选种类后可合并 · 按材料设大板",
             "nest" => "密排: 左右翻大板 · 拖摆位 · 右键改材料 · 拖动中右键转90°",
@@ -813,7 +845,8 @@ public partial class MainWindow : Window
             var project = _session.ResolvedProjectName;
             var kindOrdinal = new Dictionary<NestGroupKey, int>();
             var labelPastes = _session.Package is { } pkg
-                ? LabelExport.Build(pkg.Panels, CurrentNestPlacements(), CurrentLabelOverrides(), KindDisplayName)
+                ? LabelExport.Build(pkg.Panels, CurrentNestPlacements(), CurrentLabelOverrides(),
+                    projectFallback: _session.ResolvedProjectName)
                 : [];
             foreach (var sheetGroup in _opsOverlay
                          .Where(o => o.Placed && o.Enabled)
@@ -859,7 +892,7 @@ public partial class MainWindow : Window
                 _exportFiles.Add(new ExportNcFile
                 {
                     FileName = ExportNaming.AncFileName(n, thickness, color, kind, project),
-                    Title = $"{n:00} · {ExportNaming.ThicknessToken(thickness)} · {color} · {kind} · {project}",
+                    Title = $"{ExportNaming.ThicknessToken(thickness)} · {n:00} · {color} · {kind} · {project}",
                     Detail = detail,
                     SheetIndex = sheetGroup.Key,
                     KindKey = key,
@@ -972,6 +1005,9 @@ public partial class MainWindow : Window
             else if (snapshot.TryGetValue(name, out var old))
                 toWrite.Add(old);
         }
+        // 计码 gate after preflight: the program just built must reproduce the panels.
+        // May re-plan with stricter process knobs (bounded), so plan the files after it.
+        if (!GuardExportVerify(ref toWrite, out var verifyReports)) return;
         var plan = ExportFlow.Plan(toWrite.Select(f => new ExportItem(f.FileName, f.NcText, f.Labels)));
         if (plan.IsEmpty)
         {
@@ -1009,6 +1045,7 @@ public partial class MainWindow : Window
         }
 
         var written = WritePlan(plan, dir, singlePath);
+        WriteVerifyReports(verifyReports, dir, singlePath);
         SetStatus(written.LabelStatus is null
             ? $"已导出 {plan.Files.Count} 个文件 → {(singlePath ?? dir)}"
             : $"已导出 {plan.Files.Count} 个文件 · {written.LabelStatus}");
@@ -1696,13 +1733,13 @@ public partial class MainWindow : Window
 
     void OnMenuUndoClick(object sender, RoutedEventArgs e)
     {
-        if (_session.TryUndo()) AfterHistoryRestore();
+        if (_session.TryUndo()) AfterHistoryRestore("undo");
         else SetStatus("没有可撤销的操作", StatusKind.Info);
     }
 
     void OnMenuRedoClick(object sender, RoutedEventArgs e)
     {
-        if (_session.TryRedo()) AfterHistoryRestore();
+        if (_session.TryRedo()) AfterHistoryRestore("redo");
         else SetStatus("没有可重做的操作", StatusKind.Info);
     }
 
@@ -1903,6 +1940,14 @@ public partial class MainWindow : Window
     void PersistLibrary()
     {
         WorkshopLibraryStore.Save(_library);
+        UsageLog.LogEvent("ui", "library.save", new Dictionary<string, object?>
+        {
+            ["path"] = WorkshopLibraryStore.DefaultPath(),
+            ["materials"] = _library.Materials.Count,
+            ["tools"] = _library.Tools.Count,
+            ["remnants"] = _library.Remnants.Count,
+            ["remnantsInNest"] = _library.Remnants.Count(x => x.UseInNest),
+        });
         SetStatus($"库已保存 · {WorkshopLibraryStore.DefaultPath()}");
     }
 
@@ -1919,12 +1964,7 @@ public partial class MainWindow : Window
     // ----- 补板库 -----
     void RefreshRemnantsModule()
     {
-        RemnantsList.Items.Clear();
-        foreach (var r in _library.Remnants)
-            RemnantsList.Items.Add(
-                $"{(r.UseInNest ? "[Nest]" : "[—]")} {r.Id} · {r.WidthMm:0.#}x{r.LengthMm:0.#}x{r.ThicknessMm:0.#} · {r.Material ?? "—"} · {r.Note ?? ""}");
-        RemnantsMeta.Text =
-            $"补板 {_library.Remnants.Count} · 参与密排 {_library.Remnants.Count(x => x.UseInNest)} · 库 {WorkshopLibraryStore.DefaultPath()}";
+        RefreshRecutLibraryUi();
         RefreshRecutPanelList();
     }
 
@@ -1948,6 +1988,10 @@ public partial class MainWindow : Window
             }
         }
         RecutPanelList.ItemsSource = rows;
+        // The .anc reverse flow has no UI entry any more; the recut list only shows for a
+        // program handed in on the command line.
+        if (RecutSection is not null)
+            RecutSection.Visibility = rows.Count > 0 && _lastReverse is not null ? Visibility.Visible : Visibility.Collapsed;
         RefreshReverseCompare();
     }
 
@@ -1993,56 +2037,6 @@ public partial class MainWindow : Window
             ReverseCompareWarn.Visibility = Visibility.Collapsed;
         }
         ReverseCompareCard.Visibility = Visibility.Visible;
-    }
-
-    void OnRemnantToggleNestClick(object sender, RoutedEventArgs e)
-    {
-        var i = RemnantsList.SelectedIndex;
-        if (i < 0 || i >= _library.Remnants.Count) return;
-        _library.Remnants[i].UseInNest = !_library.Remnants[i].UseInNest;
-        PersistLibrary();
-        RefreshRemnantsModule();
-    }
-
-    void OnRemnantAddClick(object sender, RoutedEventArgs e)
-    {
-        var w = ParseMm(RemWBox.Text, 0);
-        var l = ParseMm(RemLBox.Text, 0);
-        var t = ParseMm(RemTBox.Text, 18);
-        if (w <= 0 || l <= 0)
-        {
-            SetStatus("补板宽/长须 > 0");
-            return;
-        }
-        _library.Remnants.Add(new LibRemnant
-        {
-            Id = "REM-" + DateTime.Now.ToString("HHmmss"),
-            WidthMm = w,
-            LengthMm = l,
-            ThicknessMm = t,
-            Material = string.IsNullOrWhiteSpace(RemMatBox.Text) ? null : RemMatBox.Text.Trim(),
-        });
-        PersistLibrary();
-        RefreshRemnantsModule();
-    }
-
-    void OnRemnantFromSheetClick(object sender, RoutedEventArgs e)
-    {
-        var sheet = _session.Package?.Sheets.FirstOrDefault();
-        RemWBox.Text = (sheet?.WidthMm > 0 ? sheet.WidthMm : _library.Nest.DefaultSheetWidthMm).ToString("0.###");
-        RemLBox.Text = (sheet?.LengthMm > 0 ? sheet.LengthMm / 2 : _library.Nest.DefaultSheetLengthMm / 2).ToString("0.###");
-        RemTBox.Text = (sheet?.ThicknessMm > 0 ? sheet.ThicknessMm : 18).ToString("0.###");
-        RemMatBox.Text = sheet?.Material ?? "";
-        SetStatus("已填入当前板材半长作为补板草稿 — 点「添加补板」确认");
-    }
-
-    void OnRemnantDeleteClick(object sender, RoutedEventArgs e)
-    {
-        var i = RemnantsList.SelectedIndex;
-        if (i < 0 || i >= _library.Remnants.Count) return;
-        _library.Remnants.RemoveAt(i);
-        PersistLibrary();
-        RefreshRemnantsModule();
     }
 
     // ----- 设备管理 -----
@@ -2193,8 +2187,9 @@ public partial class MainWindow : Window
             foreach (var mat in snapshot.Materials)
             {
                 if (string.IsNullOrWhiteSpace(mat.MaterialId)) continue;
-                if (_library.Materials.Any(m => m.Id == mat.MaterialId || m.Name == mat.MaterialId
-                        || (!string.IsNullOrWhiteSpace(mat.DisplayName) && m.Name == mat.DisplayName)))
+                // One materialId = one sheet. Matching by display name merged different sheets
+                // that share a label (single- vs double-sided "Gloss White 16mm").
+                if (_library.Materials.Any(m => m.Id == mat.MaterialId))
                     continue;
                 var thickness = mat.ThicknessMm is > 0
                     ? mat.ThicknessMm.Value
@@ -2269,8 +2264,17 @@ public partial class MainWindow : Window
             SpindleRpm = ParseMm(ToolRpmBox.Text, 18000),
         };
         var i = _library.Tools.FindIndex(t => t.Id == id);
-        if (i >= 0) _library.Tools[i] = row;
+        var replaced = i >= 0;
+        if (replaced) _library.Tools[i] = row;
         else _library.Tools.Add(row);
+        UsageLog.LogEvent("ui", replaced ? "tool.update" : "tool.add", new Dictionary<string, object?>
+        {
+            ["id"] = row.Id,
+            ["name"] = row.Name,
+            ["diameterMm"] = row.DiameterMm,
+            ["feedXy"] = row.FeedXyMmMin,
+            ["rpm"] = row.SpindleRpm,
+        });
         PersistLibrary();
         RefreshProcessModule();
     }
@@ -2300,6 +2304,15 @@ public partial class MainWindow : Window
         RegenerateNcFromCurrentOps();
         RefreshProcessModule();
         CanvasHost.InvalidateVisual();
+        UsageLog.LogEvent("ui", "tool.apply", new Dictionary<string, object?>
+        {
+            ["id"] = tool.Id,
+            ["name"] = tool.Name,
+            ["diameterMm"] = tool.DiameterMm,
+            ["feedXy"] = tool.FeedXyMmMin,
+            ["rpm"] = tool.SpindleRpm,
+            ["opCount"] = _opsOverlay.Count,
+        });
         SetStatus($"已应用刀具 · {tool.Name} Ø{tool.DiameterMm:0.###} · F{tool.FeedXyMmMin:0}");
     }
 
@@ -2307,8 +2320,14 @@ public partial class MainWindow : Window
     {
         var i = ProcessToolsList.SelectedIndex;
         if (i < 0 || i >= _library.Tools.Count) return;
-        if (_library.Tools[i].Id == _activeToolId) _activeToolId = null;
+        var removed = _library.Tools[i];
+        if (removed.Id == _activeToolId) _activeToolId = null;
         _library.Tools.RemoveAt(i);
+        UsageLog.LogEvent("ui", "tool.delete", new Dictionary<string, object?>
+        {
+            ["id"] = removed.Id,
+            ["name"] = removed.Name,
+        });
         PersistLibrary();
         RefreshProcessModule();
     }
@@ -2316,6 +2335,10 @@ public partial class MainWindow : Window
     void OnToolResetFromMachinesClick(object sender, RoutedEventArgs e)
     {
         _library.Tools = WorkshopLibraryStore.CreateDefault().Tools;
+        UsageLog.LogEvent("ui", "tool.reset", new Dictionary<string, object?>
+        {
+            ["toolCount"] = _library.Tools.Count,
+        });
         PersistLibrary();
         RefreshProcessModule();
     }
@@ -2411,7 +2434,8 @@ public partial class MainWindow : Window
             enableDrill: true,
             enableGroove: true,
             clearanceLargeMinShortMm: _clrLargeMinShort,
-            drillMaxExclusiveMm: _drillMaxExclusive);
+            drillMaxExclusiveMm: _drillMaxExclusive,
+            overrides: _camOverrides);
         _opsOverlay = OpsPlanner.AttachToNest(raw, places);
         _opsOverlay = ApplyAutomaticToolOffset(_opsOverlay);
         _opsOverlay = _opsOverlay
@@ -2873,6 +2897,7 @@ public partial class MainWindow : Window
             RegenerateNcFromCurrentOps();
             CanvasHost.InvalidateVisual();
         }
+        LogBridge("bridge.auto", result.Changed, result.Message);
         SetStatus(result.Message);
     }
 
@@ -2918,6 +2943,7 @@ public partial class MainWindow : Window
             RegenerateNcFromCurrentOps();
             CanvasHost.InvalidateVisual();
         }
+        LogBridge("bridge.autoAll", result.Changed, result.Message);
         SetStatus(result.Message);
     }
 
@@ -2937,6 +2963,7 @@ public partial class MainWindow : Window
             RegenerateNcFromCurrentOps();
             CanvasHost.InvalidateVisual();
         }
+        LogBridge("bridge.clear", result.Changed, result.Message);
         SetStatus(result.Message);
     }
 
@@ -3081,6 +3108,8 @@ public partial class MainWindow : Window
             RegenerateNcFromCurrentOps();
             CanvasHost.InvalidateVisual();
         }
+        if (result.Changed)
+            LogBridge("bridge.manual", true, result.Message);
         SetStatus(result.Message + (_profileBridges.Count > 0 ? $" · 共 {_profileBridges.Count} 个" : ""));
         return true;
     }
@@ -3101,20 +3130,62 @@ public partial class MainWindow : Window
             RegenerateNcFromCurrentOps();
             CanvasHost.InvalidateVisual();
         }
+        if (result.Changed)
+            LogBridge("bridge.delete", true, result.Message);
         SetStatus(result.Message + (_profileBridges.Count > 0 ? $" · 剩 {_profileBridges.Count} 个" : ""));
         return true;
+    }
+
+    void LogBridge(string action, bool changed, string? message)
+    {
+        UsageLog.LogEvent("ui", action, new Dictionary<string, object?>
+        {
+            ["changed"] = changed,
+            ["bridgeCount"] = _profileBridges.Count,
+            ["pairedCount"] = _profileBridges.Count(b => b.PairId is not null),
+            ["sheetIndex"] = _activeNestSheet,
+            ["message"] = message,
+        });
     }
 
     void CalculateOps(bool allSheets)
     {
         if (_session.Package is null || _nest is not { Ok: true })
         {
+            UsageLog.LogEvent("warn", "ops.run", new Dictionary<string, object?>
+            {
+                ["ok"] = false,
+                ["allSheets"] = allSheets,
+                ["hasPackage"] = _session.Package is not null,
+                ["hasNest"] = _nest is { Ok: true },
+            }, error: "nest required");
             SetStatus("刀路：请先完成密排");
             return;
         }
+        UsageLog.LogActionStart("ops.run", new Dictionary<string, object?>
+        {
+            ["allSheets"] = allSheets,
+            ["sheetIndex"] = _activeNestSheet,
+            ["machineId"] = SelectedMachineId(),
+            ["panelCount"] = _session.Package.Panels.Count,
+        });
         _opsAllSheets = allSheets;
         RebuildOpsOverlay();
         CanvasHost.InvalidateVisual();
+        UsageLog.LogActionResult("ops.run", new Dictionary<string, object?>
+        {
+            ["ok"] = true,
+            ["allSheets"] = allSheets,
+            ["sheetIndex"] = _activeNestSheet,
+            ["opCount"] = _opsOverlay.Count,
+            ["profile"] = _opsOverlay.Count(o => CamStrategy.Classify(o) == CamStrategyKind.Profile),
+            ["clearance"] = _opsOverlay.Count(o => CamStrategy.Classify(o) == CamStrategyKind.AreaClearance),
+            ["drill"] = _opsOverlay.Count(o => CamStrategy.Classify(o) == CamStrategyKind.Drilling),
+            ["guillotine"] = _opsOverlay.Count(o => CamStrategy.Classify(o) == CamStrategyKind.Guillotine),
+            ["bridgeCount"] = _profileBridges.Count,
+            ["summary"] = _opsSummary,
+            ["machineId"] = SelectedMachineId(),
+        });
         SetStatus(allSheets
             ? $"已计算全部大板 · {_opsSummary}"
             : $"已计算当前大板 {_activeNestSheet + 1} · {_opsSummary}");
@@ -3346,18 +3417,16 @@ public partial class MainWindow : Window
             return;
         }
         var places = CurrentNestPlacements();
-        var hits = NestValidator.FindPolygonCollisions(
-            _session.Package.Panels,
-            places,
-            ParseMm(NestSpacingBox.Text, 12),
-            PipIgnorePairs());
-        var msg = hits.Count == 0
-            ? "Clipper2 多边形 + 间距校验通过"
-            : $"发现 {hits.Count} 处多边形/间距冲突：\n" +
-              string.Join("\n", hits.Take(20).Select(h => $"{h.PanelIdA} × {h.PanelIdB} · S{h.SheetIndex + 1}"));
+        var gate = CheckNestExportGate(places);
+        var gaps = gate.Errors.Where(e => e.StartsWith("poly_gap", StringComparison.Ordinal)
+            || e.StartsWith("aabb_gap", StringComparison.Ordinal)).ToList();
+        var msg = gaps.Count == 0
+            ? "密排间距校验通过（按各张大板密排间距，含 0.5 mm 容差）"
+            : $"发现 {gaps.Count} 处多边形/间距冲突：\n" +
+              string.Join("\n", gaps.Take(20));
         SetStatus(msg.Replace("\n", " · "));
-        MessageBox.Show(this, msg, hits.Count == 0 ? "排版校验通过" : "排版校验失败",
-            MessageBoxButton.OK, hits.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        MessageBox.Show(this, msg, gaps.Count == 0 ? "排版校验通过" : "排版校验失败",
+            MessageBoxButton.OK, gaps.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
         CanvasHost.InvalidateVisual();
     }
 
@@ -3435,7 +3504,7 @@ public partial class MainWindow : Window
         var hits = NestValidator.FindPolygonCollisions(
             _session.Package.Panels,
             places,
-            ActiveSheetSpacingMm(),
+            NestExportGate.EffectiveClearance(ActiveSheetSpacingMm()),
             PipIgnorePairs());
         var set = new HashSet<string>(StringComparer.Ordinal);
         foreach (var h in hits)
@@ -3525,16 +3594,7 @@ public partial class MainWindow : Window
         var gateOk = true;
         if (full && _session.Package is not null)
         {
-            var spacing = _stockKinds.Count > 0
-                ? _stockKinds.Min(k => k.SpacingMm)
-                : ParseMm(NestSpacingBox.Text, 12);
-            var gate = NestExportGate.Check(
-                _session.Package.Panels,
-                CurrentNestPlacements(),
-                spacing,
-                allowAabbOverlap: UsesTrueShapeNest(),
-                partInPartSlots: _partInPartSlots);
-            gateOk = gate.Ok;
+            gateOk = CheckNestExportGate(CurrentNestPlacements()).Ok;
         }
         var engineLabel = _nest.Engine switch
         {
@@ -3545,7 +3605,7 @@ public partial class MainWindow : Window
         };
         NestReportMeta.Text =
             (_session.ManufacturingDirty
-                ? "材料已改 · 摆位仍是旧的 · 改完后点「重新密排」\n"
+                ? "板件已改 · 当前摆位仍可用（手摆也算）· 导出会按摆位重算刀路\n"
                 : "") +
             $"利用率 {util:0.0}%\n" +
             $"大板 {sheets} 张 · 已排 {_nest.Placements.Count} · 待用 {_nestHolding.Count} · 未排 {_nest.Unplaced.Count}\n" +
@@ -3606,8 +3666,14 @@ public partial class MainWindow : Window
     static string LeftoverBox(double v) =>
         v > 0 ? CamBox(v) : "";
 
-    void ClearManufacturingState()
+    /// <param name="keepRecutLibrary">
+    /// True when the project itself stays (add / remove a package, enter / leave recut mode):
+    /// the 补板库 belongs to the project, not to one nest result.
+    /// </param>
+    void ClearManufacturingState(bool keepRecutLibrary = false)
     {
+        if (!keepRecutLibrary)
+            ClearRecutLibrary();
         _lastReverse = null;
         _lastReverseFile = null;
         _nest = null;
@@ -3752,6 +3818,8 @@ public partial class MainWindow : Window
             },
             Bridges = _profileBridges.Select(ProjectSessionCodec.FromBridge).ToList(),
             Ops = _opsOverlay.Select(ProjectSessionCodec.FromOp).ToList(),
+            RecutPending = CaptureRecutPending(),
+            RecutRemnants = CaptureRecutRemnants(),
             LabelAnchors = _labelOverrides.Select(kv => new LabelAnchorDto
             {
                 PanelId = kv.Key,
@@ -3879,6 +3947,7 @@ public partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(a.PanelId)) continue;
             _labelOverrides[a.PanelId] = (a.LocalX, a.LocalY);
         }
+        ApplyRecutLibrary(state);
     }
 
     void ApplyCamSettings(ProjectCamSettings cam)
@@ -4216,6 +4285,7 @@ public partial class MainWindow : Window
     void SyncMachineSelection(string? id)
     {
         if (_syncingMachineCombo || string.IsNullOrWhiteSpace(id)) return;
+        var prev = SelectedMachineId();
         _syncingMachineCombo = true;
         try
         {
@@ -4232,6 +4302,37 @@ public partial class MainWindow : Window
         {
             _syncingMachineCombo = false;
         }
+        if (!string.IsNullOrWhiteSpace(prev) && !string.Equals(prev, id, StringComparison.Ordinal))
+        {
+            UsageLog.LogEvent("ui", "machine.apply", new Dictionary<string, object?>
+            {
+                ["from"] = prev,
+                ["to"] = id,
+                ["machineId"] = id,
+            });
+        }
+    }
+
+    void RefreshDirtyBanner()
+    {
+        if (DirtyBanner is null) return;
+        if (_selected is null || !_session.ManufacturingDirty)
+        {
+            DirtyBanner.Visibility = Visibility.Collapsed;
+            DirtyBanner.Text = "";
+            return;
+        }
+        DirtyBanner.Text = "板件已改 · 手摆或重排均可 · 导出会按当前摆位重算刀路";
+        DirtyBanner.Visibility = Visibility.Visible;
+    }
+
+    int CountUnplacedPanels()
+    {
+        if (_session.Package is null || _nest is not { Ok: true })
+            return 0;
+        var placed = _nest.Placements.Select(p => p.PanelId)
+            .ToHashSet(StringComparer.Ordinal);
+        return _session.Package.Panels.Count(p => !placed.Contains(p.PanelId));
     }
 
     void RefreshGeomRail()
@@ -4253,10 +4354,7 @@ public partial class MainWindow : Window
             $"{box.W:0.#} × {box.H:0.#} × {_selected.ThicknessMm:0.#} mm\n" +
             $"材料={_selected.Material ?? "—"} · 面={orient?.MillingFace ?? _selected.Side ?? "—"} · 木纹={_selected.GrainDirection ?? "—"}\n" +
             $"features: {_selected.Features.Count} · 画布拖拽编辑";
-        DirtyBanner.Text = _session.ManufacturingDirty
-            ? "Nest/CAM 已失效 — 请重新密排后再导出"
-            : "";
-        DirtyBanner.Visibility = _session.ManufacturingDirty ? Visibility.Visible : Visibility.Collapsed;
+        RefreshDirtyBanner();
         if (PanelEdit.IsSmallPanel(_selected, out var smallReason))
         {
             SmallPanelWarn.Text = $"小板警告：{smallReason}";
@@ -4344,13 +4442,13 @@ public partial class MainWindow : Window
 
     void OnUndoClick(object sender, RoutedEventArgs e)
     {
-        if (_session.TryUndo()) AfterHistoryRestore();
+        if (_session.TryUndo()) AfterHistoryRestore("undo");
         else SetStatus("没有可撤销的编辑");
     }
 
     void OnRedoClick(object sender, RoutedEventArgs e)
     {
-        if (_session.TryRedo()) AfterHistoryRestore();
+        if (_session.TryRedo()) AfterHistoryRestore("redo");
         else SetStatus("没有可重做的编辑");
     }
 
@@ -4555,7 +4653,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        ClearManufacturingState();
+        ClearManufacturingState(keepRecutLibrary: _session.Package is not null);
         if (_session.Package is null)
         {
             _stageChanging = true;
@@ -4938,10 +5036,14 @@ public partial class MainWindow : Window
 
     void OnPartListDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (_stage != "stock") return;
         if (e.OriginalSource is DependencyObject d && FindAncestor<ListBoxItem>(d) is null)
             return;
-        OpenPanelDraft();
+        if (_stage == "load")
+            OpenPanelEditor();
+        else if (_stage == "stock")
+            OpenPanelDraft();
+        else
+            return;
         e.Handled = true;
     }
 
@@ -4970,6 +5072,111 @@ public partial class MainWindow : Window
         dlg.SetStockKinds(DraftStockKinds(), material, thickness);
         if (dlg.ShowDialog() != true || dlg.ResultPanel is null) return;
         AcceptDraftPanel(dlg.ResultPanel);
+    }
+
+    void OnEditPanelClick(object sender, RoutedEventArgs e) => OpenPanelEditor();
+
+    /// <summary>
+    /// 编辑板件: open the draft canvas in editor mode on the selected panel. Writes back through
+    /// <see cref="ApplyEditedPanel"/>, which keeps the nest when only holes / grooves / pockets moved.
+    /// </summary>
+    void OpenPanelEditor()
+    {
+        if (_session.Package is null)
+        {
+            SetStatus("请先载入方案");
+            return;
+        }
+        if (_selected is null)
+        {
+            SetStatus("先在左侧选一块板，再「编辑板件…」", StatusKind.Warning);
+            return;
+        }
+        var target = _selected;
+
+        // Same-spec siblings (grouped as one row in 板材页) — ask once, before the canvas opens.
+        var key = PackageMerge.StockKey(target);
+        var siblings = _session.Package.Panels
+            .Where(p => p.PanelId != target.PanelId && PackageMerge.StockKey(p) == key)
+            .ToList();
+        var applyToSiblings = false;
+        if (siblings.Count > 0)
+        {
+            var names = string.Join("、", siblings.Take(4).Select(p => p.DisplayTitle));
+            if (siblings.Count > 4) names += $" 等 {siblings.Count} 块";
+            var ans = MessageBox.Show(this,
+                $"方案里还有 {siblings.Count} 块同规格板件（{names}）。\n\n是 = 改动同时写到这 {siblings.Count + 1} 块\n否 = 只改 {target.DisplayTitle}",
+                "编辑板件", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+            if (ans == MessageBoxResult.Cancel) return;
+            applyToSiblings = ans == MessageBoxResult.Yes;
+        }
+
+        var dlg = new PanelDraftWindow { Owner = this };
+        dlg.PrepareEdit(target);
+        dlg.SetStockKinds(DraftStockKinds(), target.Material, target.ThicknessMm > 0 ? target.ThicknessMm : 18);
+        dlg.LockKind();
+        dlg.ShowDialog();
+        // Confirmed also covers "写回并关闭" chosen from the close prompt (no DialogResult there).
+        if (!dlg.Confirmed || dlg.ResultPanel is null) return;
+        ApplyEditedPanel(target, dlg.ResultPanel, applyToSiblings ? siblings : []);
+    }
+
+    void ApplyEditedPanel(PanelPart before, PanelPart after, IReadOnlyList<PanelPart> siblings)
+    {
+        if (_session.Package is null) return;
+        var impact = PanelEdit.ClassifyChange(before, after);
+        UsageLog.LogEvent("ui", "panel.edit.writeback", new Dictionary<string, object?>
+        {
+            ["panelId"] = after.PanelId,
+            ["name"] = after.DisplayTitle,
+            ["impact"] = impact.ToString(),
+            ["siblings"] = siblings.Count,
+            ["featureCount"] = after.Features.Count,
+            ["featureCountBefore"] = before.Features.Count,
+            ["outlinePts"] = after.Outline.Points.Count,
+            ["renest"] = impact == EditImpact.Nest,
+        });
+        if (impact == EditImpact.None)
+        {
+            SetStatus($"{after.DisplayTitle} 无改动");
+            return;
+        }
+
+        // One history step for the whole write-back, however many siblings ride along.
+        _session.ReplacePanel(after);
+        foreach (var sib in siblings)
+            _session.ReplacePanel(PanelEdit.ReplaceGeometry(sib, after), recordHistory: false);
+        _selected = after;
+        var count = 1 + siblings.Count;
+        var scope = count > 1 ? $"{count} 块" : after.DisplayTitle;
+
+        if (impact == EditImpact.Nest)
+        {
+            InvalidateManufacturingOutputs($"编辑板件 {scope} · 外框/通孔已变");
+            BindPartList(after.PanelId);
+            RefreshGeomRail();
+            RefreshNestReport();
+            UpdateCanvasHint();
+            CanvasHost.InvalidateVisual();
+            SetStatus($"已写回 {scope} · 外框/通孔已改，密排失效 · 请回板材页「初始密排」", StatusKind.Warning);
+            return;
+        }
+
+        // Holes / grooves / pockets only: placements stay valid, re-plan toolpaths in place.
+        // With a nest on screen the rebuilt ops are the truth again, so the stale banner can go.
+        RebuildOpsOverlay();
+        if (_nest is { Ok: true })
+            _session.MarkManufacturingClean();
+        BindPartList(after.PanelId);
+        RefreshGeomRail();
+        RefreshWorkflowDots();
+        RefreshOneClickExport();
+        RefreshNestReport();
+        UpdateCanvasHint();
+        CanvasHost.InvalidateVisual();
+        SetStatus(_nest is { Ok: true }
+            ? $"已写回 {scope} · 仅特征改动，密排保留 · 刀路已重算"
+            : $"已写回 {scope} · 仅特征改动");
     }
 
     void OnNestCreatePanelClick(object sender, RoutedEventArgs e)
@@ -5067,6 +5274,15 @@ public partial class MainWindow : Window
         _nestSelected.Clear();
         _nestSelected.Add(panel.PanelId);
         _selected = panel;
+        UsageLog.LogEvent("ui", "draft.accept", new Dictionary<string, object?>
+        {
+            ["panelId"] = panel.PanelId,
+            ["name"] = panel.DisplayTitle,
+            ["material"] = panel.Material,
+            ["thicknessMm"] = panel.ThicknessMm,
+            ["featureCount"] = panel.Features.Count,
+            ["dest"] = "holding",
+        });
         RefreshPartList(selectId: panel.PanelId);
         RefreshStockMaterialCards();
         RefreshNestReport();
@@ -5133,6 +5349,15 @@ public partial class MainWindow : Window
         }
 
         _session.ReplacePanel(panel);
+        UsageLog.LogEvent("ui", "draft.accept", new Dictionary<string, object?>
+        {
+            ["panelId"] = panel.PanelId,
+            ["name"] = panel.DisplayTitle,
+            ["material"] = panel.Material,
+            ["thicknessMm"] = panel.ThicknessMm,
+            ["featureCount"] = panel.Features.Count,
+            ["dest"] = "package",
+        });
         InvalidateManufacturingOutputs("create panel");
         RefreshPartList(selectId: panel.PanelId);
         RefreshStockMaterialCards();
@@ -5239,12 +5464,22 @@ public partial class MainWindow : Window
         {
             _locked.Remove(id);
             LockPlaceBtn.Content = "锁定摆位";
+            UsageLog.LogEvent("ui", "nest.unlock", new Dictionary<string, object?>
+            {
+                ["panelId"] = id,
+                ["lockedCount"] = _locked.Count,
+            });
             SetStatus($"已解锁摆位 · {id}");
         }
         else
         {
             _locked.Add(id);
             LockPlaceBtn.Content = "解锁摆位";
+            UsageLog.LogEvent("ui", "nest.lock", new Dictionary<string, object?>
+            {
+                ["panelId"] = id,
+                ["lockedCount"] = _locked.Count,
+            });
             SetStatus($"已锁定摆位 · {id}");
         }
         CanvasHost.InvalidateVisual();
@@ -5270,6 +5505,13 @@ public partial class MainWindow : Window
         if (_session.Package is null)
         {
             SetStatus("请先载入方案");
+            return;
+        }
+        if (InRecutMode)
+        {
+            // Recut stock is finite (remnants + approved full sheets); the production
+            // engines would clone a full sheet forever and defeat the "ask first" rule.
+            await RunRecutNestAsync();
             return;
         }
 
@@ -5437,29 +5679,16 @@ public partial class MainWindow : Window
                 }
             }
 
-            var collisions = NestValidator.FindPolygonCollisions(
-                _session.Package.Panels,
-                CurrentNestPlacements(),
-                spacing,
-                PipIgnorePairs());
-            foreach (var c in collisions)
+            var gate = CheckNestExportGate(CurrentNestPlacements());
+            foreach (var err in gate.Errors.Where(e => e.StartsWith("poly_gap", StringComparison.Ordinal)))
             {
                 _nest.Warnings.Add(new NestWarningMsg
                 {
                     Code = "poly_gap",
-                    Message = $"polygon spacing/collision {c.PanelIdA} × {c.PanelIdB} on sheet {c.SheetIndex}",
-                    PanelIdA = c.PanelIdA,
-                    PanelIdB = c.PanelIdB,
-                    SheetIndex = c.SheetIndex,
+                    Message = err,
                 });
             }
 
-            var gate = NestExportGate.Check(
-                _session.Package.Panels,
-                CurrentNestPlacements(),
-                spacing,
-                allowAabbOverlap: UsesTrueShapeNest(),
-                partInPartSlots: _partInPartSlots);
             if (!gate.Ok)
             {
                 foreach (var err in gate.Errors.Take(12))
@@ -5987,7 +6216,7 @@ public partial class MainWindow : Window
             RememberRecentFile(path, "package");
         }
 
-        ClearManufacturingState();
+        ClearManufacturingState(keepRecutLibrary: true);
         _module = "production";
         HighlightModule();
         ApplyModuleVisibility();
@@ -6047,7 +6276,7 @@ public partial class MainWindow : Window
         HighlightModule();
         ApplyModuleVisibility();
         BindPackage();
-        RefreshRecutPanelList();
+        RefreshRemnantsModule();
         RememberRecentFile(path, "anc");
         MarkWorkSaved();
         var contours = result.Ops.Count(o => o.Op == "contour");
@@ -6103,7 +6332,7 @@ public partial class MainWindow : Window
         if (!ConfirmDiscardUnsavedWork("打开另一个工程")) return;
         var dlg = new OpenFileDialog
         {
-            Filter = "OmniCam project|project.db;*.db|All|*.*",
+            Filter = "OmniCam 工程 (*.db)|*.db|所有文件|*.*",
             Title = "打开工程",
         };
         if (dlg.ShowDialog() != true) return;
@@ -6144,11 +6373,26 @@ public partial class MainWindow : Window
         }
 
         ClearManufacturingState();
+        var places = ApplyProjectDocument(doc, projectPath, projectPath);
+        RememberRecentFile(projectPath, "project");
+        MarkWorkSaved();
+        SetStatus($"已打开工程 {doc.Name} · {_session.Package!.Panels.Count} 块板 · 摆位 {places} · 刀路 {_opsOverlay.Count}", StatusKind.Success);
+        ShowImportDialog(true, "打开工程", Path.GetFileName(projectPath), result,
+            $"工程名: {doc.Name}\n机型: {doc.MachineId}\n已恢复摆位: {places}\n刀路: {_opsOverlay.Count}\n桥: {_profileBridges.Count}");
+    }
+
+    /// <summary>
+    /// Bring a loaded <see cref="ProjectDocument"/> onto screen: session, nest, ops, stage.
+    /// The package must already be open in <see cref="_session"/>. Shared by open-project and
+    /// by leaving recut mode (which restores an in-memory document). Returns restored placements.
+    /// </summary>
+    int ApplyProjectDocument(ProjectDocument doc, string? projectDbPath, string? nameHintPath)
+    {
         _session.MachineId = doc.MachineId;
-        _session.SetProjectDbPath(projectPath);
+        _session.SetProjectDbPath(projectDbPath);
         _session.ProjectName = string.IsNullOrWhiteSpace(doc.Name) ? null : doc.Name;
         if (string.IsNullOrWhiteSpace(_session.ProjectName))
-            _session.SuggestProjectName(_session.Package?.JobId, projectPath);
+            _session.SuggestProjectName(_session.Package?.JobId, nameHintPath);
         SyncMachineSelection(doc.MachineId);
 
         var session = ProjectSessionCodec.Deserialize(doc.SessionJson);
@@ -6210,12 +6454,9 @@ public partial class MainWindow : Window
         else if (_exportFiles.Count == 0 && !string.IsNullOrWhiteSpace(doc.NcText))
             NcPreview.Text = doc.NcText;
         UpdateNestSheetChrome();
+        UpdateRecutChrome();
         CanvasHost.InvalidateVisual();
-        RememberRecentFile(projectPath, "project");
-        MarkWorkSaved();
-        SetStatus($"已打开工程 {doc.Name} · {_session.Package!.Panels.Count} 块板 · 摆位 {places.Count} · 刀路 {_opsOverlay.Count}", StatusKind.Success);
-        ShowImportDialog(true, "打开工程", Path.GetFileName(projectPath), result,
-            $"工程名: {doc.Name}\n机型: {doc.MachineId}\n已恢复摆位: {places.Count}\n刀路: {_opsOverlay.Count}\n桥: {_profileBridges.Count}");
+        return places.Count;
     }
 
     /// <summary>Import result popup — success/fail + basic package stats.</summary>
@@ -6337,26 +6578,51 @@ public partial class MainWindow : Window
 
     void OnSaveProjectClick(object sender, RoutedEventArgs e) => TrySaveProjectInteractive();
 
-    /// <summary>Save dialog + write; false when the operator cancelled or nothing is loaded.</summary>
-    bool TrySaveProjectInteractive()
+    void OnSaveProjectAsClick(object sender, RoutedEventArgs e) => TrySaveProjectInteractive(forceDialog: true);
+
+    /// <summary>
+    /// Write the open project. Uses the current .db when one is known; otherwise (or when
+    /// <paramref name="forceDialog"/>) shows Save As. False if cancelled or nothing is loaded.
+    /// </summary>
+    bool TrySaveProjectInteractive(bool forceDialog = false)
     {
         if (_session.Package is null || string.IsNullOrWhiteSpace(_session.PackageJson))
         {
             SetStatus("请先载入方案再保存工程");
             return false;
         }
+        if (InRecutMode && !ConfirmLeaveRecutForSave())
+            return false;
 
-        var defaultName = ExportNaming.FileStem(_session.ResolvedProjectName) + ".db";
-        var dlg = new SaveFileDialog
+        string? path = !forceDialog && !string.IsNullOrWhiteSpace(_session.ProjectDbPath)
+            ? _session.ProjectDbPath
+            : null;
+        if (path is null)
         {
-            Filter = "OmniCam project|project.db;*.db|SQLite|*.db",
-            FileName = defaultName,
-            Title = "保存工程",
-        };
-        if (!string.IsNullOrEmpty(_session.ProjectDbPath))
-            dlg.InitialDirectory = Path.GetDirectoryName(_session.ProjectDbPath);
-        if (dlg.ShowDialog() != true) return false;
+            var defaultName = !string.IsNullOrWhiteSpace(_session.ProjectDbPath)
+                ? Path.GetFileName(_session.ProjectDbPath)
+                : ExportNaming.FileStem(_session.ResolvedProjectName) + ".db";
+            var dlg = new SaveFileDialog
+            {
+                Filter = "OmniCam 工程 (*.db)|*.db|所有文件|*.*",
+                DefaultExt = "db",
+                AddExtension = true,
+                FileName = defaultName,
+                Title = forceDialog ? "另存为" : "保存工程",
+                OverwritePrompt = true,
+            };
+            if (!string.IsNullOrEmpty(_session.ProjectDbPath))
+                dlg.InitialDirectory = Path.GetDirectoryName(_session.ProjectDbPath);
+            if (dlg.ShowDialog() != true) return false;
+            path = dlg.FileName;
+        }
 
+        return WriteProject(path);
+    }
+
+    /// <summary>Everything on screen as one saveable document (also the recut-mode parking slot).</summary>
+    ProjectDocument BuildProjectDocument(string name)
+    {
         var nestJson = _nest is { Ok: true }
             ? SqliteProjectStore.SerializeNest(_nest.Placements.Select(p => new NestPlacementDto
             {
@@ -6367,48 +6633,54 @@ public partial class MainWindow : Window
                 RotationDeg = p.RotationDeg,
             }))
             : null;
-
         var session = CaptureProjectSession();
+        return new ProjectDocument
+        {
+            Name = name,
+            PackageJson = _session.PackageJson!,
+            SourceSnapshotJson = _session.SourceSnapshotJson,
+            MachineId = SelectedMachineId(),
+            NestPlacementsJson = nestJson,
+            NcText = string.IsNullOrWhiteSpace(NcPreview.Text) || NcPreview.Text.StartsWith("//")
+                ? null
+                : NcPreview.Text,
+            SessionJson = ProjectSessionCodec.Serialize(session),
+            UpdatedAt = DateTimeOffset.UtcNow,
+        };
+    }
+
+    bool WriteProject(string path)
+    {
         var name = string.IsNullOrWhiteSpace(_session.ProjectName)
-            ? Path.GetFileNameWithoutExtension(dlg.FileName)
+            ? Path.GetFileNameWithoutExtension(path)
             : _session.ResolvedProjectName;
         _session.ProjectName = name;
         SyncProjectNameBox();
+        var doc = BuildProjectDocument(name);
+        var nestJson = doc.NestPlacementsJson;
         try
         {
-            _store.Save(dlg.FileName, new ProjectDocument
-            {
-                Name = name,
-                PackageJson = _session.PackageJson!,
-                SourceSnapshotJson = _session.SourceSnapshotJson,
-                MachineId = SelectedMachineId(),
-                NestPlacementsJson = nestJson,
-                NcText = string.IsNullOrWhiteSpace(NcPreview.Text) || NcPreview.Text.StartsWith("//")
-                    ? null
-                    : NcPreview.Text,
-                SessionJson = ProjectSessionCodec.Serialize(session),
-                UpdatedAt = DateTimeOffset.UtcNow,
-            });
+            _store.Save(path, doc);
         }
         catch (Exception ex)
         {
             // Locked file, full disk, read-only USB stick: report and keep the session (still unsaved).
-            UsageLog.LogActionResult("project.save", new Dictionary<string, object?> { ["path"] = dlg.FileName }, error: ex.Message);
+            UsageLog.LogActionResult("project.save", new Dictionary<string, object?> { ["path"] = path }, error: ex.Message);
             SetStatus($"保存工程失败：{ex.Message}", StatusKind.Error);
-            ShowToast("工程没有保存", $"{Path.GetFileName(dlg.FileName)}：{ex.Message}\n换一个位置再试；当前工作仍在窗口里。", StatusKind.Error);
+            ShowToast("工程没有保存", $"{Path.GetFileName(path)}：{ex.Message}\n换一个位置再试；当前工作仍在窗口里。", StatusKind.Error);
             return false;
         }
-        _session.SetProjectDbPath(dlg.FileName);
+        _session.SetProjectDbPath(path);
         _session.MachineId = SelectedMachineId();
         _session.LabelerMachineId = SelectedLabelerMachineId();
-        RememberRecentFile(dlg.FileName, "project");
+        RememberRecentFile(path, "project");
         MarkWorkSaved();
-        SetStatus($"已保存工程 → {dlg.FileName}");
+        SetStatus($"已保存工程 → {path}");
         UsageLog.LogActionResult("project.save", new Dictionary<string, object?>
         {
             ["ok"] = true,
-            ["path"] = dlg.FileName,
-            ["panelCount"] = _session.Package.Panels.Count,
+            ["path"] = path,
+            ["panelCount"] = _session.Package!.Panels.Count,
             ["hasNest"] = nestJson is not null,
             ["opCount"] = _opsOverlay.Count,
             ["bridgeCount"] = _profileBridges.Count,
@@ -6470,39 +6742,76 @@ public partial class MainWindow : Window
     {
         RebuildOpsOverlay();
         var report = RunPreflight();
+        LogPreflight(report, "manual");
         MessageBox.Show(this, NcPreflight.Format(report), report.Ok ? "预检通过" : "预检失败",
             MessageBoxButton.OK, report.Ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
 
+    void LogPreflight(
+        PreflightReport report,
+        string reason,
+        IEnumerable<string>? files = null,
+        string? extra = null,
+        string? error = null)
+    {
+        var payload = UsageLog.SummarizePreflight(
+            report.Ok,
+            reason,
+            report.Issues.Select(i => i.Code).Distinct(),
+            report.Issues.Count,
+            files,
+            extra);
+        UsageLog.LogActionResult("export.preflight", payload, error);
+    }
+
     bool GuardExportPreflight(IReadOnlyList<ExportNcFile>? files = null)
     {
-        if (_session.ManufacturingDirty || _nest is not { Ok: true })
+        if (_nest is not { Ok: true, Placements.Count: > 0 })
         {
             MessageBox.Show(this,
-                "板件已编辑，或尚未完成有效密排。\n请重新密排并生成刀路后再导出。",
-                "Nest/CAM 已失效",
+                "还没有大板上的摆位。\n请密排，或把板拖到大板上后再导出。",
+                "没有摆位",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
             return false;
         }
 
+        var unplaced = CountUnplacedPanels();
+        if (unplaced > 0)
+        {
+            var go = MessageBox.Show(this,
+                $"还有 {unplaced} 块未上板，导出只会带已经摆上的板。\n继续导出吗？",
+                "部分未排",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (go != MessageBoxResult.Yes) return false;
+        }
+
         if (_session.Package is not null)
         {
-            var clearance = ParseMm(NestSpacingBox.Text, 12);
             var places = CurrentNestPlacements();
-            if (files is { Count: > 0 })
-            {
-                var sheets = files.Select(f => f.SheetIndex).ToHashSet();
-                places = places.Where(p => sheets.Contains(p.SheetIndex)).ToList();
-            }
-            var nestGate = NestExportGate.Check(
+            IReadOnlyCollection<int>? sheets = files is { Count: > 0 }
+                ? files.Select(f => f.SheetIndex).ToHashSet()
+                : null;
+            var nestGate = NestExportGate.CheckForExport(
                 _session.Package.Panels,
                 places,
-                clearance,
+                NestFallbackClearanceMm(),
+                exportSheetIndexes: sheets,
                 allowAabbOverlap: UsesTrueShapeNest(),
-                partInPartSlots: _partInPartSlots);
+                partInPartSlots: _partInPartSlots,
+                sheetClearanceMm: NestSheetClearances());
             if (!nestGate.Ok)
             {
+                UsageLog.LogActionResult("export.nestGate", new Dictionary<string, object?>
+                {
+                    ["ok"] = false,
+                    ["sheetFilter"] = sheets?.ToArray(),
+                    ["placeCount"] = places.Count,
+                    ["fileCount"] = files?.Count ?? 0,
+                    ["errors"] = nestGate.Errors.Take(20).ToList(),
+                    ["files"] = files?.Select(f => f.FileName).ToArray(),
+                }, error: string.Join("; ", nestGate.Errors.Take(8)));
                 MessageBox.Show(this,
                     "密排间距/碰撞/混组硬门未通过，禁止导出：\n\n" +
                     string.Join("\n", nestGate.Errors.Take(20)),
@@ -6514,9 +6823,17 @@ public partial class MainWindow : Window
         }
 
         RebuildOpsOverlay();
+        _session.MarkManufacturingClean();
+        RefreshDirtyBanner();
+        RefreshNestReport(full: false);
         var report = RunPreflight(files, allSheets: files is null);
         RefreshPreflightMeta();
-        if (report.Ok) return true;
+        var fileNames = files?.Select(f => f.FileName);
+        if (report.Ok)
+        {
+            LogPreflight(report, "export", fileNames);
+            return true;
+        }
 
         // Hard CAM safety errors cannot be overridden (pocket/tool gates).
         var hard = report.Issues.Where(i => i.Level == "error" && i.Code is
@@ -6524,6 +6841,8 @@ public partial class MainWindow : Window
             or "groove_too_deep" or "depth_spoilboard" or "no_registration").ToList();
         if (hard.Count > 0)
         {
+            LogPreflight(report, "export.hard", fileNames, extra: "blocked",
+                error: string.Join("; ", hard.Select(i => i.Code).Distinct().Take(8)));
             MessageBox.Show(this,
                 "预检硬错误，禁止导出：\n\n" + NcPreflight.Format(new PreflightReport { Ok = false, Issues = hard }),
                 "预检未通过",
@@ -6535,6 +6854,7 @@ public partial class MainWindow : Window
         var dlg = new OverrideReasonWindow(NcPreflight.Format(report)) { Owner = this };
         if (dlg.ShowDialog() != true)
         {
+            LogPreflight(report, "export.cancel", fileNames, extra: "operator cancelled");
             SetStatus("已取消导出 · 预检未通过", StatusKind.Warning);
             return false;
         }
@@ -6762,13 +7082,34 @@ public partial class MainWindow : Window
         var html = JobSheetBuilder.BuildHtml(
             _session.Package, profile, places, _locked,
             NcPreflight.Format(RunPreflight()), EstimateUtilization(), _nest.Unplaced.Count);
-        var bundle = SheetBundleBuilder.Build(
-            _session.Package,
-            places,
-            _opsOverlay,
-            profile,
-            jobSheetHtml: html,
-            recipe: CurrentPostRecipe());
+        ExportBundle bundle;
+        var overridesBefore = _camOverrides;
+        try
+        {
+            bundle = SheetBundleBuilder.BuildWithRepair(
+                _session.Package,
+                places,
+                plan: ov =>
+                {
+                    // Same road as the CAM stage: overrides → RebuildOpsOverlay → _opsOverlay.
+                    _camOverrides = ov;
+                    RebuildOpsOverlay();
+                    return _opsOverlay;
+                },
+                profile,
+                ExportVerifierInstance,
+                RepairPlannerInstance,
+                jobSheetHtml: html,
+                recipe: CurrentPostRecipe());
+        }
+        catch (ExportVerifyException ex)
+        {
+            _camOverrides = overridesBefore;
+            RebuildOpsOverlay();
+            ShowVerifyBlocked(ex);
+            return;
+        }
+        NoteRepairOutcome(bundle.RepairTrail, bundle.Overrides);
         var written = SheetBundleBuilder.WriteToDirectory(bundle, dir);
         if (!string.IsNullOrWhiteSpace(_session.PackageJson))
             File.WriteAllText(Path.Combine(dir, bundle.JobId + ".cut.json"), _session.PackageJson);
@@ -6890,6 +7231,15 @@ public partial class MainWindow : Window
             WorkerBadge.Text = "计算引擎 · 本地";
             WorkerBadge.Foreground = (Brush)FindResource("TextMutedBrush");
             WorkerBadge.ToolTip = "排版与刀路在本机计算。独立 Worker 进程未运行：" + (_worker.LastError ?? "未知原因");
+            if (announce || !_workerFailLogged)
+            {
+                UsageLog.LogEvent("warn", "worker.local", new Dictionary<string, object?>
+                {
+                    ["announce"] = announce,
+                    ["error"] = _worker.LastError,
+                }, error: _worker.LastError);
+                _workerFailLogged = true;
+            }
             if (announce)
                 SetStatus("计算引擎自检：本机计算可用，独立 Worker 未运行（" + (_worker.LastError ?? "未知原因") + "）", StatusKind.Warning);
             return;
@@ -6911,6 +7261,15 @@ public partial class MainWindow : Window
             WorkerBadge.Text = "计算引擎 · 本地";
             WorkerBadge.Foreground = (Brush)FindResource("WarningBrush");
             WorkerBadge.ToolTip = "独立 Worker 进程无响应：" + ex.Message;
+            if (announce || !_workerFailLogged)
+            {
+                UsageLog.LogEvent("warn", "worker.timeout", new Dictionary<string, object?>
+                {
+                    ["announce"] = announce,
+                    ["message"] = ex.Message,
+                }, error: ex.Message);
+                _workerFailLogged = true;
+            }
             if (announce)
                 SetStatus("计算引擎自检：Worker 无响应，继续使用本机计算（" + ex.Message + "）", StatusKind.Warning);
         }
@@ -7013,7 +7372,10 @@ public partial class MainWindow : Window
             {
                 var hitPanel = _session.Package.Panels.FirstOrDefault(p => p.PanelId == holdId);
                 if (hitPanel is not null)
+                {
                     PartList.SelectedItem = hitPanel;
+                    BringPartListItemIntoView(hitPanel);
+                }
                 if (_stage == "ops")
                 {
                     SetStatus($"待用 · {holdId}");
@@ -7505,7 +7867,19 @@ public partial class MainWindow : Window
         }
 
         var hitId = HitTestNest(_lastCanvasX, _lastCanvasY);
-        if (hitId is null) return;
+        if (hitId is null)
+        {
+            // Blank area of the sheet: the only thing to do here is keep the whole sheet as a remnant.
+            if (!InRecutMode && ScreenOverNestSheet(_lastCanvasX, _lastCanvasY))
+            {
+                _nestContextPanelId = null;
+                _nestContextInHold = false;
+                ShowNestSheetContextMenu();
+                _nestRightHandled = true;
+                e.Handled = true;
+            }
+            return;
+        }
         if (!_nestSelected.Contains(hitId))
         {
             _nestSelected.Clear();
@@ -7543,6 +7917,15 @@ public partial class MainWindow : Window
     void ShowNestHoldContextMenu()
     {
         if (TryFindResource("NestHoldContextMenu") is not ContextMenu menu)
+            return;
+        menu.PlacementTarget = CanvasPane;
+        menu.Placement = PlacementMode.MousePoint;
+        menu.IsOpen = true;
+    }
+
+    void ShowNestSheetContextMenu()
+    {
+        if (TryFindResource("NestSheetContextMenu") is not ContextMenu menu)
             return;
         menu.PlacementTarget = CanvasPane;
         menu.Placement = PlacementMode.MousePoint;
@@ -8170,6 +8553,7 @@ public partial class MainWindow : Window
             foreach (var id in ids)
                 _nestSelected.Remove(id);
             RefreshNestReport();
+            LogNestPlace("hold", panelId, n, blocked: false);
             SetStatus(n <= 1
                 ? $"已移入待用区 · {panel.DisplayPartName}"
                 : $"已移入待用区 · {n} 件");
@@ -8217,11 +8601,35 @@ public partial class MainWindow : Window
         (ox, oy) = ClampPipChild(panelId, panel, ox, oy, place.RotationDeg);
         place.OffsetX = ox;
         place.OffsetY = oy;
+        LogNestPlace("move", panelId, 1, blocked, place.SheetIndex, ox, oy, place.RotationDeg);
         SetStatus(blocked
             ? "冲突，已退回原位"
             : $"已移动 · {panel.DisplayPartName}");
         RefreshNestReport(full: false);
         CanvasHost.InvalidateVisual();
+    }
+
+    void LogNestPlace(
+        string dest,
+        string panelId,
+        int count,
+        bool blocked,
+        int? sheetIndex = null,
+        double? ox = null,
+        double? oy = null,
+        double? rot = null)
+    {
+        UsageLog.LogEvent(blocked ? "warn" : "ui", "nest.place", new Dictionary<string, object?>
+        {
+            ["dest"] = dest,
+            ["panelId"] = panelId,
+            ["count"] = count,
+            ["blocked"] = blocked,
+            ["sheetIndex"] = sheetIndex ?? _activeNestSheet,
+            ["ox"] = ox,
+            ["oy"] = oy,
+            ["rot"] = rot,
+        }, error: blocked ? "blocked" : null);
     }
 
     void CaptureNestGroupOrig()
@@ -8269,6 +8677,77 @@ public partial class MainWindow : Window
         finally
         {
             _syncingNestSelection = false;
+        }
+        if (panel is not null)
+            BringPartListItemIntoView(panel);
+    }
+
+    void BringPartListItemIntoView(object item, bool retried = false)
+    {
+        if (PartList is null) return;
+        ExpandPartListGroupsFor(item);
+        PartList.UpdateLayout();
+        LeftRailScroll?.UpdateLayout();
+
+        if (PartList.ItemContainerGenerator.ContainerFromItem(item) is not FrameworkElement row)
+        {
+            if (!retried)
+                Dispatcher.BeginInvoke(() => BringPartListItemIntoView(item, retried: true), DispatcherPriority.Loaded);
+            return;
+        }
+
+        for (DependencyObject? d = row; d is not null; d = VisualTreeHelper.GetParent(d))
+        {
+            if (d is Expander expander)
+                expander.IsExpanded = true;
+        }
+
+        row.UpdateLayout();
+        var rail = LeftRailScroll ?? FindAncestor<ScrollViewer>(PartList);
+        if (rail is null || rail.ViewportHeight <= 0)
+        {
+            row.BringIntoView();
+            return;
+        }
+
+        Point topLeft;
+        Point bottomLeft;
+        try
+        {
+            var xf = row.TransformToAncestor(rail);
+            topLeft = xf.Transform(new Point(0, 0));
+            bottomLeft = xf.Transform(new Point(0, row.ActualHeight));
+        }
+        catch (InvalidOperationException)
+        {
+            row.BringIntoView();
+            return;
+        }
+
+        var next = RailScroll.OffsetToReveal(rail.VerticalOffset, rail.ViewportHeight, topLeft.Y, bottomLeft.Y);
+        if (Math.Abs(next - rail.VerticalOffset) > 0.5)
+            rail.ScrollToVerticalOffset(next);
+    }
+
+    void ExpandPartListGroupsFor(object item)
+    {
+        string? package = null;
+        string? assembly = null;
+        if (item is PanelPart panel)
+        {
+            package = panel.DisplayPackage;
+            assembly = panel.DisplayAssembly;
+        }
+
+        if (package is null && assembly is null) return;
+        foreach (var expander in FindVisualChildren<Expander>(PartList))
+        {
+            if (expander.DataContext is not CollectionViewGroup group) continue;
+            var name = group.Name?.ToString();
+            if (name is null) continue;
+            if (string.Equals(name, package, StringComparison.Ordinal)
+                || string.Equals(name, assembly, StringComparison.Ordinal))
+                expander.IsExpanded = true;
         }
     }
 
@@ -8356,11 +8835,13 @@ public partial class MainWindow : Window
                 place.OffsetY = orig.Oy;
                 place.RotationDeg = orig.Rot;
             }
+            LogNestPlace("move", grabbedId, _nestGroupOrig.Count, blocked: true);
             SetStatus("冲突，已退回原位");
         }
         else
         {
             var grabbed = byId.TryGetValue(grabbedId, out var gp) ? gp.DisplayPartName : grabbedId;
+            LogNestPlace("move", grabbedId, _nestGroupOrig.Count, blocked: false);
             SetStatus($"已移动 {_nestGroupOrig.Count} 件 · {grabbed}");
         }
         RefreshNestReport(full: false);
@@ -8411,12 +8892,22 @@ public partial class MainWindow : Window
                 "待用区",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
+            UsageLog.LogEvent("warn", "nest.place", new Dictionary<string, object?>
+            {
+                ["dest"] = "sheet",
+                ["panelId"] = panelId,
+                ["count"] = places.Count,
+                ["blocked"] = true,
+                ["why"] = "material",
+                ["sheetIndex"] = _activeNestSheet,
+            }, error: "material mismatch");
             SetStatus($"材料不符 · 当前大板是 {sheetKey}");
             return;
         }
 
         if (_holdPreviewBlocked && AllowOverlapChk.IsChecked != true)
         {
+            LogNestPlace("sheet", panelId, places.Count, blocked: true);
             SetStatus($"位置放不下 · {places.Count} 件仍留在待用区");
             return;
         }
@@ -8434,6 +8925,7 @@ public partial class MainWindow : Window
             });
             _nestSelected.Add(p.PanelId);
         }
+        LogNestPlace("sheet", panelId, places.Count, blocked: false);
         SetStatus(places.Count > 1
             ? $"已放回大板 {_activeNestSheet + 1} · {places.Count} 件"
             : $"已放回大板 {_activeNestSheet + 1} · {panel.DisplayPartName}");
@@ -8481,12 +8973,55 @@ public partial class MainWindow : Window
         return SheetInsets.Uniform(ParseMm(NestBorderBox.Text, 15));
     }
 
+    IReadOnlyList<NestBlockedRect>? CurrentSheetBlocked()
+    {
+        if (_activeNestSheet >= 0 && _activeNestSheet < _nestSheetsUsed.Count)
+        {
+            var blocked = _nestSheetsUsed[_activeNestSheet].Blocked;
+            return blocked.Count > 0 ? blocked : null;
+        }
+
+        return null;
+    }
+
     double ActiveSheetSpacingMm()
     {
         if (_activeNestSheet >= 0 && _activeNestSheet < _nestSheetsUsed.Count
             && _nestSheetsUsed[_activeNestSheet].SpacingMm > 0)
             return _nestSheetsUsed[_activeNestSheet].SpacingMm;
+        return NestFallbackClearanceMm();
+    }
+
+    double NestFallbackClearanceMm()
+    {
+        if (_stockKinds.Count > 0)
+            return _stockKinds.Min(k => k.SpacingMm);
         return ParseMm(NestSpacingBox.Text, 12);
+    }
+
+    IReadOnlyDictionary<int, double>? NestSheetClearances()
+    {
+        if (_nestSheetsUsed.Count == 0) return null;
+        var map = new Dictionary<int, double>();
+        for (var i = 0; i < _nestSheetsUsed.Count; i++)
+        {
+            if (_nestSheetsUsed[i].SpacingMm > 0)
+                map[i] = _nestSheetsUsed[i].SpacingMm;
+        }
+        return map.Count == 0 ? null : map;
+    }
+
+    (bool Ok, IReadOnlyList<string> Errors) CheckNestExportGate(IReadOnlyList<NestPlacement> places)
+    {
+        if (_session.Package is null)
+            return (true, []);
+        return NestExportGate.Check(
+            _session.Package.Panels,
+            places,
+            NestFallbackClearanceMm(),
+            allowAabbOverlap: UsesTrueShapeNest(),
+            partInPartSlots: _partInPartSlots,
+            sheetClearanceMm: NestSheetClearances());
     }
 
     (double Ox, double Oy)? FindFreeSlotOnSheet(
@@ -8815,6 +9350,7 @@ public partial class MainWindow : Window
                     OriginX: ox,
                     OriginY: oy,
                     NcSimToolDiaMm: _stage == "out" ? ShopToolDiaByNum() : null,
+                    Blocked: CurrentSheetBlocked(),
                     SheetGrain: _showGrain ? CurrentSheetGrain() : SheetGrainKind.None,
                     ShowGrain: _showGrain,
                     ShowFeatures: _showFeatures,
@@ -9075,6 +9611,8 @@ public partial class MainWindow : Window
     bool HasUnsavedWork()
     {
         if (_session.Package is null) return false;
+        // Recut mode is transient: what could be lost is the parked original, not the recut nest.
+        if (_recutSnapshot is { } parked) return parked.WasDirty;
         try
         {
             return CurrentWorkFingerprint() != _savedWorkFingerprint;

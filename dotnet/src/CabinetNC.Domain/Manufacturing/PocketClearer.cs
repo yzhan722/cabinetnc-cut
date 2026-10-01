@@ -6,11 +6,10 @@ using Clipper2Lib;
 /// <summary>
 /// Pocket area clear — Clipper inset + inward offset rings stitched into a spiral
 /// (inside-out), then a separate finish loop. Not a horizontal zigzag raster.
-/// ASSUMPTION: stepover = 40% tool Ø; finish/onion allowance = 0.5 mm on walls.
+/// ASSUMPTION: stepover = 40% tool Ø. Walls cut to CAD size (no leftover stock).
 /// </summary>
 public static class PocketClearer
 {
-    public const double DefaultOnionSkinMm = 0.5;
     public const double DefaultStepoverRatio = 0.4;
     /// <summary>
     /// Fusion lay-flat sometimes emits a paper-thin edge ribbon (≈0.1 mm) as a pocket.
@@ -70,7 +69,6 @@ public static class PocketClearer
         public IReadOnlyList<IReadOnlyList<(double X, double Y)>> Holes { get; init; } = [];
         public double ToolDiameterMm { get; init; } = 6.35;
         public double? StepoverMm { get; init; }
-        public double OnionSkinMm { get; init; } = DefaultOnionSkinMm;
         /// <summary>
         /// Emit a separate wall loop after the spiral. Disable when the spiral's
         /// outermost ring already cuts the feature directly to its final size.
@@ -107,8 +105,7 @@ public static class PocketClearer
             return new PocketClearResult { Path = req.Outline, PassCount = 0, StepoverMm = 0, InsetMm = 0 };
 
         var toolR = Math.Max(0.1, req.ToolDiameterMm / 2);
-        var onion = Math.Max(0, req.OnionSkinMm);
-        var inset = toolR + onion;
+        var inset = toolR;
         var step = req.StepoverMm ?? Math.Max(0.5, req.ToolDiameterMm * DefaultStepoverRatio);
 
         var holes = req.Holes
@@ -151,13 +148,14 @@ public static class PocketClearer
         var region = regions[0];
         EnsureCcw(region); // inner wall climb with M3 = CCW
 
-        var rings = OffsetRings(region, step);
-        // One wall: close it (the missing top of a T was the unclosed edge).
-        // Several rings: stitch a spiral; FinishLoop is the outer wall.
-        var closeWall = req.CloseClearRings || rings.Count == 1;
-        var spiral = StitchSpiralInsideOut(rings, closeWall);
+        var levels = OffsetRingLevels(region, step, toolR);
+        // Every ring is cut closed, then linked to the next. The old "spiral" dropped each
+        // ring's closing edge and relied on the neighbouring ring's kerf to cover it —
+        // for a 16 mm slot with Ø6.35 that left a 0.75 mm ridge along the floor
+        // (caught by CabinetNC.Verify pocket_floor_uncut). The overlap costs one edge per ring.
+        var spiral = StitchLevelsInsideOut(levels, closeEachRing: true);
         IReadOnlyList<(double X, double Y)>? finish =
-            req.EmitFinishLoop && rings.Count > 1
+            req.EmitFinishLoop && levels.Count > 1
                 ? ClosedLoop(region, spiral.Count > 0 ? spiral[^1] : null)
                 : null;
 
@@ -175,7 +173,7 @@ public static class PocketClearer
             Path = flat,
             Segments = segments,
             FinishLoop = finish,
-            PassCount = Math.Max(1, rings.Count),
+            PassCount = Math.Max(1, RingCount(levels)),
             StepoverMm = step,
             InsetMm = inset,
         }, req);
@@ -196,8 +194,8 @@ public static class PocketClearer
         foreach (var path in OrderNear(regions, last))
         {
             EnsureCcw(path);
-            var rings = OffsetRings(path, step);
-            var spiral = StitchSpiralInsideOut(rings, closeEachRing: true);
+            var rings = OffsetRingLevels(path, step, inset);
+            var spiral = StitchLevelsInsideOut(rings, closeEachRing: true);
             if (spiral.Count < 3) continue;
             segments.Add(spiral);
             last = spiral[^1];
@@ -252,7 +250,7 @@ public static class PocketClearer
         }
 
         // Thin rebate (one tool in the band): two shop walls only.
-        // Wide pocket with an island: onion-fill the floor, then the same walls.
+        // Wide pocket with an island: concentric-fill the floor, then the same walls.
         // Do not retrace the outer as FinishLoop — that was a third overlapping pass.
         _ = emitFinish;
         var clips = new Paths64();
@@ -263,13 +261,16 @@ public static class PocketClearer
             clips,
             FillRule.NonZero);
         fill = FilterTiny(fill);
-        var extras = OffsetFillInward(fill, step);
+        var extras = OffsetFillInward(fill, step, inset);
         var segments = new List<IReadOnlyList<(double X, double Y)>>();
         (double X, double Y)? last = null;
         for (var i = extras.Count - 1; i >= 0; i--)
         {
             foreach (var path in OrderNear(extras[i], last))
             {
+                // Each level is a ring band: an outer loop plus the grown island loop
+                // (negative winding). Both walls of the band must be cut, otherwise the
+                // floor above/below the island is never reached (Verify pocket_floor_uncut).
                 var loop = last is { } near
                     ? StartNear(CloseRing(ToPointsCcw(path)), near)
                     : CloseRing(ToPointsCcw(path));
@@ -315,13 +316,13 @@ public static class PocketClearer
     /// Off-centre islands leave a leftover floor that keeps offsetting as a
     /// simple pocket after the wrap around the island disappears.
     /// </summary>
-    static List<Paths64> OffsetFillInward(Paths64 fill, double stepMm)
+    static List<Paths64> OffsetFillInward(Paths64 fill, double stepMm, double toolR)
     {
         var levels = new List<Paths64>();
         var current = fill;
         for (var i = 0; i < 80; i++)
         {
-            var next = ShrinkFill(current, stepMm);
+            var next = ShrinkFill(current, stepMm, toolR);
             if (next.Count == 0) break;
             levels.Add(next);
             current = next;
@@ -329,7 +330,7 @@ public static class PocketClearer
         return levels;
     }
 
-    static Paths64 ShrinkFill(Paths64 fill, double stepMm)
+    static Paths64 ShrinkFill(Paths64 fill, double stepMm, double toolR)
     {
         var outers = new Paths64();
         var holes = new Paths64();
@@ -343,8 +344,10 @@ public static class PocketClearer
         }
         if (outers.Count == 0) return [];
 
-        var shrunk = FilterTiny(Clipper.InflatePaths(
-            outers, -stepMm * Scale, JoinType.Round, EndType.Polygon));
+        var shrunk = KeepLeftovers(
+            Clipper.InflatePaths(outers, -stepMm * Scale, JoinType.Round, EndType.Polygon),
+            outers,
+            toolR);
         if (shrunk.Count == 0) return [];
         if (holes.Count == 0) return shrunk;
 
@@ -360,12 +363,17 @@ public static class PocketClearer
             grown.Add(Largest(exp));
         }
         if (grown.Count == 0) return shrunk;
-        return FilterTiny(Clipper.Difference(shrunk, grown, FillRule.NonZero));
+        return KeepLeftovers(
+            Clipper.Difference(shrunk, grown, FillRule.NonZero),
+            shrunk,
+            toolR);
     }
 
     const double SliverShortMm = 2.0;
     const double EdgeOvershootMm = 1.5;
-    const double EdgeTouchMm = 1.5;
+    /// <summary>CAD slop for “this wall sits on the panel edge”. Wider than this is a closed wall, not an opening.</summary>
+    const double OnEdgeTolMm = 0.4;
+    const double OnEdgeMinLenMm = 2.0;
 
     static bool IsAreaTiny(Path64 path) =>
         path.Count < 3 || Math.Abs(Clipper.Area(path)) < Scale * Scale * 0.5;
@@ -377,10 +385,7 @@ public static class PocketClearer
         var outline = req.Outline;
         if (outline.Count < 3) return result;
 
-        var openL = outline.Min(p => p.X) <= panel.MinX + EdgeTouchMm;
-        var openR = outline.Max(p => p.X) >= panel.MaxX - EdgeTouchMm;
-        var openB = outline.Min(p => p.Y) <= panel.MinY + EdgeTouchMm;
-        var openT = outline.Max(p => p.Y) >= panel.MaxY - EdgeTouchMm;
+        var (openL, openR, openB, openT) = OpenPanelEdges(outline, panel);
         if (!openL && !openR && !openB && !openT)
             return result;
 
@@ -442,6 +447,33 @@ public static class PocketClearer
         return pts;
     }
 
+    static (bool L, bool R, bool B, bool T) OpenPanelEdges(
+        IReadOnlyList<(double X, double Y)> outline,
+        Nesting.LocalBounds panel)
+    {
+        double lenL = 0, lenR = 0, lenB = 0, lenT = 0;
+        var n = outline.Count;
+        for (var i = 0; i < n; i++)
+        {
+            var a = outline[i];
+            var b = outline[(i + 1) % n];
+            var len = Dist(a, b);
+            if (len < 1e-9) continue;
+            if (OnEdge(a.X, panel.MinX) && OnEdge(b.X, panel.MinX)) lenL += len;
+            if (OnEdge(a.X, panel.MaxX) && OnEdge(b.X, panel.MaxX)) lenR += len;
+            if (OnEdge(a.Y, panel.MinY) && OnEdge(b.Y, panel.MinY)) lenB += len;
+            if (OnEdge(a.Y, panel.MaxY) && OnEdge(b.Y, panel.MaxY)) lenT += len;
+        }
+        return (
+            lenL >= OnEdgeMinLenMm,
+            lenR >= OnEdgeMinLenMm,
+            lenB >= OnEdgeMinLenMm,
+            lenT >= OnEdgeMinLenMm);
+    }
+
+    static bool OnEdge(double value, double edge) =>
+        Math.Abs(value - edge) <= OnEdgeTolMm;
+
     static Paths64 FilterTiny(Paths64 paths)
     {
         var kept = new Paths64();
@@ -451,6 +483,86 @@ public static class PocketClearer
             kept.Add(p);
         }
         return kept;
+    }
+
+    /// <summary>
+    /// Keep every leftover after an inward offset. A sliver is dropped only
+    /// when the previous ring's tool already covers it — that was the edge
+    /// floor strip Largest / IsSliverRing used to throw away. Hole winding
+    /// stays (a flipped hole becomes a spiral inside the island).
+    /// </summary>
+    static Paths64 KeepLeftovers(Paths64 next, Paths64 previous, double toolR)
+    {
+        var kept = new Paths64();
+        foreach (var p in next)
+        {
+            if (p.Count < 3 || IsAreaTiny(p)) continue;
+            if (IsSliverRing(p) && CoveredBy(p, previous, toolR))
+                continue;
+            kept.Add(p);
+        }
+        return kept;
+    }
+
+    static bool CoveredBy(Path64 path, Paths64 parents, double toolR)
+    {
+        if (parents.Count == 0) return false;
+        var pts = ToPoints(path);
+        if (pts.Count == 0) return true;
+        var parentLoops = new List<List<(double X, double Y)>>(parents.Count);
+        foreach (var parent in parents)
+            parentLoops.Add(ToPoints(parent));
+        var reach = toolR + 0.35;
+        var n = pts.Count;
+        for (var i = 0; i < n; i++)
+        {
+            if (MinDistToLoops(pts[i], parentLoops) > reach)
+                return false;
+            var mid = Mid(pts[i], pts[(i + 1) % n]);
+            if (MinDistToLoops(mid, parentLoops) > reach)
+                return false;
+        }
+        return true;
+    }
+
+    static double MinDistToLoops(
+        (double X, double Y) p,
+        IReadOnlyList<List<(double X, double Y)>> loops)
+    {
+        var best = double.PositiveInfinity;
+        foreach (var loop in loops)
+        {
+            var d = MinDistToLoop(p, loop);
+            if (d < best) best = d;
+        }
+        return best;
+    }
+
+    static double MinDistToLoop((double X, double Y) p, IReadOnlyList<(double X, double Y)> loop)
+    {
+        if (loop.Count == 0) return double.PositiveInfinity;
+        if (loop.Count == 1) return Dist(p, loop[0]);
+        var best = double.PositiveInfinity;
+        var n = loop.Count;
+        for (var i = 0; i < n; i++)
+        {
+            var d = PointSegDist(p, loop[i], loop[(i + 1) % n]);
+            if (d < best) best = d;
+        }
+        return best;
+    }
+
+    static (double X, double Y) Mid((double X, double Y) a, (double X, double Y) b) =>
+        ((a.X + b.X) / 2, (a.Y + b.Y) / 2);
+
+    static double PointSegDist((double X, double Y) p, (double X, double Y) a, (double X, double Y) b)
+    {
+        var dx = b.X - a.X;
+        var dy = b.Y - a.Y;
+        var len2 = dx * dx + dy * dy;
+        if (len2 < 1e-12) return Dist(p, a);
+        var t = Math.Clamp(((p.X - a.X) * dx + (p.Y - a.Y) * dy) / len2, 0, 1);
+        return Dist(p, (a.X + t * dx, a.Y + t * dy));
     }
 
     static bool IsSliverRing(Path64 path)
@@ -604,45 +716,57 @@ public static class PocketClearer
         return Math.Max(maxX - minX, maxY - minY);
     }
 
-    static List<Path64> OffsetRings(Path64 outer, double stepMm)
+    static List<Paths64> OffsetRingLevels(Path64 outer, double stepMm, double toolR)
     {
-        var rings = new List<Path64> { outer };
+        var levels = new List<Paths64> { new Paths64 { outer } };
         var current = new Paths64 { outer };
         for (var i = 0; i < 80; i++)
         {
             var next = Clipper.InflatePaths(
                 current, -stepMm * Scale, JoinType.Round, EndType.Polygon);
-            if (next.Count == 0) break;
-            var ring = Largest(next);
-            if (IsSliverRing(ring)) break;
-            EnsureCcw(ring);
-            rings.Add(ring);
-            current = [ring];
+            var kept = KeepLeftovers(next, current, toolR);
+            if (kept.Count == 0) break;
+            foreach (var ring in kept)
+                EnsureCcw(ring);
+            levels.Add(kept);
+            current = kept;
         }
-        return rings;
+        return levels;
     }
 
-    static List<(double X, double Y)> StitchSpiralInsideOut(
-        IReadOnlyList<Path64> outerToInner,
+    static int RingCount(IReadOnlyList<Paths64> levels)
+    {
+        var n = 0;
+        foreach (var level in levels)
+            n += level.Count;
+        return n;
+    }
+
+    static List<(double X, double Y)> StitchLevelsInsideOut(
+        IReadOnlyList<Paths64> outerToInner,
         bool closeEachRing)
     {
         var spiral = new List<(double X, double Y)>();
         if (outerToInner.Count == 0) return spiral;
+        var close = closeEachRing || outerToInner.Any(lv => lv.Count > 1);
 
         (double X, double Y)? last = null;
         for (var r = outerToInner.Count - 1; r >= 0; r--)
         {
-            var pts = ToPoints(outerToInner[r]);
-            if (pts.Count < 3) continue;
-            var start = last is { } p ? NearestIndex(pts, p) : MinXIndex(pts);
-            RotateInPlace(pts, start);
-            if (last is not null)
-                spiral.Add(pts[0]);
-            for (var i = 0; i < pts.Count; i++)
-                spiral.Add(pts[i]);
-            if (closeEachRing)
-                spiral.Add(pts[0]);
-            last = spiral[^1];
+            foreach (var path in OrderNear(outerToInner[r], last))
+            {
+                var pts = ToPoints(path);
+                if (pts.Count < 3) continue;
+                var start = last is { } p ? NearestIndex(pts, p) : MinXIndex(pts);
+                RotateInPlace(pts, start);
+                if (last is not null)
+                    spiral.Add(pts[0]);
+                for (var i = 0; i < pts.Count; i++)
+                    spiral.Add(pts[i]);
+                if (close)
+                    spiral.Add(pts[0]);
+                last = spiral[^1];
+            }
         }
         return spiral;
     }

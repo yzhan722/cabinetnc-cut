@@ -13,7 +13,8 @@ public sealed class CnJobManifest
 public sealed class ManufacturingSnapshot
 {
     public const string SchemaName = "cabinetnc.manufacturing-snapshot";
-    public const string CurrentVersion = "1.0.0";
+    /// <summary>1.1 adds material <c>grained</c> / <c>series</c>, <c>machiningFace: EITHER</c>, and optional <c>edgeBands</c>; 1.0 files still import.</summary>
+    public const string CurrentVersion = "1.1.0";
 
     public string Schema { get; init; } = "";
     public string SchemaVersion { get; init; } = "";
@@ -36,6 +37,10 @@ public sealed class SnapshotMaterial
     public string? DecorId { get; init; }
     public string? ColorName { get; init; }
     public string? SurfaceMode { get; init; }
+    /// <summary>v1.1: the sheet has a wood grain (textured HPL); parts need a grain direction.</summary>
+    public bool? Grained { get; init; }
+    /// <summary>v1.1: decor series (melamine / acrylic / hpl); informational.</summary>
+    public string? Series { get; init; }
 }
 
 public sealed class SnapshotWorkpiece
@@ -50,6 +55,8 @@ public sealed class SnapshotWorkpiece
     public List<SnapshotFace> Faces { get; init; } = [];
     public List<SnapshotFeature> Features { get; init; } = [];
     public SnapshotManufacturing? Manufacturing { get; init; }
+    /// <summary>v1.1: tape on outline edges. Omitted or empty = the part is not banded.</summary>
+    public List<SnapshotEdgeBand>? EdgeBands { get; init; }
     /// <summary>Optional part grain from Fusion: X / Y (panel-local).</summary>
     public string? GrainDirection { get; init; }
     public JsonElement? Provenance { get; init; }
@@ -71,6 +78,10 @@ public sealed class SnapshotMaterialRef
     public string? DisplayName { get; init; }
     public string? ColorName { get; init; }
     public string? SurfaceMode { get; init; }
+    /// <summary>v1.1: the sheet has a wood grain (textured HPL); the workpiece needs a grain direction.</summary>
+    public bool? Grained { get; init; }
+    /// <summary>v1.1: decor series (pvc / acrylic / hpl); informational.</summary>
+    public string? Series { get; init; }
     /// <summary>Fusion: edge length the grain follows (mm).</summary>
     public double? GrainAlongMm { get; init; }
     /// <summary>Fusion flattened angle: 0 = along +X, 90 = along +Y.</summary>
@@ -146,6 +157,14 @@ public sealed class SnapshotFeatureIntent
     public string? Purpose { get; init; }
     public string? OperationType { get; init; }
     public string? SourceRelationshipId { get; init; }
+}
+
+public sealed class SnapshotEdgeBand
+{
+    /// <summary>Segment of <c>outerProfile.points</c>: edge i runs point i → point (i + 1) mod n.</summary>
+    public int? I { get; init; }
+    public double? ThicknessMm { get; init; }
+    public string? ColorName { get; init; }
 }
 
 public sealed class SnapshotManufacturing

@@ -1,0 +1,80 @@
+{
+  "schema": "cabinetnc.manufacturing-snapshot",
+  "schemaVersion": "1.1.0",
+  "jobId": "SNAPSHOT-DEMO-V1_1",
+  "units": "mm",
+  "exportedAt": "2026-09-26T00:00:00Z",
+  "source": {
+    "producer": "the-cab-lab",
+    "producerVersion": "0.2.0",
+    "designName": "v1.1 contract demo"
+  },
+  "materials": [
+    {
+      "materialId": "hpl-chestnut-1s-16",
+      "series": "hpl",
+      "displayName": "Chestnut · single-sided · 16 mm",
+      "thicknessMm": 16,
+      "decorId": "chestnut",
+      "colorName": "Chestnut",
+      "surfaceMode": "SINGLE_SIDED",
+      "grained": true
+    },
+    {
+      "materialId": "melamine-white-stipple-2s-15",
+      "series": "melamine",
+      "displayName": "White Stipple · double-sided · 15 mm",
+      "thicknessMm": 15,
+      "decorId": "white-stipple",
+      "colorName": "White Stipple",
+      "surfaceMode": "DOUBLE_SIDED",
+      "grained": false
+    }
+  ],
+  "workpieces": [
+    {
+      "workpieceId": "cab-1.FP_zone-1",
+      "name": "Front Panel",
+      "identity": { "projectId": "DEMO", "moduleId": "cab-1", "role": "FP_zone-1" },
+      "material": {
+        "materialId": "hpl-chestnut-1s-16",
+        "thicknessMm": 16,
+        "colorName": "Chestnut",
+        "surfaceMode": "SINGLE_SIDED",
+        "grained": true
+      },
+      "grainDirection": "X",
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.1,
+        "outerProfile": { "closed": true, "points": [[0, 0], [594, 0], [594, 700], [0, 700]] }
+      },
+      "faces": [
+        { "faceId": "A", "role": "interior", "finish": { "finishId": "white-stipple", "finishName": "White Stipple" }, "machiningPermission": "PRIMARY" },
+        { "faceId": "B", "role": "exterior", "finish": { "finishId": "chestnut", "finishName": "Chestnut" }, "machiningPermission": "NOT_ALLOWED" }
+      ],
+      "features": [
+        { "featureId": "HINGE_1", "kind": "bore", "sourceFace": "A", "geometry": { "center": [22.5, 100], "diameterMm": 35 }, "depthMm": 12.5, "through": false, "intent": { "purpose": "hinge" } },
+        { "featureId": "HINGE_2", "kind": "bore", "sourceFace": "A", "geometry": { "center": [22.5, 600], "diameterMm": 35 }, "depthMm": 12.5, "through": false, "intent": { "purpose": "hinge" } }
+      ],
+      "manufacturing": { "mode": "singleSide", "machiningFace": "A" }
+    },
+    {
+      "workpieceId": "cab-1.SHELF_1",
+      "name": "Shelf",
+      "identity": { "projectId": "DEMO", "moduleId": "cab-1", "role": "SHELF_1" },
+      "material": { "materialId": "melamine-white-stipple-2s-15", "thicknessMm": 15 },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.1,
+        "outerProfile": { "closed": true, "points": [[0, 0], [570, 0], [570, 540], [0, 540]] }
+      },
+      "faces": [
+        { "faceId": "A", "role": "top", "finish": { "finishId": "white-stipple", "finishName": "White Stipple" }, "machiningPermission": "ALLOWED" },
+        { "faceId": "B", "role": "bottom", "finish": { "finishId": "white-stipple", "finishName": "White Stipple" }, "machiningPermission": "ALLOWED" }
+      ],
+      "features": [],
+      "manufacturing": { "mode": "singleSide", "machiningFace": "EITHER" }
+    }
+  ]
+}

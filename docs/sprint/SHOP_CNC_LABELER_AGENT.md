@@ -16,7 +16,7 @@
 
 1. 确认标签软件能否绑定本机 `192.168.0.4`（2026-08-19 的第一故障）。
 2. 确认打印路径里有与 `LS11` 同名的 **平铺** `.bmp`。
-3. 确认 bmp 是 **236×157、1 bpp 单色**（不是 24 位彩图）。
+3. 确认 bmp 是 **600×600、1 bpp 单色、300 dpi**（不是 24 位彩图）。旧样张 236×157 能对上文件名，但在 60×60 纸上会偏小。
 4. 只有 1–3 都过，才让操作员再跑 Process 2，观察 `M701` 是否返回、是否执行到 `G0 V… U…`。
 
 不要把 U/V 对错当成今天的阻断。2026-08-19 **根本没执行到定位块**。
@@ -191,7 +191,7 @@ if (-not (Test-Path -LiteralPath $anc)) {
 
 ---
 
-## 6. 检查 C — BMP 是否 1 位单色 236×157
+## 6. 检查 C — BMP 是否 1 位单色 600×600
 
 不要用「用画图打开看看」。读文件头：
 
@@ -217,7 +217,7 @@ function Get-BmpInfo([string]$Path) {
     Height   = [Math]::Abs($height)
     BitCount = $bpp
     OffBits  = $off
-    ShopLike = ($width -eq 236 -and [Math]::Abs($height) -eq 157 -and $bpp -eq 1)
+    ShopLike = ($width -eq 600 -and [Math]::Abs($height) -eq 600 -and $bpp -eq 1)
   }
 }
 
@@ -240,8 +240,9 @@ $candidates | Sort-Object FullName -Unique | ForEach-Object { Get-BmpInfo $_.Ful
 
 | BitCount | 含义 |
 |---|---|
-| `1` 且 236×157 | 与车间历史样张 / 当前 OmniCam 目标一致。文件大约 **5086 字节** |
-| `24` | 旧 OmniCam 彩图。工程师说热转印可能拒读。记为格式失败 |
+| `1` 且 600×600 | 当前 OmniCam 目标（300 dpi，约 50.8 mm 画在 60×60 纸上） |
+| `1` 且 236×157 | 旧车间样张。文件大约 **5086 字节**，能对上 `LS11`，打印可能偏小 |
+| `24` | 旧彩图。工程师说热转印可能拒读。记为格式失败 |
 | 其它尺寸 | 记下来，不要改文件 |
 
 若打印目录里还是 24 位，而 OmniCam 新导出的 1bpp 还在 U 盘 / `Documents\...\label\`：报告「新图未摊平到打印路径」，列出两边路径和 BitCount。

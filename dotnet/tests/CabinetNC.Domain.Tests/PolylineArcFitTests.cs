@@ -20,6 +20,46 @@ public class PolylineArcFitTests
         return pts;
     }
 
+    /// <summary>
+    /// OSAI R-word arcs are ≤ 180° (R &gt; 0 = minor arc). A lobe wall tessellated as a
+    /// near-full circle used to merge into one 331° G3 whose chord+R the control reads
+    /// as the 29° short way — the whole lobe wall went uncut (Verify pocket_floor_uncut).
+    /// </summary>
+    [Theory]
+    [InlineData(300)]
+    [InlineData(331)]
+    [InlineData(358)]
+    public void No_emitted_arc_sweeps_more_than_a_half_circle(double totalDeg)
+    {
+        const double cx = 100, cy = 100, r = 25;
+        var path = new List<(double X, double Y)>();
+        var steps = 96;
+        for (var i = 0; i <= steps; i++)
+        {
+            var a = -totalDeg / 2 * Math.PI / 180 + totalDeg * Math.PI / 180 * i / steps;
+            path.Add((cx + r * Math.Cos(a), cy + r * Math.Sin(a)));
+        }
+        var segs = PolylineArcFit.Fit(path, closed: false);
+        Assert.Contains(segs, s => s.Arc);
+
+        var prev = path[0];
+        var covered = 0d;
+        foreach (var s in segs)
+        {
+            if (s.Arc)
+            {
+                var chord = Math.Sqrt((s.X - prev.X) * (s.X - prev.X) + (s.Y - prev.Y) * (s.Y - prev.Y));
+                // Minor-arc sweep the control will execute for this chord/R.
+                var sweep = 2 * Math.Asin(Math.Clamp(chord / (2 * s.R), 0, 1)) * 180 / Math.PI;
+                Assert.True(sweep <= 180.5, $"arc to ({s.X:0.##},{s.Y:0.##}) R{s.R:0.##} spans {sweep:0.#}°");
+                covered += sweep;
+            }
+            prev = (s.X, s.Y);
+        }
+        // The pieces must add up to the whole lobe, not collapse to the short way round.
+        Assert.InRange(covered, totalDeg - 6, totalDeg + 6);
+    }
+
     [Fact]
     public void Dirty_clipper_corner_snaps_g1_to_true_tangents()
     {

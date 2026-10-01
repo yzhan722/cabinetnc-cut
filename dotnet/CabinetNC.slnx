@@ -8,11 +8,13 @@
     <Project Path="src/CabinetNC.Domain/CabinetNC.Domain.csproj" />
     <Project Path="src/CabinetNC.FusionPackage/CabinetNC.FusionPackage.csproj" />
     <Project Path="src/CabinetNC.Infrastructure/CabinetNC.Infrastructure.csproj" />
+    <Project Path="src/CabinetNC.Verify/CabinetNC.Verify.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/CabinetNC.Desktop.Core.Tests/CabinetNC.Desktop.Core.Tests.csproj" />
     <Project Path="tests/CabinetNC.Domain.Tests/CabinetNC.Domain.Tests.csproj" />
     <Project Path="tests/CabinetNC.Infrastructure.Tests/CabinetNC.Infrastructure.Tests.csproj" />
     <Project Path="tests/CabinetNC.Package.Tests/CabinetNC.Package.Tests.csproj" />
+    <Project Path="tests/CabinetNC.Verify.Tests/CabinetNC.Verify.Tests.csproj" />
   </Folder>
 </Solution>

@@ -11,7 +11,8 @@
         FontFamily="Segoe UI"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
-        PreviewKeyDown="OnWindowKey">
+        PreviewKeyDown="OnWindowKey"
+        PreviewKeyUp="OnWindowKeyUp">
   <Window.Resources>
     <Style x:Key="CadStatusChip" TargetType="ToggleButton">
       <Setter Property="Foreground" Value="#5A5A5A" />
@@ -129,7 +130,7 @@
     <Border DockPanel.Dock="Top" Background="#2B2B2B" BorderBrush="#111111" BorderThickness="0,0,0,1" Padding="10,6">
       <DockPanel>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-          <TextBlock Text="编号" Foreground="#8A8A8A" FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0" />
+          <TextBlock x:Name="DraftIdLabel" Text="编号" Foreground="#8A8A8A" FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0" />
           <TextBox x:Name="DraftIdBox" Width="96" Margin="0,0,10,0" Padding="4,2"
                    Background="#1A1A1A" Foreground="#E8E8E8" BorderBrush="#3A3A3A"
                    CaretBrush="#E8C84A" FontFamily="Consolas" FontSize="12" />
@@ -152,7 +153,79 @@
       </DockPanel>
     </Border>
 
-    <Border DockPanel.Dock="Top" Background="#222222" BorderBrush="#111111" BorderThickness="0,0,0,1" Padding="8,4">
+    <Border x:Name="EditToolBar" DockPanel.Dock="Top" Background="#222222" BorderBrush="#111111"
+            BorderThickness="0,0,0,1" Padding="8,4" Visibility="Collapsed">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+          <Button Content="撤销" Style="{StaticResource CadBarBtn}" Click="OnEditUndoClick"
+                  ToolTip="撤销上一步 (U / Ctrl+Z)" />
+          <Button Content="重做" Style="{StaticResource CadBarBtn}" Click="OnEditRedoClick"
+                  ToolTip="重做 (Ctrl+Y)" />
+          <Button Content="适配" Style="{StaticResource CadBarBtn}" Click="OnEditFitClick" Margin="0"
+                  ToolTip="把整块板放进视图 (Z)" />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal">
+          <ToggleButton x:Name="EditToolSelect" Style="{StaticResource CadToolBtn}" IsChecked="True"
+                        Click="OnEditSelectClick" ToolTip="选择 · 点选 / 框选（左→右全包，右→左相交）· Shift 增减">
+            <Canvas Width="22" Height="18">
+              <Polygon Points="4,1 4,15 8,11 11,17 13,16 10,10 15,10" Fill="#E8E8E8" />
+            </Canvas>
+          </ToggleButton>
+          <ToggleButton x:Name="EditToolMove" Style="{StaticResource CadToolBtn}"
+                        Click="OnEditMoveClick" ToolTip="移动 (M) · 选对象 → 基点 → 第二点 / @dx,dy">
+            <Canvas Width="22" Height="18">
+              <Line X1="11" Y1="2" X2="11" Y2="16" Stroke="#E8E8E8" StrokeThickness="1.4" />
+              <Line X1="3" Y1="9" X2="19" Y2="9" Stroke="#E8E8E8" StrokeThickness="1.4" />
+              <Polygon Points="11,0 8,4 14,4" Fill="#E8E8E8" />
+              <Polygon Points="11,18 8,14 14,14" Fill="#E8E8E8" />
+              <Polygon Points="1,9 5,6 5,12" Fill="#E8E8E8" />
+              <Polygon Points="21,9 17,6 17,12" Fill="#E8E8E8" />
+            </Canvas>
+          </ToggleButton>
+          <ToggleButton x:Name="EditToolCopy" Style="{StaticResource CadToolBtn}"
+                        Click="OnEditCopyClick" ToolTip="复制 (CO) · 选对象 → 基点 → 第二点，可连续复制">
+            <Canvas Width="22" Height="18">
+              <Rectangle Canvas.Left="2" Canvas.Top="2" Width="11" Height="9" Stroke="#E8E8E8" StrokeThickness="1.3" />
+              <Rectangle Canvas.Left="8" Canvas.Top="7" Width="11" Height="9" Stroke="#E8E8E8" StrokeThickness="1.3" Fill="#222222" />
+            </Canvas>
+          </ToggleButton>
+          <Button Style="{StaticResource CadBarBtn}" Click="OnEditEraseClick" Padding="8,3" Margin="6,0,0,0"
+                  ToolTip="删除选中的特征 (E / Delete)" VerticalAlignment="Center">
+            <TextBlock Text="删除" />
+          </Button>
+          <Rectangle Width="1" Height="18" Fill="#3A3A3A" Margin="10,0" />
+          <ToggleButton x:Name="EditToolLine" Style="{StaticResource CadToolBtn}"
+                        Click="OnEditLineClick" ToolTip="画线 (L) · 左边先选 Profile / Feature / 辅助线，再画。Feature 问深度；Profile 闭合换轮廓、开链切角；辅助线不进刀路">
+            <Canvas Width="22" Height="18">
+              <Rectangle Canvas.Left="1" Canvas.Top="12" Width="4" Height="4" Fill="#E8E8E8" />
+              <Rectangle Canvas.Left="16" Canvas.Top="1" Width="4" Height="4" Fill="#E8E8E8" />
+              <Line X1="5" Y1="14" X2="16" Y2="5" Stroke="#E8E8E8" StrokeThickness="1.4" />
+            </Canvas>
+          </ToggleButton>
+          <ToggleButton x:Name="EditToolTrim" Style="{StaticResource CadToolBtn}"
+                        Click="OnEditTrimClick" ToolTip="修剪 (TR) · 选切割边（Enter=全部+外框）→ 点要剪掉的槽段或外框边">
+            <Canvas Width="22" Height="18">
+              <Line X1="2" Y1="4" X2="20" Y2="4" Stroke="#E8E8E8" StrokeThickness="1.4" />
+              <Line X1="2" Y1="14" X2="20" Y2="14" Stroke="#E8E8E8" StrokeThickness="1.4" />
+              <Line X1="11" Y1="1" X2="11" Y2="17" Stroke="#E8E8E8" StrokeThickness="1.4" StrokeDashArray="2,1.5" />
+              <Line X1="11" Y1="4" X2="11" Y2="14" Stroke="#E24A4A" StrokeThickness="2" />
+            </Canvas>
+          </ToggleButton>
+          <ToggleButton x:Name="EditToolExtend" Style="{StaticResource CadToolBtn}"
+                        Click="OnEditExtendClick" ToolTip="延伸槽 (EX) · 选边界（Enter=全部+外框）→ 点要延长的槽端">
+            <Canvas Width="22" Height="18">
+              <Line X1="19" Y1="1" X2="19" Y2="17" Stroke="#E8E8E8" StrokeThickness="1.4" />
+              <Line X1="2" Y1="9" X2="11" Y2="9" Stroke="#E8E8E8" StrokeThickness="1.4" />
+              <Line X1="11" Y1="9" X2="19" Y2="9" Stroke="#3CBF5A" StrokeThickness="1.4" StrokeDashArray="2,1.5" />
+            </Canvas>
+          </ToggleButton>
+          <TextBlock Text="外框不可选 · 通孔可改但写回后需重排" Foreground="#6A6A6A" FontSize="11"
+                     VerticalAlignment="Center" Margin="14,0,0,0" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Border x:Name="DrawToolBar" DockPanel.Dock="Top" Background="#222222" BorderBrush="#111111" BorderThickness="0,0,0,1" Padding="8,4">
       <StackPanel Orientation="Horizontal">
         <ToggleButton x:Name="ToolLine" Style="{StaticResource CadToolBtn}"
                       Click="OnToolLineClick" ToolTip="Line (L) · 连续画线；拖动时 Tab 输入相对 ΔX/ΔY 并锁定">
@@ -205,6 +278,8 @@
                        Margin="0,0,14,0" VerticalAlignment="Center" />
             <TextBlock Text="MODEL" Foreground="#E8C84A" FontSize="11" FontFamily="Consolas"
                        VerticalAlignment="Center" />
+            <TextBlock x:Name="EditImpactText" Text="" Foreground="#8A8A8A" FontSize="11" FontFamily="Consolas"
+                       Margin="24,0,0,0" VerticalAlignment="Center" Visibility="Collapsed" />
           </StackPanel>
         </Border>
         <StackPanel Margin="10,8,10,6">
@@ -221,7 +296,7 @@
     </Border>
 
     <DockPanel>
-      <Border DockPanel.Dock="Left" Width="72" Background="#1A1A1A"
+      <Border x:Name="ModeRail" DockPanel.Dock="Left" Width="72" Background="#1A1A1A"
               BorderBrush="#111111" BorderThickness="0,0,1,0" Padding="8,10">
         <StackPanel>
           <ToggleButton x:Name="ModeProfile" Style="{StaticResource CadModeBtn}"

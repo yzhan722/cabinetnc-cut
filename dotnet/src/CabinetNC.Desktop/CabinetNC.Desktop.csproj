@@ -8,6 +8,7 @@
     <ProjectReference Include="..\CabinetNC.Desktop.Core\CabinetNC.Desktop.Core.csproj" />
     <ProjectReference Include="..\CabinetNC.ComputeWorker\CabinetNC.ComputeWorker.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\CabinetNC.Infrastructure\CabinetNC.Infrastructure.csproj" />
+    <ProjectReference Include="..\CabinetNC.Verify\CabinetNC.Verify.csproj" />
   </ItemGroup>
 
   <ItemGroup>

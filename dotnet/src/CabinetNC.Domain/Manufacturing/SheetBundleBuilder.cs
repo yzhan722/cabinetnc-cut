@@ -3,6 +3,7 @@ namespace CabinetNC.Domain.Manufacturing;
 using System.Text.Json;
 using CabinetNC.Domain;
 using CabinetNC.Domain.Machines;
+using CabinetNC.Domain.Manufacturing.Verification;
 using CabinetNC.Domain.Nesting;
 
 /// <summary>Pluggable NC post (Day 10). RC dialects wrap NcEmitter.</summary>
@@ -95,6 +96,10 @@ public sealed class SheetArtifact
     public int OpCount { get; init; }
     public IReadOnlyList<string> PanelIds { get; init; } = [];
     public IReadOnlyList<string> ToolIds { get; init; } = [];
+    /// <summary>Geometry verification of this sheet's programs; null when no verifier ran.</summary>
+    public VerifyReport? Verify { get; init; }
+    /// <summary>Serialized <see cref="Verify"/> written next to the NC as <c>{job}_S{n}.verify.json</c>.</summary>
+    public string? VerifyReportJson { get; init; }
 
     /// <summary>Compatibility: first tool program file name.</summary>
     public string NcFileName => ToolPrograms.Count > 0 ? ToolPrograms[0].NcFileName : "";
@@ -112,6 +117,22 @@ public sealed class ExportBundle
     public string? BomCsv { get; init; }
     public string? LabelsHtml { get; init; }
     public IReadOnlyList<WorkpieceLabel> Labels { get; init; } = [];
+
+    /// <summary>All sheets' verification merged; null when no verifier ran.</summary>
+    public VerifyReport? Verify { get; init; }
+    /// <summary>Plan→emit→verify rounds when built through <see cref="SheetBundleBuilder.BuildWithRepair"/>.</summary>
+    public IReadOnlyList<RepairRound> RepairTrail { get; init; } = [];
+    /// <summary>Overrides the final programs were planned with (empty on a first-round pass).</summary>
+    public CamOverrides Overrides { get; init; } = CamOverrides.Empty;
+}
+
+/// <summary>Raised when the geometry verifier finds an error and the caller asked to enforce it.</summary>
+public sealed class ExportVerifyException(VerifyReport report)
+    : InvalidOperationException("Export blocked by 计码验算:\n" + VerifyReport.Format(report))
+{
+    public VerifyReport Report { get; } = report;
+    /// <summary>Rounds attempted before giving up (empty when no repair loop ran).</summary>
+    public IReadOnlyList<RepairRound> Trail { get; init; } = [];
 }
 
 /// <summary>Per-sheet DXF/manifest + per Sheet×Tool NC programs (audited RC).</summary>
@@ -133,11 +154,15 @@ public static class SheetBundleBuilder
         bool enforcePreflight = true,
         IToolChangePost? toolChangePost = null,
         IReadOnlyDictionary<string, ToolDefinition>? tools = null,
-        PostRecipe? recipe = null)
+        PostRecipe? recipe = null,
+        IExportVerifier? verifier = null,
+        bool enforceVerify = true)
     {
         post ??= PostProcessorCatalog.Resolve(profile);
         toolChangePost ??= new NullToolChangePost();
         var catalog = tools ?? ToolCatalog.DefaultMap();
+        var verifyPanels = panelsById?.Values.ToList() ?? package.Panels;
+        var zDatum = VerifyInput.DatumOf(recipe);
 
         if (enforcePreflight)
         {
@@ -185,19 +210,62 @@ public static class SheetBundleBuilder
                 });
             }
 
+            // 计码 gate: CAD intent vs the programs just emitted. Independent of the planner.
+            VerifyReport? verify = null;
+            if (verifier is not null)
+            {
+                verify = verifier.Verify(new VerifyInput
+                {
+                    Panels = verifyPanels,
+                    Placements = placements,
+                    SheetIndex = si,
+                    Programs = programs.Select(p => new VerifyProgram(p.NcText, p.ToolId)).ToList(),
+                    Tools = catalog,
+                    ZDatum = zDatum,
+                    Bridges = recipe?.Bridges ?? [],
+                });
+                if (enforceVerify && !verify.Ok)
+                    throw new ExportVerifyException(verify);
+            }
+
             var manifest = new
             {
                 schema = "cabinetnc.sheet-manifest",
-                schemaVersion = 2,
+                schemaVersion = 3,
                 jobId,
                 sheetIndex = si,
                 sheetLabel = $"S{si + 1}",
                 post = post.Id,
                 toolChangePost = toolChangePost.Id,
                 machineId = profile.Id,
+                zDatum = zDatum.ToString(),
                 panelIds,
                 toolIds,
                 opCount = sheetOps.Count,
+                placements = sheetPlaces.Select(p => new
+                {
+                    panelId = p.PanelId,
+                    offsetX = p.OffsetX,
+                    offsetY = p.OffsetY,
+                    rotationDeg = p.RotationDeg,
+                }),
+                bridges = (recipe?.Bridges ?? []).Where(b => b.SheetIndex == si).Select(b => new
+                {
+                    id = b.Id,
+                    panelId = b.PanelId,
+                    featureId = b.FeatureId,
+                    x = b.X,
+                    y = b.Y,
+                    widthMm = b.WidthMm,
+                }),
+                verify = verify is null ? null : new
+                {
+                    ok = verify.Ok,
+                    engine = verify.Engine,
+                    errors = verify.Issues.Count(i => i.IsError),
+                    warnings = verify.Issues.Count(i => !i.IsError),
+                    file = $"{jobId}_S{si + 1}.verify.json",
+                },
                 files = new
                 {
                     dxf = $"{jobId}_S{si + 1}.dxf",
@@ -215,6 +283,8 @@ public static class SheetBundleBuilder
                 OpCount = sheetOps.Count,
                 PanelIds = panelIds,
                 ToolIds = toolIds,
+                Verify = verify,
+                VerifyReportJson = verify is null ? null : JsonSerializer.Serialize(verify, JsonOpts),
             });
         }
 
@@ -254,13 +324,113 @@ public static class SheetBundleBuilder
             BomCsv = bom,
             LabelsHtml = labelsHtml,
             Labels = labels,
+            Verify = verifier is null ? null : VerifyReport.Merge(sheets.Where(s => s.Verify is not null).Select(s => s.Verify!)),
         };
     }
+
+    public const int DefaultRepairRounds = 3;
+
+    /// <summary>
+    /// Plan → emit → verify, and when the verifier finds an error ask <paramref name="repair"/>
+    /// for stricter process overrides and plan again — at most <paramref name="maxRounds"/>
+    /// times. The verifier and its tolerances never change between rounds; only the
+    /// planner's whitelisted knobs do. Throws <see cref="ExportVerifyException"/> when the
+    /// last round still fails or the repair planner has nothing left to try.
+    /// </summary>
+    public static ExportBundle BuildWithRepair(
+        CutPackage package,
+        IReadOnlyList<NestPlacement> placements,
+        Func<CamOverrides, IReadOnlyList<CutOp>> plan,
+        MachineProfile profile,
+        IExportVerifier verifier,
+        IRepairPlanner repair,
+        int maxRounds = DefaultRepairRounds,
+        IPostProcessor? post = null,
+        string? jobSheetHtml = null,
+        IReadOnlyDictionary<string, Parts.Panel>? panelsById = null,
+        double sheetWidthMm = 0,
+        double sheetLengthMm = 0,
+        FaceRegistration? registration = null,
+        bool enforcePreflight = true,
+        IToolChangePost? toolChangePost = null,
+        IReadOnlyDictionary<string, ToolDefinition>? tools = null,
+        PostRecipe? recipe = null)
+    {
+        var catalog = tools ?? ToolCatalog.DefaultMap();
+        var overrides = CamOverrides.Empty;
+        var trail = new List<RepairRound>();
+        ExportBundle? last = null;
+        for (var round = 1; round <= Math.Max(1, maxRounds); round++)
+        {
+            var ops = plan(overrides);
+            var bundle = Build(
+                package, placements, ops, profile, post, jobSheetHtml, panelsById,
+                sheetWidthMm, sheetLengthMm, registration, enforcePreflight, toolChangePost,
+                catalog, recipe, verifier, enforceVerify: false);
+            var report = bundle.Verify ?? VerifyReport.Empty(-1);
+            trail.Add(new RepairRound(round, overrides, report));
+            last = bundle;
+            if (report.Ok)
+            {
+                return new ExportBundle
+                {
+                    JobId = bundle.JobId,
+                    PostId = bundle.PostId,
+                    Sheets = bundle.Sheets,
+                    RootManifestJson = bundle.RootManifestJson,
+                    JobSheetHtml = bundle.JobSheetHtml,
+                    BomCsv = bundle.BomCsv,
+                    LabelsHtml = bundle.LabelsHtml,
+                    Labels = bundle.Labels,
+                    Verify = bundle.Verify,
+                    RepairTrail = trail,
+                    Overrides = overrides,
+                };
+            }
+
+            var next = repair.Propose(report, overrides, catalog);
+            if (next is null || next.SameAs(overrides))
+                break;
+            overrides = next;
+        }
+
+        throw new ExportVerifyException(last!.Verify ?? VerifyReport.Empty(-1)) { Trail = trail };
+    }
+
+    public static string RepairTrailJson(ExportBundle bundle) =>
+        JsonSerializer.Serialize(new
+        {
+            schema = "cabinetnc.export-repair",
+            schemaVersion = 1,
+            jobId = bundle.JobId,
+            rounds = bundle.RepairTrail.Select(r => new
+            {
+                round = r.Round,
+                ok = r.Ok,
+                overrides = r.Overrides.Describe(),
+                errors = r.Report.Issues.Where(i => i.IsError).Select(i => new { i.Code, i.PanelId, i.FeatureId, i.Message }),
+            }),
+            finalOverrides = bundle.Overrides.All.Select(o => new
+            {
+                panelId = o.Key.PanelId,
+                featureId = o.Key.FeatureId,
+                stepoverMm = o.Value.StepoverMm,
+                forceGrooveClear = o.Value.ForceGrooveClear,
+                toolId = o.Value.ToolId,
+                forceFinishLoop = o.Value.ForceFinishLoop,
+            }),
+        }, JsonOpts);
 
     public static IReadOnlyList<string> WriteToDirectory(ExportBundle bundle, string directory)
     {
         Directory.CreateDirectory(directory);
         var written = new List<string>();
+        if (bundle.RepairTrail.Count > 1)
+        {
+            var repPath = Path.Combine(directory, $"{bundle.JobId}.repair.json");
+            File.WriteAllText(repPath, RepairTrailJson(bundle));
+            written.Add(repPath);
+        }
         foreach (var s in bundle.Sheets)
         {
             foreach (var prog in s.ToolPrograms)
@@ -275,6 +445,12 @@ public static class SheetBundleBuilder
             File.WriteAllText(manPath, s.ManifestJson);
             written.Add(dxfPath);
             written.Add(manPath);
+            if (s.VerifyReportJson is not null)
+            {
+                var verPath = Path.Combine(directory, $"{bundle.JobId}_S{s.SheetIndex + 1}.verify.json");
+                File.WriteAllText(verPath, s.VerifyReportJson);
+                written.Add(verPath);
+            }
         }
         var rootPath = Path.Combine(directory, $"{bundle.JobId}.bundle.json");
         File.WriteAllText(rootPath, bundle.RootManifestJson);

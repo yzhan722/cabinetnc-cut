@@ -52,10 +52,13 @@ public class NestP0SafetyGateTests
     [Theory]
     [InlineData(12.0, true)]
     [InlineData(8.0, true)]
-    [InlineData(7.999, false)]
+    [InlineData(7.6, true)]
+    [InlineData(7.0, false)]
     [InlineData(0.0, false)]
     public void Clearance_boundary_is_deterministic(double actualGapMm, bool expectedOk)
     {
+        // Export subtracts SpacingSlackMm (0.5) so an exact nest gap is not a Clipper kiss-fail.
+        // clearance 8 → effective 7.5; 7.6 is inside slack, 7.0 is below it.
         var panels = new[] { Rect("A"), Rect("B") };
         var placements = new[]
         {
@@ -66,6 +69,93 @@ public class NestP0SafetyGateTests
         var gate = NestExportGate.Check(panels, placements, clearanceMm: 8);
 
         Assert.Equal(expectedOk, gate.Ok);
+    }
+
+    [Fact]
+    public void Export_gate_does_not_treat_other_sheets_as_unplaced()
+    {
+        var panels = new[]
+        {
+            Rect("carcass.A", "carcass", 15),
+            Rect("carcass.B", "carcass", 15),
+            Rect("door.A", "door", 16),
+        };
+        var placements = new[]
+        {
+            Place("carcass.A", sheet: 0, x: 10, y: 10),
+            Place("carcass.B", sheet: 0, x: 200, y: 10),
+            Place("door.A", sheet: 1, x: 10, y: 10),
+        };
+
+        var full = NestExportGate.Check(panels, placements, 8);
+        Assert.True(full.Ok, string.Join("; ", full.Errors));
+
+        var doorOnly = NestExportGate.CheckForExport(
+            panels, placements, 8, exportSheetIndexes: [1]);
+        Assert.True(doorOnly.Ok, string.Join("; ", doorOnly.Errors));
+        Assert.DoesNotContain(doorOnly.Errors, e => e.StartsWith("unplaced_panel:"));
+    }
+
+    [Fact]
+    public void Export_gate_allows_confirmed_partial_nest()
+    {
+        var panels = new[] { Rect("PLACED"), Rect("HELD") };
+        var placements = new[] { Place("PLACED", x: 10, y: 10) };
+
+        var verify = NestExportGate.Check(panels, placements, 8);
+        Assert.False(verify.Ok);
+        Assert.Contains(verify.Errors, e => e.StartsWith("unplaced_panel:") && e.Contains("HELD"));
+
+        var export = NestExportGate.CheckForExport(panels, placements, 8);
+        Assert.True(export.Ok, string.Join("; ", export.Errors));
+    }
+
+    [Fact]
+    public void Export_gate_still_blocks_collision_on_exported_sheet()
+    {
+        var panels = new[] { Rect("A"), Rect("B"), Rect("C") };
+        var placements = new[]
+        {
+            Place("A", sheet: 0, x: 0, y: 0),
+            Place("B", sheet: 0, x: 40, y: 0),
+            Place("C", sheet: 1, x: 10, y: 10),
+        };
+
+        var gate = NestExportGate.CheckForExport(
+            panels, placements, clearanceMm: 12, exportSheetIndexes: [0]);
+
+        Assert.False(gate.Ok);
+        Assert.Contains(gate.Errors, e => e.StartsWith("poly_gap") || e.StartsWith("aabb_gap"));
+    }
+
+    [Fact]
+    public void Export_gate_ignores_collision_on_sheets_not_being_exported()
+    {
+        var panels = new[] { Rect("A"), Rect("B"), Rect("C") };
+        var placements = new[]
+        {
+            Place("A", sheet: 0, x: 0, y: 0),
+            Place("B", sheet: 0, x: 40, y: 0),
+            Place("C", sheet: 1, x: 10, y: 10),
+        };
+
+        var gate = NestExportGate.CheckForExport(
+            panels, placements, clearanceMm: 12, exportSheetIndexes: [1]);
+
+        Assert.True(gate.Ok, string.Join("; ", gate.Errors));
+    }
+
+    [Fact]
+    public void Export_gate_empty_sheet_filter_is_nest_empty()
+    {
+        var panels = new[] { Rect("A") };
+        var placements = new[] { Place("A", sheet: 0, x: 10, y: 10) };
+
+        var gate = NestExportGate.CheckForExport(
+            panels, placements, 8, exportSheetIndexes: [9]);
+
+        Assert.False(gate.Ok);
+        Assert.Contains(gate.Errors, e => e.StartsWith("nest_empty:"));
     }
 
     [Theory]

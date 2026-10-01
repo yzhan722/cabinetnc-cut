@@ -21,7 +21,7 @@ public sealed record CutOp
     public IReadOnlyList<(double X, double Y)>? Path { get; init; }
     /// <summary>Disjoint path segments for pocket clear (scan strokes). Prefer over flat Path.</summary>
     public IReadOnlyList<IReadOnlyList<(double X, double Y)>>? PathSegments { get; init; }
-    /// <summary>Optional closed finish loop for pocket onion-skin boundary.</summary>
+    /// <summary>Optional closed finish loop for the pocket wall at CAD size.</summary>
     public IReadOnlyList<(double X, double Y)>? FinishLoop { get; init; }
     /// <summary>When true (contours), emitter closes to first point; pockets use false.</summary>
     public bool ClosePath { get; init; } = true;
@@ -53,10 +53,12 @@ public static class OpsPlanner
         bool enableDrill = true,
         bool enableGroove = true,
         double clearanceLargeMinShortMm = ClearanceToolPick.LargeMinShortMm,
-        double drillMaxExclusiveMm = ClearanceToolPick.DrillMaxExclusiveMm)
+        double drillMaxExclusiveMm = ClearanceToolPick.DrillMaxExclusiveMm,
+        Verification.CamOverrides? overrides = null)
     {
         clearanceLargeMinShortMm = ClearanceToolPick.NormalizeLargeMinShortMm(clearanceLargeMinShortMm);
         drillMaxExclusiveMm = ClearanceToolPick.NormalizeDrillMaxExclusiveMm(drillMaxExclusiveMm);
+        overrides ??= Verification.CamOverrides.Empty;
         var ops = new List<CutOp>();
         var panelList = panels.ToList();
         foreach (var panel in panelList)
@@ -106,13 +108,13 @@ public static class OpsPlanner
                     if (f.Through)
                         AddThroughHoleContour(ops, panel, f, holeOutline, bounds);
                     else
-                        AddPocketOp(ops, panel, f, holeOutline, bounds, clearanceLargeMinShortMm);
+                        AddPocketOp(ops, panel, f, holeOutline, bounds, clearanceLargeMinShortMm, overrides.Get(panel.PanelId, f.FeatureId));
                 }
                 else if (enableContour
                     && ClearanceToolPick.IsHingeFeature(f)
                     && ClearanceToolPick.CupOutline(f) is { Count: >= 3 } cupOutline)
                 {
-                    AddPocketOp(ops, panel, f, cupOutline, bounds, clearanceLargeMinShortMm);
+                    AddPocketOp(ops, panel, f, cupOutline, bounds, clearanceLargeMinShortMm, overrides.Get(panel.PanelId, f.FeatureId));
                 }
                 else if (enableGroove && f.Kind.Contains("groove", StringComparison.OrdinalIgnoreCase)
                          && f.Path is { Count: >= 2 } path)
@@ -121,16 +123,17 @@ public static class OpsPlanner
                         continue;
                     var isTongue = Parts.PanelEdit.IsTongueGroove(f);
                     var width = GrooveClear.ResolveWidthMm(f);
-                    var toolId = isTongue
-                        ? TroyRecipe.TongueToolId
-                        : ClearanceToolPick.Pick(f, clearanceLargeMinShortMm);
+                    var ov = overrides.Get(panel.PanelId, f.FeatureId);
+                    var toolId = ov?.ToolId
+                        ?? (isTongue ? TroyRecipe.TongueToolId : ClearanceToolPick.Pick(f, clearanceLargeMinShortMm));
                     var toolDia = ClearanceToolPick.DiameterOf(toolId);
                     IReadOnlyList<(double X, double Y)> groovePath =
                         path.Select(p => (p.X, p.Y)).ToList();
                     IReadOnlyList<IReadOnlyList<(double X, double Y)>>? segments = null;
                     IReadOnlyList<(double X, double Y)>? finish = null;
                     var tooSmall = false;
-                    var cleared = GrooveClear.TryClear(f, toolDia, bounds);
+                    var cleared = GrooveClear.TryClear(
+                        f, toolDia, bounds, force: ov?.ForceGrooveClear ?? false, stepoverMm: ov?.StepoverMm);
                     if (cleared is not null)
                     {
                         if (cleared.TooSmallForTool)
@@ -169,7 +172,7 @@ public static class OpsPlanner
                     AddPocketOp(
                         ops, panel, f,
                         pocketPath.Select(p => (p.X, p.Y)).ToList(),
-                        bounds, clearanceLargeMinShortMm);
+                        bounds, clearanceLargeMinShortMm, overrides.Get(panel.PanelId, f.FeatureId));
                 }
                 else if (enableContour && f.Kind.Contains("cutout", StringComparison.OrdinalIgnoreCase)
                          && f.Path is { Count: >= 3 } cutPath)
@@ -232,7 +235,8 @@ public static class OpsPlanner
         Parts.PanelFeature f,
         IReadOnlyList<(double X, double Y)> outline,
         Nesting.LocalBounds? bounds,
-        double clearanceLargeMinShortMm)
+        double clearanceLargeMinShortMm,
+        Verification.FeatureCamOverride? ov = null)
     {
         if (PocketClearer.IsExportSliver(outline))
             return;
@@ -240,7 +244,7 @@ public static class OpsPlanner
             return;
 
         var islands = PocketClearIslands.Keep(panel, f);
-        var toolId = ClearanceToolPick.Pick(f, clearanceLargeMinShortMm, islandHoles: islands);
+        var toolId = ov?.ToolId ?? ClearanceToolPick.Pick(f, clearanceLargeMinShortMm, islandHoles: islands);
         var toolDia = ClearanceToolPick.DiameterOf(toolId);
         var directToSize = ClearanceToolPick.IsHingeFeature(f);
         var holes = islands
@@ -251,8 +255,8 @@ public static class OpsPlanner
             Outline = outline,
             Holes = holes,
             ToolDiameterMm = toolDia,
-            OnionSkinMm = directToSize ? 0 : PocketClearer.DefaultOnionSkinMm,
-            EmitFinishLoop = !directToSize && holes.Count == 0,
+            StepoverMm = ov?.StepoverMm,
+            EmitFinishLoop = (ov?.ForceFinishLoop ?? false) || (!directToSize && holes.Count == 0),
             CloseClearRings = directToSize,
             PanelBounds = bounds,
         });

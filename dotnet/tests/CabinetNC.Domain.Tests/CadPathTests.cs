@@ -121,6 +121,101 @@ public class CadPathTests
         Assert.All(off.Where(s => s.IsArc), a => Assert.InRange(a.RadiusMm, 24.99, 25.01));
     }
 
+    /// <summary>Kitchen DS / SH tongue: 7.5 mm step, Ø10 tool. Must stay square.</summary>
+    static IReadOnlyList<(double X, double Y)> DrawerShelfTongue() =>
+    [
+        (0, 15), (201.3333, 15), (201.3333, 0), (402.6667, 0), (402.6667, 15),
+        (584, 15), (584, 424.9), (402.6667, 424.9), (402.6667, 432.4),
+        (201.3333, 432.4), (201.3333, 424.9), (0, 424.9),
+    ];
+
+    static bool HasDiagonalG1(string nc)
+    {
+        double? x = null, y = null;
+        foreach (var raw in nc.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = raw.Trim();
+            if (line.Length < 2 || line[0] is not ('G' or 'N')) continue;
+            var g1 = line.Contains("G1 ", StringComparison.Ordinal)
+                     || line.Contains("G01", StringComparison.Ordinal);
+            var nx = x;
+            var ny = y;
+            if (TryToken(line, 'X', out var xv)) nx = xv;
+            if (TryToken(line, 'Y', out var yv)) ny = yv;
+            if (g1 && x is { } px && y is { } py && nx is { } qx && ny is { } qy)
+            {
+                var dx = Math.Abs(qx - px);
+                var dy = Math.Abs(qy - py);
+                // Collapsed short-step gouge is a few mm. Ignore long linking moves.
+                if (dx > 0.2 && dy > 0.2 && Math.Sqrt(dx * dx + dy * dy) < 20)
+                    return true;
+            }
+            x = nx;
+            y = ny;
+        }
+        return false;
+    }
+
+    static bool TryToken(string line, char axis, out double v)
+    {
+        v = 0;
+        var i = line.IndexOf(axis);
+        if (i < 0) return false;
+        var j = i + 1;
+        while (j < line.Length && (char.IsDigit(line[j]) || line[j] is '.' or '-' or '+'))
+            j++;
+        return double.TryParse(line[(i + 1)..j], System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out v);
+    }
+
+    [Fact]
+    public void Short_tongue_offset_stays_axis_aligned()
+    {
+        var cad = CadPath.FromPolyline(DrawerShelfTongue());
+        Assert.True(CadPath.IsAxisAligned(DrawerShelfTongue()));
+        Assert.True(CadPath.TryOffset(cad, 5, roundConvex: true, out var off));
+        Assert.All(off.Where(s => s.IsLine), s =>
+        {
+            var dx = Math.Abs(s.End.X - s.Start.X);
+            var dy = Math.Abs(s.End.Y - s.Start.Y);
+            Assert.True(dx < 0.05 || dy < 0.05, $"slanted leftover {s.Start}→{s.End}");
+        });
+        Assert.Contains(off, s => s.IsArc && Math.Abs(s.RadiusMm - 5) < 0.02);
+        var leftover = off.Where(s => s.IsLine
+            && Math.Abs(Math.Abs(s.End.Y - s.Start.Y) - 2.5) < 0.05
+            && Math.Abs(s.End.X - s.Start.X) < 0.05).ToList();
+        Assert.True(leftover.Count >= 2, "7.5 mm step should keep a 2.5 mm vertical after R5");
+    }
+
+    [Fact]
+    public void Fusion_polyline_only_contour_does_not_emit_diagonal_g1()
+    {
+        var source = new CutOp
+        {
+            Op = "contour",
+            PanelId = "DS",
+            ToolId = "T2",
+            Placed = true,
+            ClosePath = true,
+            Through = true,
+            ThicknessMm = 15,
+            DepthMm = 15.5,
+            Path = DrawerShelfTongue(),
+        };
+        var offset = ContourToolOffset.Apply([source], 5)[0];
+        Assert.NotNull(offset.CadPath);
+        Assert.All(offset.CadPath!.Where(s => s.IsLine), s =>
+        {
+            var dx = Math.Abs(s.End.X - s.Start.X);
+            var dy = Math.Abs(s.End.Y - s.Start.Y);
+            Assert.True(dx < 0.05 || dy < 0.05);
+        });
+        var nc = NcEmitter.OpsToNc([offset], MachineCatalog.Get("nesting_router_6"),
+            recipe: PostRecipe.TroyDefault());
+        Assert.False(HasDiagonalG1(nc), nc);
+        Assert.Contains("R5.0000", nc);
+    }
+
     [Fact]
     public void Outer_cw_designed_arc_grows_by_tool_radius()
     {

@@ -2,6 +2,7 @@ namespace CabinetNC.Domain.Manufacturing;
 
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using CabinetNC.Domain.Nesting;
 using CabinetNC.Domain.Parts;
 
@@ -15,6 +16,8 @@ public sealed class LabelPaste
     public double SheetY { get; init; }
     public string Title { get; init; } = "";
     public string Group { get; init; } = "";
+    /// <summary>Job / .cnjob name, second line on the label.</summary>
+    public string Project { get; init; } = "";
     public string? Material { get; init; }
     public double ThicknessMm { get; init; }
     public double WidthMm { get; init; }
@@ -31,7 +34,8 @@ public static class LabelExport
         IReadOnlyList<Panel> panels,
         IReadOnlyList<NestPlacement> placements,
         IReadOnlyDictionary<string, (double X, double Y)>? overrides = null,
-        Func<Panel, string>? materialTitle = null)
+        Func<Panel, string>? materialTitle = null,
+        string? projectFallback = null)
     {
         var byId = panels.ToDictionary(p => p.PanelId, StringComparer.Ordinal);
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -60,11 +64,10 @@ public static class LabelExport
                 SheetIndex = place.SheetIndex,
                 SheetX = sx,
                 SheetY = sy,
-                Title = string.IsNullOrWhiteSpace(panel.DisplayPartName)
-                    ? panel.DisplayTitle
-                    : panel.DisplayPartName,
-                Group = panel.DisplayGroup,
-                Material = materialTitle?.Invoke(panel) ?? panel.MaterialGroupLabel,
+                Title = ShopPartTitle(panel),
+                Group = ShopGroup(panel),
+                Project = ShopProject(panel, projectFallback),
+                Material = materialTitle?.Invoke(panel) ?? ShopStockShort(panel),
                 ThicknessMm = panel.ThicknessMm,
                 WidthMm = Math.Max(0, bounds.MaxX - bounds.MinX),
                 HeightMm = Math.Max(0, bounds.MaxY - bounds.MinY),
@@ -72,6 +75,78 @@ public static class LabelExport
             });
         }
         return list;
+    }
+
+    /// <summary>One-line shop title: cabinet + part, no Fusion <c>_1</c> / ComponentNN.</summary>
+    public static string ShopPartTitle(Panel panel)
+    {
+        var group = ShopGroup(panel);
+        var part = CleanShopName(panel.DisplayPartName);
+        if (IsGenericPart(part))
+            return group.Length > 0 ? group : CleanShopName(panel.DisplayTitle);
+        if (group.Length == 0 || group.Equals(part, StringComparison.OrdinalIgnoreCase))
+            return part.Length > 0 ? part : CleanShopName(panel.DisplayTitle);
+        if (part.StartsWith(group + " ", StringComparison.OrdinalIgnoreCase)
+            || part.StartsWith(group, StringComparison.OrdinalIgnoreCase))
+            return part;
+        return $"{group} {part}";
+    }
+
+    public static string ShopGroup(Panel panel)
+    {
+        var group = CleanShopName(panel.DisplayGroup);
+        return group is "其他" ? "" : group;
+    }
+
+    public static string ShopProject(Panel panel, string? fallback = null)
+    {
+        var pkg = panel.DisplayPackage;
+        if (string.IsNullOrWhiteSpace(pkg) || pkg is "方案")
+            pkg = fallback?.Trim() ?? "";
+        return pkg;
+    }
+
+    /// <summary>Short stock for 60 mm paper, e.g. <c>白点 DS</c>. Thickness lives on the size line.</summary>
+    public static string ShopStockShort(Panel panel)
+    {
+        var color = ShortColor(panel.DisplayColor);
+        var surface = panel.DisplaySurface;
+        if (color.Length == 0) return surface;
+        return string.IsNullOrWhiteSpace(surface) ? color : $"{color} {surface}";
+    }
+
+    static string CleanShopName(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        var t = raw.Trim();
+        t = Regex.Replace(t, @"_\d+$", "");
+        t = t.Replace('_', ' ');
+        return Regex.Replace(t, @"\s+", " ").Trim();
+    }
+
+    static bool IsGenericPart(string part) =>
+        string.IsNullOrWhiteSpace(part)
+        || Regex.IsMatch(part, @"^Component\s*\d+$", RegexOptions.IgnoreCase);
+
+    static string ShortColor(string? color)
+    {
+        if (string.IsNullOrWhiteSpace(color)
+            || color.Equals("Unassigned", StringComparison.OrdinalIgnoreCase))
+            return "";
+        var key = color.Replace(" ", "", StringComparison.Ordinal)
+            .Replace("-", "", StringComparison.Ordinal)
+            .Replace("_", "", StringComparison.Ordinal)
+            .ToLowerInvariant();
+        return key switch
+        {
+            "whitestipple" => "白点",
+            "woodgrain" => "木纹",
+            "doorwoodgrain" or "doorwoodgrain16" => "木纹",
+            "forestgreen" => "森绿",
+            "metallicwhite" => "金属白",
+            "glosswhite" => "亮白",
+            _ => color.Trim(),
+        };
     }
 
     public static string SafeStem(string? raw, int max = StemMaxLen)

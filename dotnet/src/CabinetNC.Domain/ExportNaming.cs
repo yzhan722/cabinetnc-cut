@@ -2,7 +2,7 @@ namespace CabinetNC.Domain;
 
 using System.Globalization;
 
-/// <summary>Shop file stems: ordinal + thickness + color + kind + project.</summary>
+/// <summary>Shop file stems: thickness + ordinal + color + kind + project.</summary>
 public static class ExportNaming
 {
     public static string FileStem(string? raw, string empty = "project")
@@ -43,5 +43,5 @@ public static class ExportNaming
         string? color,
         string? kind,
         string? project) =>
-        $"{Math.Max(1, kindOrdinal):00}_{ThicknessToken(thicknessMm)}_{FileStem(color, "Unassigned")}_{FileStem(kind, "Board")}_{FileStem(project)}.anc";
+        $"{ThicknessToken(thicknessMm)}_{Math.Max(1, kindOrdinal):00}_{FileStem(color, "Unassigned")}_{FileStem(kind, "Board")}_{FileStem(project)}.anc";
 }

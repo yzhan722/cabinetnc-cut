@@ -124,11 +124,15 @@ public static class ManufacturingSnapshotImporter
 
         var panelIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var panels = new List<Panel>();
+        // v1.1: `grained` may be declared once on the material list instead of on every workpiece.
+        var grainedIds = new HashSet<string>(
+            snapshot.Materials.Where(m => m.Grained == true && !string.IsNullOrWhiteSpace(m.MaterialId)).Select(m => m.MaterialId),
+            StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < snapshot.Workpieces.Count; i++)
         {
             var workpiece = snapshot.Workpieces[i];
             var path = $"$.workpieces[{i}]";
-            var panel = ConvertWorkpiece(workpiece, path, errors, warnings);
+            var panel = ConvertWorkpiece(workpiece, path, errors, warnings, grainedIds);
             if (panel is null) continue;
             if (!panelIds.Add(panel.PanelId))
             {
@@ -187,7 +191,8 @@ public static class ManufacturingSnapshotImporter
         SnapshotWorkpiece workpiece,
         string path,
         List<ValidationIssue> errors,
-        List<ValidationIssue> warnings)
+        List<ValidationIssue> warnings,
+        IReadOnlySet<string> grainedIds)
     {
         var initialErrorCount = errors.Count;
         var panelId = string.IsNullOrWhiteSpace(workpiece.PanelId)
@@ -274,6 +279,8 @@ public static class ManufacturingSnapshotImporter
                 "blind features exist on both A and B; CabinetNC supports single-side machining only"));
 
         var machiningFace = blindFaces.Count == 1 ? blindFaces.Single() : "A";
+        // v1.1 EITHER: no blind work and both faces allowed — the nester may flip the part.
+        var mayFlip = false;
         if (workpiece.Manufacturing is { } declared)
         {
             if (!declared.Mode.Equals("singleSide", StringComparison.OrdinalIgnoreCase))
@@ -285,7 +292,26 @@ public static class ManufacturingSnapshotImporter
                     $"declared face {declaredFace} conflicts with feature face {machiningFace}"));
             if (blindFaces.Count == 0 && declaredFace is ("A" or "B"))
                 machiningFace = declaredFace;
+            if (declaredFace == "EITHER")
+            {
+                var locked = workpiece.Faces.Any(f =>
+                    f.MachiningPermission?.Equals("NOT_ALLOWED", StringComparison.OrdinalIgnoreCase) == true);
+                if (blindFaces.Count > 0 || locked)
+                    warnings.Add(new("machining_face_either_ignored", $"{path}.manufacturing.machiningFace",
+                        blindFaces.Count > 0
+                            ? $"EITHER declared but blind features are on {machiningFace}; the part is milled from that face"
+                            : "EITHER declared but a face is NOT_ALLOWED; the part is not flipped"));
+                else
+                    mayFlip = true;
+            }
         }
+        if ((workpiece.Material.Grained ?? grainedIds.Contains(workpiece.Material.MaterialId))
+            && string.IsNullOrWhiteSpace(workpiece.GrainDirection)
+            && string.IsNullOrWhiteSpace(workpiece.Manufacturing?.GrainDirection)
+            && workpiece.Material.GrainAngleDeg is null
+            && workpiece.Material.GrainAlongMm is null)
+            warnings.Add(new("grain_missing", $"{path}.grainDirection",
+                $"material {workpiece.Material.MaterialId} is grained but the part has no grain direction; it may be nested across the grain"));
 
         var faces = workpiece.Faces.Select(f => new WorkpieceFace
         {
@@ -314,6 +340,7 @@ public static class ManufacturingSnapshotImporter
         }
 
         faces = EnsureMachiningFaceAllowed(faces, warnings, path);
+        var edgeBands = ReadEdgeBands(workpiece, outline, path, errors);
 
         if (errors.Count > initialErrorCount) return null;
 
@@ -355,11 +382,69 @@ public static class ManufacturingSnapshotImporter
                 PrimaryFace = "A",
                 MillingFace = "A",
                 GrainDirection = grain,
-                AllowMirror = false,
+                // EITHER (v1.1): no blind work, both faces allowed — free to flip when nesting.
+                AllowMirror = mayFlip,
             },
+            EdgeBands = edgeBands,
             Side = "A",
             Notes = NullIfEmpty(workpiece.Identity.Role),
         };
+    }
+
+    /// <summary>Omitted or empty <c>edgeBands</c> means the part is not banded.</summary>
+    static List<EdgeBandSegment> ReadEdgeBands(
+        SnapshotWorkpiece workpiece,
+        IReadOnlyList<Point2> outline,
+        string path,
+        List<ValidationIssue> errors)
+    {
+        var raw = workpiece.EdgeBands;
+        if (raw is null || raw.Count == 0) return [];
+        var n = OutlineEdgeCount(outline);
+        var seen = new HashSet<int>();
+        var list = new List<EdgeBandSegment>();
+        for (var i = 0; i < raw.Count; i++)
+        {
+            var band = raw[i];
+            var bpath = $"{path}.edgeBands[{i}]";
+            if (band.I is not int index)
+            {
+                errors.Add(new("edge_band_index", $"{bpath}.i", "edge index i is required"));
+                continue;
+            }
+            if (index < 0 || index >= n)
+            {
+                errors.Add(new("edge_band_index", $"{bpath}.i",
+                    $"edge {index} is outside the outline ({n} edges)"));
+                continue;
+            }
+            if (!seen.Add(index))
+            {
+                errors.Add(new("edge_band_duplicate", $"{bpath}.i", $"edge {index} is banded twice"));
+                continue;
+            }
+            if (band.ThicknessMm is not double thickness || !double.IsFinite(thickness) || thickness <= 0)
+            {
+                errors.Add(new("edge_band_thickness", $"{bpath}.thicknessMm", "thicknessMm must be > 0"));
+                continue;
+            }
+            list.Add(new EdgeBandSegment
+            {
+                Index = index,
+                ThicknessMm = thickness,
+                ColorName = NullIfEmpty(band.ColorName),
+            });
+        }
+        return list;
+    }
+
+    static int OutlineEdgeCount(IReadOnlyList<Point2> outline)
+    {
+        if (outline.Count < 2) return 0;
+        var first = outline[0];
+        var last = outline[^1];
+        var closedDup = Math.Abs(first.X - last.X) <= 1e-6 && Math.Abs(first.Y - last.Y) <= 1e-6;
+        return closedDup ? outline.Count - 1 : outline.Count;
     }
 
     static string? NullIfEmpty(string? value) =>
@@ -823,6 +908,7 @@ public static class ManufacturingSnapshotImporter
                 },
             Orientation = panel.Orientation,
             EdgeBanding = panel.EdgeBanding,
+            EdgeBands = panel.EdgeBands,
             Notes = panel.Notes,
             Side = panel.Side,
         };

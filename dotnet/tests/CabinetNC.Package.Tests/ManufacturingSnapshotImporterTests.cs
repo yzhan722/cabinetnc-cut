@@ -781,14 +781,156 @@ public class ManufacturingSnapshotImporterTests
         Assert.Equal("Door_Metallic White_SS · 18mm", panel.MaterialGroupLabel);
     }
 
+    [Fact]
+    public void V1_1_sample_imports_with_flip_and_grain()
+    {
+        string? sample = null;
+        for (var walk = AppContext.BaseDirectory; walk is not null && sample is null; walk = Directory.GetParent(walk)?.FullName)
+        {
+            var p = Path.Combine(walk, "public", "samples", "demo_manufacturing_snapshot_v1_1.json");
+            if (File.Exists(p)) sample = p;
+        }
+        Assert.NotNull(sample);
+
+        var result = ManufacturingSnapshotImporter.FromPath(sample!);
+
+        Assert.True(result.Ok, string.Join("; ", result.Errors.Select(e => e.Message)));
+        Assert.DoesNotContain(result.Warnings, w => w.Code == "grain_missing");
+        var door = result.Package!.Panels.Single(p => p.Identity!.Role == "FP_zone-1");
+        Assert.Equal("hpl-chestnut-1s-16", door.Material);
+        Assert.False(door.Orientation!.AllowMirror, "single-sided: the colour face stays down");
+        Assert.NotNull(door.GrainDirection);
+        Assert.All(door.Features, f => Assert.Equal("A", f.FaceId));
+        var shelf = result.Package.Panels.Single(p => p.Identity!.Role == "SHELF_1");
+        Assert.True(shelf.Orientation!.AllowMirror, "double-sided, no blind work: EITHER");
+        // v1.1 id: the label follows the sheet (series), not the part's role.
+        Assert.Equal("Melamine_White Stipple_DS · 15mm", shelf.MaterialGroupLabel);
+        Assert.Equal("HPL_Chestnut_SS · 16mm", door.MaterialGroupLabel);
+    }
+
+    [Fact]
+    public void V1_1_either_without_blind_work_may_flip()
+    {
+        var json = SnapshotJson(
+            """[{"featureId":"T1","kind":"throughProfile","sourceFace":"THROUGH","geometry":{"profile":{"closed":true,"points":[[10,10],[20,10],[20,20],[10,20]]}},"through":true}]""",
+            machiningFace: "EITHER",
+            schemaVersion: "1.1.0");
+
+        var result = ManufacturingSnapshotImporter.FromJson(json);
+
+        Assert.True(result.Ok, string.Join("; ", result.Errors.Select(e => e.Message)));
+        var panel = Assert.Single(result.Package!.Panels);
+        Assert.Equal("A", panel.Orientation!.MillingFace);
+        Assert.True(panel.Orientation.AllowMirror, "EITHER with only through work: free to flip");
+    }
+
+    [Fact]
+    public void V1_1_either_with_blind_work_is_milled_from_that_face()
+    {
+        var json = SnapshotJson(
+            """[{"featureId":"H1","kind":"bore","sourceFace":"B","geometry":{"center":[20,30],"diameterMm":5},"depthMm":12,"through":false}]""",
+            machiningFace: "EITHER",
+            schemaVersion: "1.1.0");
+
+        var result = ManufacturingSnapshotImporter.FromJson(json);
+
+        Assert.True(result.Ok, string.Join("; ", result.Errors.Select(e => e.Message)));
+        var panel = Assert.Single(result.Package!.Panels);
+        Assert.False(panel.Orientation!.AllowMirror);
+        Assert.Equal("A", panel.Features[0].FaceId);
+        Assert.Contains(result.Warnings, w => w.Code == "machining_face_either_ignored");
+    }
+
+    [Fact]
+    public void V1_1_grained_material_without_grain_direction_warns()
+    {
+        var json = SnapshotJson("[]", schemaVersion: "1.1.0",
+            material: """{"materialId":"hpl-chestnut-1s-16","thicknessMm":16,"colorName":"Chestnut","surfaceMode":"SINGLE_SIDED","grained":true}""");
+
+        var result = ManufacturingSnapshotImporter.FromJson(json);
+
+        Assert.True(result.Ok, string.Join("; ", result.Errors.Select(e => e.Message)));
+        Assert.Contains(result.Warnings, w => w.Code == "grain_missing");
+    }
+
+    [Fact]
+    public void V1_1_material_id_sides_token_reads_into_group_label()
+    {
+        var json = SnapshotJson("[]", schemaVersion: "1.1.0",
+            material: """{"materialId":"acrylic-gloss-white-2s-16","thicknessMm":16}""");
+
+        var result = ManufacturingSnapshotImporter.FromJson(json);
+
+        Assert.True(result.Ok, string.Join("; ", result.Errors.Select(e => e.Message)));
+        var panel = Assert.Single(result.Package!.Panels);
+        Assert.Equal("acrylic-gloss-white-2s-16", panel.Material);
+        Assert.Equal("Acrylic_Gloss White_DS · 16mm", panel.MaterialGroupLabel);
+    }
+
+    [Fact]
+    public void V1_1_pvc_series_labels_the_group_pvc()
+    {
+        var json = SnapshotJson("[]", material: """{"materialId":"pvc-white-stipple-2s-15","thicknessMm":15,"colorName":"White Stipple","surfaceMode":"DOUBLE_SIDED","series":"pvc"}""");
+
+        var result = ManufacturingSnapshotImporter.FromJson(json);
+
+        Assert.True(result.Ok, string.Join("; ", result.Errors.Select(e => e.Message)));
+        var panel = Assert.Single(result.Package!.Panels);
+        Assert.Equal("pvc-white-stipple-2s-15", panel.Material);
+        Assert.Equal("PVC_White Stipple_DS · 15mm", panel.MaterialGroupLabel);
+    }
+
+    [Fact]
+    public void Missing_edge_bands_import_as_unbanded()
+    {
+        var result = ManufacturingSnapshotImporter.FromJson(SnapshotJson("[]"));
+        Assert.True(result.Ok, string.Join("; ", result.Errors.Select(e => e.Message)));
+        Assert.Empty(Assert.Single(result.Package!.Panels).EdgeBands);
+    }
+
+    [Fact]
+    public void Edge_bands_follow_the_outline_index()
+    {
+        var json = SnapshotJson("[]").Replace(
+            "\"manufacturing\":{\"mode\":\"singleSide\",\"machiningFace\":\"A\"}",
+            "\"edgeBands\":[{\"i\":0,\"thicknessMm\":1,\"colorName\":\"Gloss White\"},{\"i\":2,\"thicknessMm\":0.8}],\"manufacturing\":{\"mode\":\"singleSide\",\"machiningFace\":\"A\"}");
+
+        var result = ManufacturingSnapshotImporter.FromJson(json);
+
+        Assert.True(result.Ok, string.Join("; ", result.Errors.Select(e => e.Message)));
+        var bands = Assert.Single(result.Package!.Panels).EdgeBands;
+        Assert.Equal(2, bands.Count);
+        Assert.Equal(0, bands[0].Index);
+        Assert.Equal(1, bands[0].ThicknessMm);
+        Assert.Equal("Gloss White", bands[0].ColorName);
+        Assert.Equal(2, bands[1].Index);
+        Assert.Equal(0.8, bands[1].ThicknessMm);
+        Assert.Null(bands[1].ColorName);
+    }
+
+    [Fact]
+    public void Edge_band_outside_the_outline_is_rejected()
+    {
+        var json = SnapshotJson("[]").Replace(
+            "\"manufacturing\":{\"mode\":\"singleSide\",\"machiningFace\":\"A\"}",
+            "\"edgeBands\":[{\"i\":4,\"thicknessMm\":1}],\"manufacturing\":{\"mode\":\"singleSide\",\"machiningFace\":\"A\"}");
+
+        var result = ManufacturingSnapshotImporter.FromJson(json);
+
+        Assert.False(result.Ok);
+        Assert.Contains(result.Errors, e => e.Code == "edge_band_index");
+    }
+
     static string SnapshotJson(
         string featuresJson,
         string geometryQuality = "tessellated",
-        string machiningFace = "A") =>
+        string machiningFace = "A",
+        string schemaVersion = "1.0.0",
+        string material = """{"materialId":"PB-WHITE-18","thicknessMm":18}""") =>
         $$"""
         {
           "schema":"cabinetnc.manufacturing-snapshot",
-          "schemaVersion":"1.0.0",
+          "schemaVersion":"{{schemaVersion}}",
           "jobId":"SNAPSHOT-TEST",
           "units":"mm",
           "workpieces":[
@@ -797,7 +939,7 @@ public class ManufacturingSnapshotImporterTests
               "panelId":"P1",
               "name":"Side",
               "identity":{"projectId":"PR1","moduleId":"M1","role":"left_side"},
-              "material":{"materialId":"PB-WHITE-18","thicknessMm":18},
+              "material":{{material}},
               "geometry":{
                 "quality":"{{geometryQuality}}",
                 "toleranceMm":0.1,

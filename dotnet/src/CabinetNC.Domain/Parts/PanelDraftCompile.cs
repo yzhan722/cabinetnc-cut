@@ -232,6 +232,7 @@ public static class PanelDraftCompile
                 AllowMirror = false,
             },
             EdgeBanding = seed?.EdgeBanding,
+            EdgeBands = seed?.EdgeBands ?? [],
             Notes = seed?.Notes,
             Side = seed?.Side ?? "A",
             Faces = seed?.Faces ?? [],

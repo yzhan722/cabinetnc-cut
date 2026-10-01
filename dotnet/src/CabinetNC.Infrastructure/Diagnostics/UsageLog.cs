@@ -21,6 +21,7 @@ public static class UsageLog
     const int KeepLinesWhenTrim = 800;
 
     static readonly object Gate = new();
+    static Func<IReadOnlyDictionary<string, object?>?>? ContextProvider;
     static readonly JsonSerializerOptions JsonOpts = new()
     {
         WriteIndented = false,
@@ -29,6 +30,14 @@ public static class UsageLog
     {
         WriteIndented = true,
     };
+
+    /// <summary>
+    /// Optional session snapshot merged into every event as <c>ctx</c>
+    /// (job, stage, machine, counts). The provider must not call back into
+    /// <see cref="LogEvent"/> and must never throw.
+    /// </summary>
+    public static void SetContextProvider(Func<IReadOnlyDictionary<string, object?>?>? provider) =>
+        ContextProvider = provider;
 
     public static string AppDataLogDir()
     {
@@ -103,6 +112,9 @@ public static class UsageLog
             ["error"] = string.IsNullOrWhiteSpace(error) ? null : error,
             ["paths"] = ToNode(Paths()),
         };
+        var ctx = SnapshotContext();
+        if (ctx is not null)
+            eventObj["ctx"] = ctx;
         if (extra is not null)
         {
             foreach (var (key, value) in extra)
@@ -140,6 +152,38 @@ public static class UsageLog
 
     public static void LogActionResult(string action, object? payload = null, string? error = null) =>
         LogEvent(error is null ? "action_result" : "action_error", action, payload, error);
+
+    public static Dictionary<string, object?> SummarizePreflight(
+        bool ok,
+        string reason,
+        IEnumerable<string>? issueCodes = null,
+        int issueCount = 0,
+        IEnumerable<string>? files = null,
+        string? extra = null)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["ok"] = ok,
+            ["reason"] = reason,
+            ["issueCount"] = issueCount,
+            ["issues"] = issueCodes?.Take(20).ToList(),
+            ["files"] = files?.Take(20).ToList(),
+            ["extra"] = string.IsNullOrWhiteSpace(extra) ? null : extra,
+        };
+    }
+
+    static JsonNode? SnapshotContext()
+    {
+        try
+        {
+            var snap = ContextProvider?.Invoke();
+            return snap is null ? null : ToNode(snap);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     public static Dictionary<string, object?> SummarizeImport(
         bool ok,

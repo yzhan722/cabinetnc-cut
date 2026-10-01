@@ -46,4 +46,61 @@ public class UsageLogTests
         Assert.Contains("3", text);
         Assert.True(new FileInfo(jsonl).Length > before);
     }
+
+    [Fact]
+    public void LogEvent_merges_session_context()
+    {
+        UsageLog.SetContextProvider(() => new Dictionary<string, object?>
+        {
+            ["jobId"] = "ctx-job",
+            ["stage"] = "ops",
+            ["panelCount"] = 4,
+        });
+        try
+        {
+            UsageLog.LogEvent("ui", "test.ctx", new Dictionary<string, object?> { ["ok"] = true });
+            var latest = Path.Combine(UsageLog.AppDataLogDir(), "app_usage_latest.json");
+            var text = File.ReadAllText(latest);
+            Assert.Contains("ctx-job", text);
+            Assert.Contains("\"stage\"", text);
+            Assert.Contains("panelCount", text);
+        }
+        finally
+        {
+            UsageLog.SetContextProvider(null);
+        }
+    }
+
+    [Fact]
+    public void LogEvent_survives_throwing_context_provider()
+    {
+        UsageLog.SetContextProvider(() => throw new InvalidOperationException("ctx"));
+        try
+        {
+            var ev = UsageLog.LogEvent("ui", "test.ctx.safe");
+            Assert.Equal("ui", ev["kind"]!.GetValue<string>());
+            Assert.Null(ev["ctx"]);
+        }
+        finally
+        {
+            UsageLog.SetContextProvider(null);
+        }
+    }
+
+    [Fact]
+    public void SummarizePreflight_keeps_codes_and_reason()
+    {
+        var payload = UsageLog.SummarizePreflight(
+            ok: false,
+            reason: "export",
+            issueCodes: ["no_ops", "missing_tool_id"],
+            issueCount: 2,
+            files: ["S1_T1.nc"]);
+
+        Assert.False((bool)payload["ok"]!);
+        Assert.Equal("export", payload["reason"]);
+        Assert.Equal(2, payload["issueCount"]);
+        var issues = Assert.IsAssignableFrom<IEnumerable<string>>(payload["issues"]);
+        Assert.Contains("no_ops", issues);
+    }
 }

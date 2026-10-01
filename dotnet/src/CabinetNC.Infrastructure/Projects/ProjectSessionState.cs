@@ -27,6 +27,40 @@ public sealed class ProjectSessionState
     public List<BridgeDto> Bridges { get; set; } = [];
     public List<CutOpDto> Ops { get; set; } = [];
     public List<LabelAnchorDto> LabelAnchors { get; set; } = [];
+    /// <summary>补板库 — panels that must be cut again for this project (one copy each).</summary>
+    public List<RecutPendingDto> RecutPending { get; set; } = [];
+    /// <summary>补板库 — offcuts on hand for this project (rectangle or drawn ortho outline).</summary>
+    public List<RecutRemnantDto> RecutRemnants { get; set; } = [];
+}
+
+public sealed class RecutPendingDto
+{
+    public string Id { get; set; } = "";
+    /// <summary>Panel the copy was taken from (for display / dedupe); the geometry lives in <see cref="PanelJson"/>.</summary>
+    public string SourcePanelId { get; set; } = "";
+    /// <summary>One-panel cut-package JSON so the pending piece survives unloading the source .cnjob.</summary>
+    public string? PanelJson { get; set; }
+    public string Title { get; set; } = "";
+    public string? Material { get; set; }
+    public double ThicknessMm { get; set; }
+    public double WidthMm { get; set; }
+    public double LengthMm { get; set; }
+    public string? AddedAt { get; set; }
+}
+
+public sealed class RecutRemnantDto
+{
+    public string Id { get; set; } = "";
+    public string? Material { get; set; }
+    public double ThicknessMm { get; set; }
+    public double WidthMm { get; set; }
+    public double LengthMm { get; set; }
+    /// <summary>Closed axis-aligned ring in remnant-local mm (origin at bbox min). Null = rectangle of Width×Length.</summary>
+    public List<XyDto>? Outline { get; set; }
+    /// <summary>manual | sheet | drawn</summary>
+    public string Source { get; set; } = "manual";
+    public string? Note { get; set; }
+    public string? AddedAt { get; set; }
 }
 
 public sealed class LabelAnchorDto
@@ -97,6 +131,7 @@ public sealed class NestSheetDto
     public string? Label { get; set; }
     public string? Material { get; set; }
     public double ThicknessMm { get; set; }
+    public List<BoundsDto>? Blocked { get; set; }
 }
 
 public sealed class StockKindDto
@@ -366,6 +401,15 @@ public static class ProjectSessionCodec
         Label = s.Label,
         Material = s.Material,
         ThicknessMm = s.ThicknessMm,
+        Blocked = s.Blocked.Count == 0
+            ? null
+            : s.Blocked.Select(b => new BoundsDto
+            {
+                MinX = b.MinX,
+                MinY = b.MinY,
+                MaxX = b.MaxX,
+                MaxY = b.MaxY,
+            }).ToList(),
     };
 
     public static NestSheetSpec ToSheet(NestSheetDto d) => new()
@@ -383,6 +427,13 @@ public static class ProjectSessionCodec
         Label = d.Label,
         Material = d.Material,
         ThicknessMm = d.ThicknessMm,
+        Blocked = (d.Blocked ?? []).Select(b => new NestBlockedRect
+        {
+            MinX = b.MinX,
+            MinY = b.MinY,
+            MaxX = b.MaxX,
+            MaxY = b.MaxY,
+        }).ToList(),
     };
 
     static List<XyDto>? FromPts(IReadOnlyList<(double X, double Y)>? pts) =>

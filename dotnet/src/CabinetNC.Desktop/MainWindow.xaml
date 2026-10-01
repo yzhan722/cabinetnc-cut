@@ -133,14 +133,25 @@
       <Separator />
       <MenuItem Header="仿真快移线（导出页）" IsCheckable="True" IsChecked="True" Tag="rapids" Click="OnDisplayToggleClick" />
     </ContextMenu>
-    <ContextMenu x:Key="NestPartContextMenu">
+    <ContextMenu x:Key="NestPartContextMenu" Opened="OnNestContextMenuOpened">
       <MenuItem Header="改变材料" Click="OnNestChangeMaterialClick" />
       <MenuItem Header="改变纹路朝向 90°" Click="OnNestRotateGrainClick" />
+      <Separator Tag="recut" />
+      <MenuItem Header="加入待补件（切坏了，再切一块）" Tag="recut" Click="OnRecutAddPendingClick"
+                ToolTip="把这块板复制一件到补板库，原密排不动" />
+      <MenuItem Header="本张大板加入余料（还没切）" Tag="recut" Click="OnRecutAddSheetRemnantClick"
+                ToolTip="整张大板按矩形收进补板库的余料，补切时先用它" />
     </ContextMenu>
-    <ContextMenu x:Key="NestHoldContextMenu">
+    <ContextMenu x:Key="NestSheetContextMenu" Opened="OnNestContextMenuOpened">
+      <MenuItem Header="本张大板加入余料（还没切）" Tag="recut" Click="OnRecutAddSheetRemnantClick"
+                ToolTip="整张大板按矩形收进补板库的余料，补切时先用它" />
+    </ContextMenu>
+    <ContextMenu x:Key="NestHoldContextMenu" Opened="OnNestContextMenuOpened">
       <MenuItem Header="改变纹路朝向 90°" Click="OnNestRotateGrainClick" />
       <MenuItem Header="复制" Click="OnNestHoldCopyClick" />
       <MenuItem Header="删除" Click="OnNestHoldDeleteClick" />
+      <Separator Tag="recut" />
+      <MenuItem Header="加入待补件（切坏了，再切一块）" Tag="recut" Click="OnRecutAddPendingClick" />
     </ContextMenu>
   </Window.Resources>
 
@@ -152,7 +163,6 @@
       <MenuItem Header="文件(_F)">
         <MenuItem Header="打开方案…" InputGestureText="Ctrl+O" Click="OnOpenClick" />
         <MenuItem Header="加入方案…" Click="OnAddPackageClick" ToolTip="再打开一份或多份 .cnjob，和当前板件并列密排" />
-        <MenuItem Header="从 .anc 反推…" Click="OnImportAncClick" />
         <MenuItem Header="打开示例" Click="OnLoadDemoClick" />
         <MenuItem x:Name="RecentMenu" Header="最近打开">
           <MenuItem Header="（暂无）" IsEnabled="False" />
@@ -160,6 +170,7 @@
         <Separator />
         <MenuItem Header="打开工程…" InputGestureText="Ctrl+Shift+O" Click="OnOpenProjectClick" />
         <MenuItem Header="保存工程" InputGestureText="Ctrl+S" Click="OnSaveProjectClick" />
+        <MenuItem Header="另存为…" InputGestureText="Ctrl+Shift+S" Click="OnSaveProjectAsClick" />
         <Separator />
         <MenuItem Header="退出" InputGestureText="Alt+F4" Click="OnExitClick" />
       </MenuItem>
@@ -175,6 +186,8 @@
         <MenuItem Header="镜像 X" Click="OnGeomMirrorXClick" />
         <MenuItem Header="镜像 Y" Click="OnGeomMirrorYClick" />
         <MenuItem Header="创建板件…" Click="OnCreatePanelClick" />
+        <MenuItem Header="编辑板件…" Click="OnEditPanelClick"
+                  ToolTip="在简易 CAD 里移动 / 复制 / 删除已选板的孔、槽、口袋" />
       </MenuItem>
       <MenuItem Header="视图(_V)">
         <MenuItem Header="适配大板" InputGestureText="F / Home" Click="OnViewFitClick" />
@@ -253,11 +266,10 @@
                   ToolTip="打开 Fusion 导出的 .cnjob / woodjob / cut-package　(Ctrl+O)" />
           <Button Content="加入方案…" Click="OnAddPackageClick"
                   ToolTip="再打开一份或多份 .cnjob，和当前板件并列密排" />
-          <Button Content="从 .anc 反推…" Click="OnImportAncClick"
-                  ToolTip="从机台 OSAI .anc / .nc 还原板件，供补板重切" />
           <Rectangle Width="1" Height="22" Fill="{StaticResource BorderBrush}" Margin="4,0,10,0" />
           <Button Content="打开工程…" Click="OnOpenProjectClick" ToolTip="打开保存过的工程 (.db)　(Ctrl+Shift+O)" />
-          <Button Content="保存工程" Click="OnSaveProjectClick" ToolTip="保存当前工程　(Ctrl+S)" />
+          <Button Content="保存工程" Click="OnSaveProjectClick" ToolTip="写回当前工程文件；还没有文件时再选位置　(Ctrl+S)" />
+          <Button Content="另存为" Click="OnSaveProjectAsClick" ToolTip="另存一份工程，不覆盖当前文件　(Ctrl+Shift+S)" />
           <Button x:Name="MoreMenuBtn" AutomationProperties.Name="更多" Click="OnMoreMenuClick" Style="{StaticResource GhostButton}" Margin="2,0,0,0"
                   ToolTip="诊断与帮助">
             <StackPanel Orientation="Horizontal">
@@ -335,7 +347,7 @@
               </StackPanel>
             </Button>
             <Button x:Name="ModRemnantsBtn" AutomationProperties.Name="补板库" Style="{StaticResource ModuleBtn}" Tag="remnants" Click="OnModuleClick"
-                    ToolTip="余料登记、从 .anc 反推重切">
+                    ToolTip="这份工程的待补件与余料 · 补切密排">
               <StackPanel Orientation="Horizontal">
                 <TextBlock Text="&#xE8B7;" Style="{StaticResource ModuleIcon}" />
                 <TextBlock Text="补板库" VerticalAlignment="Center" />
@@ -490,6 +502,22 @@
             </Grid>
           </Border>
 
+          <!-- Recut mode: the original plan is parked; nest / ops / export act on the pending pieces only -->
+          <Border x:Name="RecutBanner" DockPanel.Dock="Top" Style="{StaticResource InfoBar}" Visibility="Collapsed"
+                  Background="{StaticResource InfoSoftBrush}">
+            <DockPanel>
+              <Button DockPanel.Dock="Right" Content="返回原方案" Click="OnRecutExitClick"
+                      Style="{StaticResource PrimaryButton}" Padding="12,4" MinHeight="26" Margin="12,0,0,0"
+                      ToolTip="放下补切，恢复进入补切前的密排、刀路和导出" />
+              <Button DockPanel.Dock="Right" Content="重新补切密排" Click="OnRecutRenestClick" Padding="10,4" MinHeight="26" Margin="8,0,0,0" />
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="&#xE8B7;" Style="{StaticResource IconText}" Foreground="{StaticResource InfoBrush}" Margin="0,0,8,0" />
+                <TextBlock x:Name="RecutBannerText" Text="补切模式"
+                           Foreground="#1E3A8A" FontSize="13" VerticalAlignment="Center" TextWrapping="Wrap" />
+              </StackPanel>
+            </DockPanel>
+          </Border>
+
           <!-- Stale banner: geometry changed after nest/CAM -->
           <Border x:Name="StaleBanner" DockPanel.Dock="Top" Style="{StaticResource InfoBar}" Visibility="Collapsed">
             <DockPanel>
@@ -520,7 +548,7 @@
                         Margin="0,10,0,0" Padding="10,6" HorizontalAlignment="Stretch"
                         Visibility="Collapsed" IsEnabled="False"
                         ToolTip="Ctrl 点选至少两个种类后，合并为其中一个材料" />
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <ScrollViewer x:Name="LeftRailScroll" VerticalScrollBarVisibility="Auto">
                 <StackPanel x:Name="LeftRailContent">
                   <TextBlock Text="工程" Style="{StaticResource RailH2}" Margin="0,0,0,4" />
                   <TextBlock x:Name="PackageMeta" Text="尚未加载" TextWrapping="Wrap" FontSize="12" Foreground="#888" Margin="0,0,0,8" />
@@ -642,6 +670,7 @@
                         <MenuItem Header="粘贴 (Ctrl+V)" Click="OnPastePanelClick" />
                         <MenuItem Header="剪切 (Ctrl+X)" Click="OnCutPanelClick" />
                         <MenuItem Header="创建板件" Click="OnCreatePanelClick" />
+                        <MenuItem Header="编辑板件…" Click="OnEditPanelClick" />
                         <MenuItem Header="删除整板 (Del)" Click="OnDeletePanelClick" />
                         <Separator />
                         <MenuItem Header="镜像 X" Click="OnGeomMirrorXClick" />
@@ -832,11 +861,10 @@
                     <TextBlock Text="&#xE8B7;" Style="{StaticResource IconText}" FontSize="36" Foreground="{StaticResource TextMutedBrush}"
                                HorizontalAlignment="Center" Margin="0,0,0,12" />
                     <TextBlock Text="从一份方案开始" Style="{StaticResource H1Text}" HorizontalAlignment="Center" Margin="0,0,0,8" />
-                    <TextBlock Text="打开 Fusion 导出的 .cnjob，OmniCam 会带你走完板材 → 密排 → 刀路 → 导出五步。也支持 woodjob / cut-package，或直接从机台 .anc 反推补板重切。"
+                    <TextBlock Text="打开 Fusion 导出的 .cnjob，OmniCam 会带你走完板材 → 密排 → 刀路 → 导出五步。也支持 woodjob / cut-package。"
                                Style="{StaticResource SecondaryText}" TextAlignment="Center" Margin="0,0,0,18" FontSize="13" />
                     <WrapPanel HorizontalAlignment="Center">
                       <Button x:Name="EmptyLoadBtn" Content="打开方案…" Click="OnOpenClick" Style="{StaticResource PrimaryButton}" Padding="16,9" Margin="0,0,8,0" />
-                      <Button x:Name="EmptyAncBtn" Content="从 .anc 反推…" Click="OnImportAncClick" Padding="14,9" Margin="0,0,8,0" />
                       <Button x:Name="EmptyDemoBtn" Content="打开示例" Click="OnLoadDemoClick" Style="{StaticResource GhostButton}" Padding="14,9" />
                     </WrapPanel>
                     <StackPanel x:Name="EmptyRecentPanel" Margin="0,18,0,0" Visibility="Collapsed" />
@@ -875,6 +903,9 @@
                 <StackPanel>
                   <TextBlock Text="检视 / 编辑" Style="{StaticResource RailH2}" Margin="0" />
                   <TextBlock x:Name="GeomMeta" Text="选板后可编辑" TextWrapping="Wrap" FontSize="12" Foreground="#555" Margin="0,0,0,8" />
+                  <Button Content="编辑板件…" Click="OnEditPanelClick" Padding="10,8" Margin="0,0,0,8"
+                          HorizontalAlignment="Stretch" FontWeight="SemiBold"
+                          ToolTip="打开简易 CAD：移动 / 复制 / 删除孔、槽、口袋。也可菜单 编辑 → 编辑板件，或双击左侧板件。" />
                   <TextBlock x:Name="DirtyBanner" Text="" TextWrapping="Wrap" FontSize="11" Foreground="#B45309" Margin="0,0,0,8" Visibility="Collapsed" />
                   <WrapPanel Margin="0,0,0,8">
                     <Button Content="特征→10" Click="OnGeomMoveClick" Padding="8,4" Margin="0,0,4,4" />
@@ -894,6 +925,7 @@
                            SelectionChanged="OnFeatListChanged">
                     <ListBox.ContextMenu>
                       <ContextMenu>
+                        <MenuItem Header="编辑板件…" Click="OnEditPanelClick" />
                         <MenuItem Header="复制板件 (Ctrl+C)" Click="OnGeomDuplicateClick" />
                         <MenuItem Header="粘贴板件 (Ctrl+V)" Click="OnPastePanelClick" />
                         <MenuItem Header="剪切板件 (Ctrl+X)" Click="OnCutPanelClick" />
@@ -1460,11 +1492,12 @@
           <DockPanel>
             <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
               <TextBlock Text="补板库" Style="{StaticResource H1Text}" Margin="0,0,0,4" />
-              <TextBlock Text="从机台 .anc 反推出板件后，勾选要重切的块（数量改为 1），再回生产加工密排导出。"
+              <TextBlock Text="这份工程要再切的板，和手上还能用的余料。密排页右键板件可加入；补切先排余料，放不下再问要不要开整板。"
                          Style="{StaticResource SecondaryText}" />
-              <TextBlock x:Name="RemnantsMeta" Margin="0,8,0,0" FontFamily="Consolas" FontSize="12" />
+              <TextBlock x:Name="RecutLibMeta" Margin="0,6,0,0" FontFamily="Consolas" FontSize="12"
+                         Foreground="{StaticResource TextSecondaryBrush}" />
 
-              <!-- Reverse-engineering audit: what the program contained vs. what was recovered -->
+              <!-- Reverse-engineering audit (hidden entry; only reachable from a command-line .anc) -->
               <Border x:Name="ReverseCompareCard" Style="{StaticResource Card}" Margin="0,12,0,0" Visibility="Collapsed">
                 <StackPanel>
                   <DockPanel>
@@ -1496,42 +1529,142 @@
                 </StackPanel>
               </Border>
 
-              <TextBlock Text="重切板件" FontWeight="SemiBold" Margin="0,12,0,4" />
-              <ListBox x:Name="RecutPanelList" MinHeight="80" MaxHeight="180" FontSize="12" Margin="0,0,0,6">
-                <ListBox.ItemTemplate>
-                  <DataTemplate>
-                    <CheckBox Content="{Binding Label}" IsChecked="{Binding Selected, Mode=TwoWay}" />
-                  </DataTemplate>
-                </ListBox.ItemTemplate>
-              </ListBox>
-              <WrapPanel Margin="0,0,0,12">
-                <Button Content="从 .anc 反推…" Click="OnImportAncClick" Margin="0,0,8,0" />
-                <Button Content="重切勾选的板" Click="OnRecutSelectedClick" />
-              </WrapPanel>
+              <StackPanel x:Name="RecutSection" Visibility="Collapsed" Margin="0,12,0,0">
+                <TextBlock Text="重切板件" FontWeight="SemiBold" Margin="0,0,0,4" />
+                <ListBox x:Name="RecutPanelList" MinHeight="80" MaxHeight="180" FontSize="12" Margin="0,0,0,6">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate>
+                      <CheckBox Content="{Binding Label}" IsChecked="{Binding Selected, Mode=TwoWay}" />
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+                <WrapPanel>
+                  <Button Content="重切勾选的板" Click="OnRecutSelectedClick" />
+                </WrapPanel>
+              </StackPanel>
             </StackPanel>
-            <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
-              <TextBlock Text="登记补板" FontWeight="SemiBold" Margin="0,0,0,6" />
-              <Grid>
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="*" /><ColumnDefinition Width="6" />
-                  <ColumnDefinition Width="*" /><ColumnDefinition Width="6" />
-                  <ColumnDefinition Width="*" /><ColumnDefinition Width="6" />
-                  <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <TextBox x:Name="RemWBox" ToolTip="宽 mm" Text="600" />
-                <TextBox Grid.Column="2" x:Name="RemLBox" ToolTip="长 mm" Text="400" />
-                <TextBox Grid.Column="4" x:Name="RemTBox" ToolTip="厚 mm" Text="18" />
-                <TextBox Grid.Column="6" x:Name="RemMatBox" ToolTip="材料" Text="" />
-              </Grid>
-              <WrapPanel Margin="0,8,0,0">
-                <Button Content="添加补板" Click="OnRemnantAddClick" />
-                <Button Content="从当前板材添加" Click="OnRemnantFromSheetClick" />
-                <Button Content="切换参与密排" Click="OnRemnantToggleNestClick" />
-                <Button Content="删除选中" Click="OnRemnantDeleteClick" />
-                <Button Content="保存库" Click="OnLibrarySaveClick" />
-              </WrapPanel>
-            </StackPanel>
-            <ListBox x:Name="RemnantsList" FontSize="12" />
+
+            <!-- Bottom action row -->
+            <Border DockPanel.Dock="Bottom" x:Name="RecutActionRow" Margin="0,12,0,0" Visibility="Collapsed">
+              <DockPanel>
+                <Button x:Name="RecutNestBtn" DockPanel.Dock="Right" Content="补切密排 →" Click="OnRecutNestClick"
+                        Style="{StaticResource PrimaryButton}" Padding="16,8"
+                        ToolTip="只排待补件：先用余料，放不下再问要不要加整板。原方案的密排、刀路、导出会先暂存" />
+                <Button x:Name="RecutExitBtn" DockPanel.Dock="Right" Content="返回原方案" Click="OnRecutExitClick"
+                        Padding="14,8" Margin="0,0,8,0" Visibility="Collapsed" />
+                <TextBlock x:Name="RecutActionHint" Style="{StaticResource SecondaryText}" VerticalAlignment="Center"
+                           Text="待补件和余料都跟这份工程一起保存。" />
+              </DockPanel>
+            </Border>
+
+            <!-- No package yet -->
+            <Border x:Name="RemnantsEmptyState" Style="{StaticResource Card}" VerticalAlignment="Stretch">
+              <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="420">
+                <TextBlock Text="&#xE8B7;" Style="{StaticResource IconText}" FontSize="36"
+                           Foreground="{StaticResource TextMutedBrush}"
+                           HorizontalAlignment="Center" Margin="0,0,0,12" />
+                <TextBlock x:Name="RemnantsEmptyTitle" Text="先载入方案" Style="{StaticResource H1Text}"
+                           HorizontalAlignment="Center" Margin="0,0,0,8" />
+                <TextBlock Text="补板库跟工程走。打开方案并密排后，在密排页右键板件「加入待补件」，或把还没切的整张大板「加入余料」。"
+                           Style="{StaticResource SecondaryText}" TextAlignment="Center" FontSize="13" Margin="0,0,0,18" />
+                <Button Content="去生产加工" Click="OnGotoProductionClick" Style="{StaticResource PrimaryButton}"
+                        Padding="16,9" HorizontalAlignment="Center" />
+              </StackPanel>
+            </Border>
+
+            <!-- Two columns: pending pieces | remnants on hand -->
+            <Grid x:Name="RecutLibBody" Visibility="Collapsed">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+
+              <Border Style="{StaticResource Card}" Margin="0">
+                <DockPanel>
+                  <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                    <TextBlock x:Name="RecutPendingCount" DockPanel.Dock="Right" Style="{StaticResource SecondaryText}" VerticalAlignment="Center" />
+                    <TextBlock Text="待补板件" Style="{StaticResource H2Text}" />
+                  </DockPanel>
+                  <WrapPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                    <Button Content="移除待补件" Click="OnRecutPendingRemoveClick" ToolTip="移除选中的待补件" />
+                    <Button Content="清空待补件" Click="OnRecutPendingClearClick" Style="{StaticResource GhostButton}" />
+                  </WrapPanel>
+                  <TextBlock DockPanel.Dock="Bottom" x:Name="RecutPendingEmpty" Style="{StaticResource CaptionText}"
+                             Text="还没有待补件。密排页右键板件 →「加入待补件」。" Margin="0,6,0,0" />
+                  <ListBox x:Name="RecutPendingList" FontSize="12" SelectionMode="Extended" MinHeight="120">
+                    <ListBox.ItemTemplate>
+                      <DataTemplate>
+                        <Grid Margin="0,1">
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" /><ColumnDefinition Width="130" /><ColumnDefinition Width="Auto" />
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                          <TextBlock Grid.Column="1" Text="{Binding Size}" FontFamily="Consolas" Foreground="{StaticResource TextSecondaryBrush}" />
+                          <TextBlock Grid.Column="2" Text="{Binding Kind}" Foreground="{StaticResource TextSecondaryBrush}" />
+                        </Grid>
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                </DockPanel>
+              </Border>
+
+              <Border Grid.Column="2" Style="{StaticResource Card}" Margin="0">
+                <DockPanel>
+                  <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                    <TextBlock x:Name="RecutRemnantCount" DockPanel.Dock="Right" Style="{StaticResource SecondaryText}" VerticalAlignment="Center" />
+                    <TextBlock Text="手上余料" Style="{StaticResource H2Text}" />
+                  </DockPanel>
+                  <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" /><ColumnDefinition Width="6" />
+                        <ColumnDefinition Width="80" /><ColumnDefinition Width="6" />
+                        <ColumnDefinition Width="80" />
+                      </Grid.ColumnDefinitions>
+                      <StackPanel>
+                        <TextBlock Text="材料 / 厚度" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="RecutRemMaterialBox" DisplayMemberPath="Label" SelectedValuePath="Key" />
+                      </StackPanel>
+                      <StackPanel Grid.Column="2">
+                        <TextBlock Text="宽 mm" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="RecutRemWBox" Text="600" />
+                      </StackPanel>
+                      <StackPanel Grid.Column="4">
+                        <TextBlock Text="长 mm" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="RecutRemLBox" Text="400" />
+                      </StackPanel>
+                    </Grid>
+                    <WrapPanel Margin="0,8,0,0">
+                      <Button Content="添加余料" Click="OnRecutRemnantAddClick" Style="{StaticResource PrimaryButton}"
+                              ToolTip="按宽×长添加一块矩形余料" />
+                      <Button Content="画余料…" Click="OnRecutRemnantDrawClick"
+                              ToolTip="打开画板，画直角余料外形（L / 台阶）。材料跟左边下拉。" />
+                      <Button Content="移除余料" Click="OnRecutRemnantRemoveClick" ToolTip="移除选中的余料" />
+                      <Button Content="清空余料" Click="OnRecutRemnantClearClick" Style="{StaticResource GhostButton}" />
+                    </WrapPanel>
+                  </StackPanel>
+                  <TextBlock DockPanel.Dock="Bottom" x:Name="RecutRemnantEmpty" Style="{StaticResource CaptionText}"
+                             Text="还没有余料。手填矩形，或「画余料」画 L / 台阶，或在密排页右键「本张大板加入余料」。" Margin="0,6,0,0" />
+                  <ListBox x:Name="RecutRemnantList" FontSize="12" SelectionMode="Extended" MinHeight="120"
+                           MouseDoubleClick="OnRecutRemnantListDoubleClick"
+                           ToolTip="双击改外形">
+                    <ListBox.ItemTemplate>
+                      <DataTemplate>
+                        <Grid Margin="0,1">
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" /><ColumnDefinition Width="130" /><ColumnDefinition Width="Auto" />
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                          <TextBlock Grid.Column="1" Text="{Binding Size}" FontFamily="Consolas" Foreground="{StaticResource TextSecondaryBrush}" />
+                          <TextBlock Grid.Column="2" Text="{Binding Kind}" Foreground="{StaticResource TextSecondaryBrush}" />
+                        </Grid>
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                </DockPanel>
+              </Border>
+            </Grid>
           </DockPanel>
         </Border>
 

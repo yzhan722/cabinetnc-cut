@@ -124,7 +124,7 @@ public class PocketSafetyGateTests
     [Fact]
     public void Pocket_too_small_for_tool_fails_preflight_and_is_not_silent_skip()
     {
-        // Tiny pocket: after toolR+onion inset Clipper yields empty / center-only
+        // Tiny pocket: after tool-radius inset Clipper yields empty / center-only
         var panel = PanelWithPocket(pocketDepth: 4, pocketW: 4, pocketH: 4);
         var ops = OpsPlanner.FeaturesToOps([panel])
             .Select(o => o with { Placed = true, SheetIndex = 0 })
