@@ -20,6 +20,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\CabinetNC.Domain\CabinetNC.Domain.csproj" />
+    <ProjectReference Include="..\..\src\CabinetNC.FusionPackage\CabinetNC.FusionPackage.csproj" />
+    <ProjectReference Include="..\..\src\CabinetNC.Verify\CabinetNC.Verify.csproj" />
   </ItemGroup>
 
 </Project>

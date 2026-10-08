@@ -53,4 +53,25 @@ public class ReleaseGoldenRegressionTests
         Assert.Contains("M6 T", nc, StringComparison.Ordinal);
         Assert.Single(arts, a => a.RelativePath.StartsWith("nc/", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void cab_lab_kitchen()
+    {
+        var job = GoldenFixtures.CabLabKitchen();
+        var arts = GoldenJobRunner.RunPackageReplay(job);
+        GoldenJobRunner.AssertMatchesGoldens(job.Id, arts);
+
+        Assert.Equal(16, job.Panels.Count);
+        var layout = arts.Single(a => a.RelativePath == "layout.txt").Utf8Text
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(16, layout.Length);
+        var sheets = layout.Select(l => l.Split('\t')[1]).Distinct().Count();
+        Assert.Equal(2, sheets);
+
+        // Pinned while the LED groove semantics are undecided: OmniCam cuts
+        // B3_LED_MAIN 1.5 mm wider than the CAD width. A fix must update this
+        // golden deliberately, never silently.
+        var s2 = arts.Single(a => a.RelativePath == "verify/S2-codes.txt").Utf8Text;
+        Assert.Equal("groove_width_mismatch", s2);
+    }
 }

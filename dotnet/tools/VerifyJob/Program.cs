@@ -2,6 +2,7 @@
 //
 //   VerifyJob <export-dir>                       verify an exported bundle ({job}.bundle.json + manifests + .cut.json)
 //   VerifyJob --package <pkg> --manifest <S1.manifest.json> [--nc file ...] [--datum top|bottom]
+//   VerifyJob <pkg.cut.json|.cnjob>              import + full pipeline (nest → ops → offset → bundle → verify)
 //   VerifyJob --demo                             nest + plan + offset + emit the sample package, then verify it
 //
 // Exit code 0 = no errors, 1 = verification errors, 2 = usage / input problem.
@@ -28,6 +29,8 @@ try
         return RunAdHoc(args0);
     if (Directory.Exists(args0[0]))
         return RunBundleDir(args0[0], args0.Contains("--json"));
+    if (File.Exists(args0[0]))
+        return RunPackageFile(args0[0], args0.Contains("--json"));
     return Usage();
 }
 catch (Exception ex)
@@ -40,6 +43,7 @@ static int Usage()
 {
     Console.Error.WriteLine(
         "VerifyJob <export-dir> [--json]\n" +
+        "VerifyJob <pkg.cut.json|.cnjob> [--json]\n" +
         "VerifyJob --package <pkg.cut.json|.cnjob> --manifest <job_S1.manifest.json> [--nc <file> ...] [--datum top|bottom] [--json]\n" +
         "VerifyJob --demo [--json]");
     return 2;
@@ -178,6 +182,20 @@ static IReadOnlyList<Panel> LoadPanels(string path)
     if (!import.Ok || import.Package is null)
         throw new InvalidOperationException("package import failed: " + string.Join("; ", import.Errors.Select(e => e.Message)));
     return import.Package.Panels;
+}
+
+// ------------------------------------------------------------------ single package: import + full pipeline
+
+static int RunPackageFile(string path, bool json)
+{
+    var import = PackageImporter.FromPath(path);
+    if (!import.Ok || import.Package is null)
+    {
+        Console.WriteLine("import failed: " + string.Join("; ", import.Errors.Select(e => e.Message)));
+        return 2;
+    }
+    Console.WriteLine($"== {Path.GetFileName(path)}");
+    return RunPipeline(import.Package, json);
 }
 
 // ------------------------------------------------------------------ demo: full pipeline on the sample job

@@ -5,6 +5,7 @@ using CabinetNC.Domain.Machines;
 using CabinetNC.Domain.Manufacturing;
 using CabinetNC.Domain.Nesting;
 using CabinetNC.Domain.Parts;
+using CabinetNC.Verify;
 
 namespace CabinetNC.Domain.Tests.Regression;
 
@@ -110,6 +111,76 @@ public static class GoldenJobRunner
         foreach (var prog in EmitPrograms(job, p))
             artifacts.Add(new(prog.Name + ".nc.norm", NcTextNormalizer.Normalize(prog.NcText)));
 
+        return artifacts;
+    }
+
+    /// <summary>
+    /// Cross-repo replay: mirrors VerifyJob's RunPipeline exactly — attach ops to
+    /// the nest, apply the T2 clearance contour offset, then build the bundle with
+    /// the Troy recipe and a non-enforcing ExportVerifier — so a package file
+    /// produced by an upstream CAD is pinned end-to-end: layout, per-sheet NC, and
+    /// the verifier's error codes, not just the nest/cam internals.
+    /// </summary>
+    public static IReadOnlyList<GoldenArtifact> RunPackageReplay(GoldenJob job)
+    {
+        var profile = MachineCatalog.Get(MachineCatalog.DefaultId);
+        var sheet = new NestSheetSpec
+        {
+            WidthMm = GoldenPipeline.SheetWidthMm,
+            LengthMm = GoldenPipeline.SheetLengthMm,
+            BorderMm = 15,
+            SpacingMm = 12,
+            AllowRotation = true,
+        };
+        var nest = GroupedBlfNester.Pack(
+            job.Panels,
+            new NestSettings { MarginMm = 15, ClearanceMm = 12, AllowRotation = true },
+            [sheet],
+            GroupedBlfNester.SizeOfOutline);
+        var ops = ContourToolOffset.Apply(
+            OpsPlanner.AttachToNest(OpsPlanner.FeaturesToOps(job.Panels), nest.Placements),
+            ClearanceToolPick.DiameterOf("T2") / 2);
+        var byId = job.Panels.ToDictionary(p => p.PanelId, StringComparer.Ordinal);
+        var pre = NcPreflight.Check(ops, profile, GoldenPipeline.SheetWidthMm, GoldenPipeline.SheetLengthMm, byId);
+
+        var artifacts = new List<GoldenArtifact>
+        {
+            new("preflight-codes.txt", FormatCodes(pre)),
+            new("layout.txt", FormatLayout(nest, byId)),
+        };
+        if (!pre.Ok)
+            return artifacts;
+
+        var pkg = new CutPackage
+        {
+            SchemaName = CutPackage.Schema,
+            JobId = job.Id,
+            Panels = job.Panels,
+        };
+        var bundle = SheetBundleBuilder.Build(
+            pkg,
+            nest.Placements,
+            ops,
+            profile,
+            sheetWidthMm: GoldenPipeline.SheetWidthMm,
+            sheetLengthMm: GoldenPipeline.SheetLengthMm,
+            enforcePreflight: false,
+            recipe: PostRecipe.TroyDefault(),
+            verifier: new ExportVerifier(),
+            enforceVerify: false);
+
+        foreach (var sh in bundle.Sheets)
+        {
+            foreach (var prog in sh.ToolPrograms)
+                artifacts.Add(new($"nc/S{sh.SheetIndex + 1}_{prog.ToolId}.nc.norm", NcTextNormalizer.Normalize(prog.NcText)));
+
+            var codes = sh.Verify!.Issues
+                .Where(i => i.IsError)
+                .Select(i => i.Code)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(c => c, StringComparer.Ordinal);
+            artifacts.Add(new($"verify/S{sh.SheetIndex + 1}-codes.txt", string.Join('\n', codes)));
+        }
         return artifacts;
     }
 

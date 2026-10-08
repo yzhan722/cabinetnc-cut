@@ -1,5 +1,6 @@
 using CabinetNC.Domain.Geometry;
 using CabinetNC.Domain.Parts;
+using CabinetNC.FusionPackage;
 
 namespace CabinetNC.Domain.Tests.Regression;
 
@@ -72,4 +73,27 @@ public static class GoldenFixtures
         Post = "troy",
         Panels = [OakHoleGroove("P", 200, 150)],
     };
+
+    /// <summary>
+    /// The Cab Lab kitchen cabinet, emitted as a real .cnjob by
+    /// the-cab-lab/scripts/emit-replay-cnjob.mjs and synced into
+    /// testdata/regression/packages/. This is the cross-repo contract replay:
+    /// a regression here means the producer's output no longer survives the
+    /// OmniCam pipeline unchanged.
+    /// </summary>
+    public static GoldenJob CabLabKitchen()
+    {
+        var path = Path.Combine(GoldenJobRunner.DataRoot(), "packages", "cab_lab_kitchen.cnjob");
+        var import = PackageImporter.FromPath(path);
+        if (!import.Ok || import.Package is null)
+            throw new InvalidOperationException(
+                "cab_lab_kitchen.cnjob failed to import: "
+                + string.Join("; ", import.Errors.Select(e => e.Message)));
+        return new GoldenJob
+        {
+            Id = "cab_lab_kitchen",
+            Post = "troy",
+            Panels = import.Package.Panels,
+        };
+    }
 }
