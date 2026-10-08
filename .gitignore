@@ -8,9 +8,6 @@ portable/
 .env.*
 cloud.json
 cloud.local.json
-!.env.example
-*-credentials.json
-service-account*.json
 
 # Native build outputs
 native/cabinetnc_core/build/
