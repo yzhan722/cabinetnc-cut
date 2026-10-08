@@ -25,6 +25,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <!-- One runnable app per checkout: PostBuild publishes into this folder.
+         Default is <repo>\dist\CabinetNC-Cut (repo-relative, no drive letters).
+         Override per machine via OMNICAM_DIST_DIR env or -p:OmniCamDistDir=... -->
+    <OmniCamDistDir Condition="'$(OmniCamDistDir)' == ''">$(OMNICAM_DIST_DIR)</OmniCamDistDir>
+    <OmniCamDistDir Condition="'$(OmniCamDistDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\..\dist\CabinetNC-Cut'))</OmniCamDistDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -38,7 +43,7 @@
     <PropertyGroup>
       <_WorkerOut>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\CabinetNC.ComputeWorker\bin\$(Configuration)\net10.0'))</_WorkerOut>
       <_DesktopOut>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)$(OutputPath)'))</_DesktopOut>
-      <_LaunchOut>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\..\dist\CabinetNC-Cut'))</_LaunchOut>
+      <_LaunchOut>$(OmniCamDistDir)</_LaunchOut>
     </PropertyGroup>
     <Error Text="ComputeWorker output missing: $(_WorkerOut)\CabinetNC.ComputeWorker.dll"
            Condition="!Exists('$(_WorkerOut)\CabinetNC.ComputeWorker.dll')" />
@@ -59,7 +64,7 @@
   <Target Name="CopyToDesktopLaunch" AfterTargets="CopyWorker"
           Condition="'$(Configuration)' == 'Release'">
     <PropertyGroup>
-      <_DesktopLaunch>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\..\dist\CabinetNC-Cut\'))</_DesktopLaunch>
+      <_DesktopLaunch>$(OmniCamDistDir)\</_DesktopLaunch>
     </PropertyGroup>
     <ItemGroup>
       <_LaunchFiles Include="$(OutputPath)*" Exclude="$(OutputPath)publish\**\*" />

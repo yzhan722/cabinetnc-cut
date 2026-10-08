@@ -238,6 +238,14 @@ public sealed class ExportVerifier : IExportVerifier
         if (total < 1) return;
         var samples = Math.Clamp((int)Math.Ceiling(total / 5), 3, 40);
 
+        // Grooves crossing this one (T/L/+ junctions): their swept union is
+        // wider than this groove's own width by design, so samples falling
+        // inside a sibling's swept region are not a mismatch.
+        var crossings = p.Features
+            .Where(g => g.FeatureId != f.FeatureId && g.Kind == IntentKind.Groove && g.Allowed is { Count: > 0 })
+            .Select(g => g.Allowed)
+            .ToList();
+
         double worst = 0, worstMeasured = width, wx = 0, wy = 0;
         for (var s = 0; s < samples; s++)
         {
@@ -245,6 +253,7 @@ public sealed class ExportVerifier : IExportVerifier
             if (!PointAlong(line, along, out var x, out var y, out var ux, out var uy)) continue;
             if (!Geo.Contains(insideF, x, y)) continue;
             var probe = Geo.Probe(x, y, -uy, ux, halfLen, halfThick);
+            if (crossings.Any(c => Geo.Inter(probe, c) is { Count: > 0 })) continue;
             var measured = Geo.AreaMm2(Geo.Inter(probe, removed)) / (2 * halfThick);
             var dev = measured - width;
             if (Math.Abs(dev) > Math.Abs(worst))

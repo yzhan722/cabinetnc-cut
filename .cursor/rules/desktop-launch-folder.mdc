@@ -5,10 +5,14 @@ alwaysApply: true
 
 # One runnable app
 
-The only user-facing build is:
+The only user-facing build is the launch folder next to this checkout:
 
-`E:\Work\OmniCam\dist\CabinetNC-Cut\CabinetNC.Desktop.exe`
+`<repo>\dist\CabinetNC-Cut\CabinetNC.Desktop.exe`
+
+(`OmniCamDistDir` MSBuild property / `OMNICAM_DIST_DIR` env can redirect it per
+machine — e.g. a fixed shop path — but nothing in the repo may hardcode a drive
+letter.)
 
 Desktop icon `OmniCam` and `OmniCam.cmd` start that folder.
 
-Do not create extra copies (`dist\CabinetNC-Cut-fd*`, `*-stage4`, `*-next`, `*-old`, `*-win-x64`). After Desktop/Domain changes, `dotnet build -c Release` the Desktop project; PostBuild copies into `dist\CabinetNC-Cut`. If copy fails, the app is open — close it and rebuild. Tell the user to reopen from the desktop icon.
+Do not create extra copies (`dist\CabinetNC-Cut-fd*`, `*-stage4`, `*-next`, `*-old`, `*-win-x64`). After Desktop/Domain changes, `dotnet build -c Release` the Desktop project; PostBuild copies into the launch folder and prints `Updated desktop launch folder: <path>` — check that line if the app looks stale. If copy fails, the app is open — close it and rebuild. Tell the user to reopen from the desktop icon.

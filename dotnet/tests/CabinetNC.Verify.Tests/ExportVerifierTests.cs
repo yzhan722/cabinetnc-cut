@@ -206,6 +206,20 @@ public class ExportVerifierTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Groove_crossed_by_sibling_at_junction_passes()
+    {
+        var panel = Rect("A", 400, 300, 18,
+            Groove("MAIN", new Point2(30, 100), new Point2(370, 100), 14.5, 6),
+            Groove("BRANCH", new Point2(200, 100), new Point2(200, 250), 14.5, 6));
+        var places = new List<NestPlacement> { Place("A", 20, 20) };
+        var nc = EmitTroy(PlanOps([panel], places));
+        var r = Run(Input([panel], places, nc));
+        Dump(r);
+        Assert.True(r.Ok, Describe(r));
+        Assert.DoesNotContain(r.Issues, i => i.Code == VerifyCodes.GrooveWidthMismatch);
+    }
+
+    [Fact]
     public void Flags_drill_drift_and_missing_hole()
     {
         var cad = ShopPanel();
