@@ -1,0 +1,35 @@
+# Demo package → nest → CAM → export (unattended via OMNICAM_AUTO_EXPORT_DIR).
+# Covers: empty state, primary actions, toasts, workflow pills, DRO/sim, ExportFlow, label bitmaps.
+assert-status:就绪
+shot:01-empty.png
+invoke:打开示例
+wait:2500
+dismiss
+assert-status:已载入示例
+tab:2 板材与设备
+wait:600
+invoke:初始密排 →
+wait:4500
+dismiss
+assert-status:密排完成
+assert-title:*
+shot:02-nested.png
+tab:4 刀路与加工档
+wait:800
+invoke:计算全部
+wait:4500
+dismiss
+assert-status:已计算全部大板
+tab:5 导出
+wait:1500
+invoke:下一段
+wait:200
+invoke:下一段
+wait:600
+shot:03-sim.png
+invoke:导出当前大板
+wait:3000
+dismiss
+assert-status:已导出 1 个文件
+assert-file:%OMNICAM_AUTO_EXPORT_DIR%\Left_side.bmp
+shot:04-exported.png

@@ -63,6 +63,46 @@ public class ProfileBridgePlannerTests
     }
 
     [Fact]
+    public void EnsureFacingPairs_adds_missing_neighbor_tab()
+    {
+        var ops = new[]
+        {
+            Contour("A", Rect(0, 0, 100, 50)),
+            Contour("B", Rect(112, 0, 100, 50)),
+        };
+        var outlines = new Dictionary<string, IReadOnlyList<Point2>>
+        {
+            ["A"] = Ring(0, 0, 100, 50),
+            ["B"] = Ring(112, 0, 100, 50),
+        };
+        var onlyA = new[]
+        {
+            new ProfileBridge
+            {
+                Id = "a",
+                PanelId = "A",
+                SheetIndex = 0,
+                ArcLengthMm = 125,
+                X = 100,
+                Y = 25,
+                WidthMm = 5,
+            },
+        };
+
+        var fixedUp = ProfileBridgePlanner.EnsureFacingPairs(onlyA, ops, outlines, ToolD);
+        Assert.Equal(2, fixedUp.Count);
+        var a = Assert.Single(fixedUp, b => b.PanelId == "A");
+        var b = Assert.Single(fixedUp, x => x.PanelId == "B");
+        Assert.Equal(b.Id, a.PairId);
+        Assert.Equal(a.Id, b.PairId);
+        Assert.Equal(112, b.X, 1);
+        Assert.Equal(25, b.Y, 1);
+
+        var again = ProfileBridgePlanner.EnsureFacingPairs(fixedUp, ops, outlines, ToolD);
+        Assert.Equal(2, again.Count);
+    }
+
+    [Fact]
     public void Isolated_edge_places_a_single_bridge()
     {
         var path = Rect(0, 0, 100, 50);

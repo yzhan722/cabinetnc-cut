@@ -12,8 +12,10 @@ public sealed class NestSettings
     /// <summary>Global allowed nest rotations. Empty = unconstrained (subject to grain lock).</summary>
     public IReadOnlyList<int> AllowedRotations { get; init; } = [];
     public double RotationStepDeg { get; init; } = 90;
-    /// <summary>When true, panels with grain direction may only use 0/180.</summary>
+    /// <summary>When true and no sheet grain is set, panels with grain may only use 0/180.</summary>
     public bool GrainLock { get; init; } = true;
+    /// <summary>Shop sheet veneer axis for this stock kind. None = no sheet constraint.</summary>
+    public SheetGrainKind SheetGrain { get; init; } = SheetGrainKind.None;
     public bool MirrorPermission { get; init; }
     public bool PreferLockedPlacements { get; init; } = true;
 
@@ -40,7 +42,11 @@ public sealed class NestSettings
     public bool PanelMayRotate90(Parts.Panel panel)
     {
         if (!AllowRotation) return false;
-        if (GrainLock && !string.IsNullOrWhiteSpace(panel.GrainDirection ?? panel.Orientation?.GrainDirection))
+        var aligned = GrainAlign.AlignedRotations(
+            panel.GrainDirection ?? panel.Orientation?.GrainDirection, SheetGrain);
+        if (aligned.Count > 0)
+            return aligned.Any(r => r is 90 or 270);
+        if (GrainLock && GrainAlign.HasPartGrain(panel))
             return false;
         if (AllowedRotations.Count > 0)
             return AllowedRotations.Any(r =>
@@ -49,6 +55,26 @@ public sealed class NestSettings
                 return n is 90 or 270;
             });
         return panel.MayRotate90;
+    }
+
+    /// <summary>Discrete nest angles to try for <paramref name="panel"/>.</summary>
+    public IReadOnlyList<double> CandidateRotations(Parts.Panel panel)
+    {
+        if (!AllowRotation) return [0];
+        var aligned = GrainAlign.AlignedRotations(
+            panel.GrainDirection ?? panel.Orientation?.GrainDirection, SheetGrain);
+        if (aligned.Count > 0) return aligned;
+        if (GrainLock && GrainAlign.HasPartGrain(panel))
+            return [0, 180];
+        if (AllowedRotations.Count > 0)
+        {
+            return AllowedRotations
+                .Select(r => (double)(((r % 360) + 360) % 360))
+                .Distinct()
+                .OrderBy(r => r)
+                .ToList();
+        }
+        return panel.MayRotate90 ? [0d, 90d, 180d, 270d] : [0d, 180d];
     }
 }
 

@@ -21,6 +21,12 @@ public sealed class PanelFeature
     public IReadOnlyList<Point2>? Path { get; init; }
     /// <summary>Optional closed CAD opening polygon for groove display.</summary>
     public IReadOnlyList<Point2>? Profile { get; init; }
+    /// <summary>Closed holes inside a pocket (rebate ring).</summary>
+    public IReadOnlyList<IReadOnlyList<Point2>>? Holes { get; init; }
+    /// <summary>Exact CAD entities for <see cref="Profile"/> / cutout path.</summary>
+    public IReadOnlyList<CadSegment>? ProfileSegments { get; init; }
+    /// <summary>Exact CAD entities for each rebate hole ring.</summary>
+    public IReadOnlyList<IReadOnlyList<CadSegment>>? HoleSegments { get; init; }
 }
 
 public sealed class WorkpieceFace
@@ -73,6 +79,7 @@ public sealed class Panel
             Identity = Identity,
             Orientation = Orientation,
             EdgeBanding = EdgeBanding,
+            EdgeBands = EdgeBands,
             Notes = Notes,
             Side = Side,
         };
@@ -97,9 +104,48 @@ public sealed class Panel
             Identity = identity,
             Orientation = Orientation,
             EdgeBanding = EdgeBanding,
+            EdgeBands = EdgeBands,
             Notes = Notes,
             Side = Side,
         };
+
+    public Panel WithGrain(string? grain)
+    {
+        var g = Nesting.GrainAlign.NormalizePart(grain);
+        var prev = Orientation;
+        var orient = new WorkpieceOrientation
+        {
+            PrimaryFace = prev?.PrimaryFace,
+            MillingFace = prev?.MillingFace,
+            GrainDirection = g,
+            AllowedRotations = prev?.AllowedRotations,
+            AllowMirror = prev?.AllowMirror ?? false,
+            FlipStrategy = prev?.FlipStrategy,
+        };
+        return new()
+        {
+            PanelId = PanelId,
+            Name = Name,
+            Material = Material,
+            ThicknessMm = ThicknessMm,
+            DecorId = DecorId,
+            SubstrateId = SubstrateId,
+            ColorName = ColorName,
+            SurfaceMode = SurfaceMode,
+            Quantity = Quantity,
+            AllowedRotations = AllowedRotations,
+            GrainDirection = g,
+            Outline = Outline,
+            Features = Features,
+            Faces = Faces,
+            Identity = Identity,
+            Orientation = orient,
+            EdgeBanding = EdgeBanding,
+            EdgeBands = EdgeBands,
+            Notes = Notes,
+            Side = Side,
+        };
+    }
 
     public IReadOnlyList<WorkpieceFace> Faces { get; init; } = [];
 
@@ -108,6 +154,8 @@ public sealed class Panel
     /// <summary>Extended orientation (faces / mirror). Grain/rotations also mirrored on panel for compat.</summary>
     public WorkpieceOrientation? Orientation { get; init; }
     public EdgeBanding? EdgeBanding { get; init; }
+    /// <summary>Outline-edge tape from the snapshot. Empty = this part is not banded.</summary>
+    public IReadOnlyList<EdgeBandSegment> EdgeBands { get; init; } = [];
     public string? Notes { get; init; }
     /// <summary>A / B side placeholder for dual-face CAM.</summary>
     public string? Side { get; init; }
@@ -171,6 +219,15 @@ public sealed class Panel
             return ThicknessMm > 0 ? $"{baseLabel} · {Fmt(ThicknessMm)}mm" : baseLabel;
         }
     }
+
+    /// <summary>Export color token — decor / ColorName (e.g. White Stipple).</summary>
+    public string DisplayColor => ResolveDecorTitle();
+
+    /// <summary>Export kind token — Carcass / Door / Partition.</summary>
+    public string DisplayKind => ResolveRoleTitle();
+
+    /// <summary>DS / SS from surface mode or role default.</summary>
+    public string DisplaySurface => ResolveSurfaceToken();
 
     /// <summary>Size / qty / feature summary for list rows.</summary>
     public string DisplayDetail
@@ -247,8 +304,19 @@ public sealed class Panel
         return ("其他", t);
     }
 
+    /// <summary>v1.1 materialId series (first token): the group label follows the sheet, not the part's role.</summary>
+    static readonly Dictionary<string, string> SeriesTitles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["melamine"] = "Melamine",
+        ["pvc"] = "PVC",
+        ["acrylic"] = "Acrylic",
+        ["hpl"] = "HPL",
+    };
+
     string ResolveRoleTitle()
     {
+        var series = (Material ?? "").Split('-', 2)[0];
+        if (SeriesTitles.TryGetValue(series, out var seriesTitle)) return seriesTitle;
         var raw = Identity?.Role
             ?? Notes
             ?? SubstrateId
@@ -273,13 +341,18 @@ public sealed class Panel
         var raw = DecorId ?? "";
         if (string.IsNullOrWhiteSpace(raw) && !string.IsNullOrWhiteSpace(Material))
         {
-            // materialId: carcass-white-stipple-15 → white-stipple
-            var parts = Material!.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (parts.Length >= 3
+            // materialId v1.0: carcass-white-stipple-15 → white-stipple
+            // materialId v1.1: acrylic-gloss-white-1s-16 → gloss-white (the 1s / 2s sides token is dropped)
+            var parts = Material!.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            if (parts.Count >= 3
                 && double.TryParse(parts[^1], System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out _))
-                raw = string.Join("-", parts.Skip(1).Take(parts.Length - 2));
-            else if (parts.Length >= 2)
+            {
+                parts.RemoveAt(parts.Count - 1);
+                if (parts.Count >= 3 && parts[^1] is "1s" or "2s") parts.RemoveAt(parts.Count - 1);
+                raw = string.Join("-", parts.Skip(1));
+            }
+            else if (parts.Count >= 2)
                 raw = string.Join("-", parts.Skip(1));
         }
         return HumanizeToken(raw);
@@ -290,6 +363,10 @@ public sealed class Panel
         var mode = (SurfaceMode ?? "").Trim().ToUpperInvariant();
         if (mode.Contains("DOUBLE", StringComparison.Ordinal)) return "DS";
         if (mode.Contains("SINGLE", StringComparison.Ordinal)) return "SS";
+        // materialId v1.1 carries the sides token: …-1s-16 / …-2s-16.
+        var idParts = (Material ?? "").Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (idParts.Length >= 2 && idParts[^2] == "2s") return "DS";
+        if (idParts.Length >= 2 && idParts[^2] == "1s") return "SS";
         var role = ResolveRoleTitle();
         if (role.Equals("Carcass", StringComparison.OrdinalIgnoreCase)
             || role.Equals("Partition", StringComparison.OrdinalIgnoreCase))

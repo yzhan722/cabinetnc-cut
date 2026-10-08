@@ -39,3 +39,14 @@ public sealed class EdgeBanding
     public string? Left { get; init; }
     public string? Right { get; init; }
 }
+
+/// <summary>
+/// Tape on one outline edge. <see cref="Index"/> matches <c>Outline.Points</c>:
+/// edge i runs point i to point (i + 1) mod n. An edge with no entry is not banded.
+/// </summary>
+public sealed class EdgeBandSegment
+{
+    public int Index { get; init; }
+    public double ThicknessMm { get; init; }
+    public string? ColorName { get; init; }
+}

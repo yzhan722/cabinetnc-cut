@@ -54,6 +54,7 @@ public static class WorkpieceImporter
                 },
                 Orientation = copy.Orientation,
                 EdgeBanding = copy.EdgeBanding,
+                EdgeBands = copy.EdgeBands,
                 Notes = string.IsNullOrWhiteSpace(src.Notes)
                     ? $"imported from {src.PanelId}"
                     : src.Notes,

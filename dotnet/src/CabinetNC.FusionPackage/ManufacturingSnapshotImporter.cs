@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Text.Json;
 using CabinetNC.Domain;
 using CabinetNC.Domain.Geometry;
+using CabinetNC.Domain.Nesting;
 using CabinetNC.Domain.Parts;
 
 public static class ManufacturingSnapshotImporter
@@ -123,11 +124,15 @@ public static class ManufacturingSnapshotImporter
 
         var panelIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var panels = new List<Panel>();
+        // v1.1: `grained` may be declared once on the material list instead of on every workpiece.
+        var grainedIds = new HashSet<string>(
+            snapshot.Materials.Where(m => m.Grained == true && !string.IsNullOrWhiteSpace(m.MaterialId)).Select(m => m.MaterialId),
+            StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < snapshot.Workpieces.Count; i++)
         {
             var workpiece = snapshot.Workpieces[i];
             var path = $"$.workpieces[{i}]";
-            var panel = ConvertWorkpiece(workpiece, path, errors, warnings);
+            var panel = ConvertWorkpiece(workpiece, path, errors, warnings, grainedIds);
             if (panel is null) continue;
             if (!panelIds.Add(panel.PanelId))
             {
@@ -186,7 +191,8 @@ public static class ManufacturingSnapshotImporter
         SnapshotWorkpiece workpiece,
         string path,
         List<ValidationIssue> errors,
-        List<ValidationIssue> warnings)
+        List<ValidationIssue> warnings,
+        IReadOnlySet<string> grainedIds)
     {
         var initialErrorCount = errors.Count;
         var panelId = string.IsNullOrWhiteSpace(workpiece.PanelId)
@@ -273,6 +279,8 @@ public static class ManufacturingSnapshotImporter
                 "blind features exist on both A and B; CabinetNC supports single-side machining only"));
 
         var machiningFace = blindFaces.Count == 1 ? blindFaces.Single() : "A";
+        // v1.1 EITHER: no blind work and both faces allowed — the nester may flip the part.
+        var mayFlip = false;
         if (workpiece.Manufacturing is { } declared)
         {
             if (!declared.Mode.Equals("singleSide", StringComparison.OrdinalIgnoreCase))
@@ -284,7 +292,26 @@ public static class ManufacturingSnapshotImporter
                     $"declared face {declaredFace} conflicts with feature face {machiningFace}"));
             if (blindFaces.Count == 0 && declaredFace is ("A" or "B"))
                 machiningFace = declaredFace;
+            if (declaredFace == "EITHER")
+            {
+                var locked = workpiece.Faces.Any(f =>
+                    f.MachiningPermission?.Equals("NOT_ALLOWED", StringComparison.OrdinalIgnoreCase) == true);
+                if (blindFaces.Count > 0 || locked)
+                    warnings.Add(new("machining_face_either_ignored", $"{path}.manufacturing.machiningFace",
+                        blindFaces.Count > 0
+                            ? $"EITHER declared but blind features are on {machiningFace}; the part is milled from that face"
+                            : "EITHER declared but a face is NOT_ALLOWED; the part is not flipped"));
+                else
+                    mayFlip = true;
+            }
         }
+        if ((workpiece.Material.Grained ?? grainedIds.Contains(workpiece.Material.MaterialId))
+            && string.IsNullOrWhiteSpace(workpiece.GrainDirection)
+            && string.IsNullOrWhiteSpace(workpiece.Manufacturing?.GrainDirection)
+            && workpiece.Material.GrainAngleDeg is null
+            && workpiece.Material.GrainAlongMm is null)
+            warnings.Add(new("grain_missing", $"{path}.grainDirection",
+                $"material {workpiece.Material.MaterialId} is grained but the part has no grain direction; it may be nested across the grain"));
 
         var faces = workpiece.Faces.Select(f => new WorkpieceFace
         {
@@ -313,8 +340,11 @@ public static class ManufacturingSnapshotImporter
         }
 
         faces = EnsureMachiningFaceAllowed(faces, warnings, path);
+        var edgeBands = ReadEdgeBands(workpiece, outline, path, errors);
 
         if (errors.Count > initialErrorCount) return null;
+
+        var grain = ResolvePartGrain(workpiece, outline);
 
         return new Panel
         {
@@ -334,6 +364,7 @@ public static class ManufacturingSnapshotImporter
                 Points = outline,
                 Closed = true,
                 Frame = "panelLocal",
+                Segments = ReadSegments(workpiece.Geometry.OuterProfile.Segments),
             },
             Features = features,
             Faces = faces,
@@ -345,19 +376,102 @@ public static class ManufacturingSnapshotImporter
                 Role = NullIfEmpty(workpiece.Identity.Role),
                 SourceFormat = ManufacturingSnapshot.SchemaName,
             },
+            GrainDirection = grain,
             Orientation = new WorkpieceOrientation
             {
                 PrimaryFace = "A",
                 MillingFace = "A",
-                AllowMirror = false,
+                GrainDirection = grain,
+                // EITHER (v1.1): no blind work, both faces allowed — free to flip when nesting.
+                AllowMirror = mayFlip,
             },
+            EdgeBands = edgeBands,
             Side = "A",
             Notes = NullIfEmpty(workpiece.Identity.Role),
         };
     }
 
+    /// <summary>Omitted or empty <c>edgeBands</c> means the part is not banded.</summary>
+    static List<EdgeBandSegment> ReadEdgeBands(
+        SnapshotWorkpiece workpiece,
+        IReadOnlyList<Point2> outline,
+        string path,
+        List<ValidationIssue> errors)
+    {
+        var raw = workpiece.EdgeBands;
+        if (raw is null || raw.Count == 0) return [];
+        var n = OutlineEdgeCount(outline);
+        var seen = new HashSet<int>();
+        var list = new List<EdgeBandSegment>();
+        for (var i = 0; i < raw.Count; i++)
+        {
+            var band = raw[i];
+            var bpath = $"{path}.edgeBands[{i}]";
+            if (band.I is not int index)
+            {
+                errors.Add(new("edge_band_index", $"{bpath}.i", "edge index i is required"));
+                continue;
+            }
+            if (index < 0 || index >= n)
+            {
+                errors.Add(new("edge_band_index", $"{bpath}.i",
+                    $"edge {index} is outside the outline ({n} edges)"));
+                continue;
+            }
+            if (!seen.Add(index))
+            {
+                errors.Add(new("edge_band_duplicate", $"{bpath}.i", $"edge {index} is banded twice"));
+                continue;
+            }
+            if (band.ThicknessMm is not double thickness || !double.IsFinite(thickness) || thickness <= 0)
+            {
+                errors.Add(new("edge_band_thickness", $"{bpath}.thicknessMm", "thicknessMm must be > 0"));
+                continue;
+            }
+            list.Add(new EdgeBandSegment
+            {
+                Index = index,
+                ThicknessMm = thickness,
+                ColorName = NullIfEmpty(band.ColorName),
+            });
+        }
+        return list;
+    }
+
+    static int OutlineEdgeCount(IReadOnlyList<Point2> outline)
+    {
+        if (outline.Count < 2) return 0;
+        var first = outline[0];
+        var last = outline[^1];
+        var closedDup = Math.Abs(first.X - last.X) <= 1e-6 && Math.Abs(first.Y - last.Y) <= 1e-6;
+        return closedDup ? outline.Count - 1 : outline.Count;
+    }
+
     static string? NullIfEmpty(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    static string? ResolvePartGrain(SnapshotWorkpiece workpiece, IReadOnlyList<Point2> outline)
+    {
+        var width = 0d;
+        var height = 0d;
+        if (outline.Count > 0)
+        {
+            var minX = outline.Min(p => p.X);
+            var maxX = outline.Max(p => p.X);
+            var minY = outline.Min(p => p.Y);
+            var maxY = outline.Max(p => p.Y);
+            width = maxX - minX;
+            height = maxY - minY;
+        }
+
+        return GrainAlign.FromFusion(
+            NullIfEmpty(workpiece.GrainDirection)
+                ?? NullIfEmpty(workpiece.Manufacturing?.GrainDirection),
+            workpiece.Material.GrainAngleDeg,
+            workpiece.Material.GrainAlongMm,
+            width,
+            height);
+    }
 
     /// <summary>
     /// Fusion currently emits through cutouts as features; if <c>innerProfiles</c>
@@ -387,8 +501,7 @@ public static class ManufacturingSnapshotImporter
             }
 
             var featureId = NextUniqueFeatureId($"inner-{i + 1}", featureIds);
-            featureIds.Add(featureId);
-            features.Add(new PanelFeature
+            var candidate = new PanelFeature
             {
                 FeatureId = featureId,
                 Kind = "throughCutout",
@@ -398,7 +511,14 @@ public static class ManufacturingSnapshotImporter
                 X = points[0].X,
                 Y = points[0].Y,
                 Path = points,
-            });
+                Profile = points,
+                ProfileSegments = ReadSegments(profile.Segments),
+            };
+            if (IsDuplicateThroughFeature(candidate, features))
+                continue;
+
+            featureIds.Add(featureId);
+            features.Add(candidate);
             warnings.Add(new("inner_profile_projected", ipath,
                 $"innerProfile projected as throughCutout {featureId}"));
         }
@@ -485,6 +605,9 @@ public static class ManufacturingSnapshotImporter
                 WidthMm = f.WidthMm,
                 Path = f.Path,
                 Profile = f.Profile,
+                Holes = f.Holes,
+                ProfileSegments = f.ProfileSegments,
+                HoleSegments = f.HoleSegments,
             };
         }).ToList();
 
@@ -585,6 +708,10 @@ public static class ManufacturingSnapshotImporter
             }
         }
 
+        var holes = ReadHoles(feature, path);
+        var holeSegs = ReadHoleSegments(feature);
+        var profileSegs = ReadSegments(feature.Geometry.Profile?.Segments);
+
         return new PanelFeature
         {
             FeatureId = feature.FeatureId,
@@ -601,7 +728,31 @@ public static class ManufacturingSnapshotImporter
             WidthMm = asThroughCutout ? null : feature.Geometry.WidthMm,
             Path = featurePath,
             Profile = profile,
+            Holes = holes,
+            ProfileSegments = profileSegs,
+            HoleSegments = holeSegs,
         };
+    }
+
+    static IReadOnlyList<IReadOnlyList<Point2>>? ReadHoles(
+        SnapshotFeature feature,
+        string path)
+    {
+        var raw = feature.Geometry.Holes;
+        if (raw is not { Count: > 0 }) return null;
+        var holes = new List<IReadOnlyList<Point2>>();
+        for (var i = 0; i < raw.Count; i++)
+        {
+            var soft = new List<ValidationIssue>();
+            var ring = ReadPoints(
+                raw[i].Points,
+                $"{path}.geometry.holes[{i}].points",
+                soft,
+                minCount: 3);
+            if (soft.Count == 0 && ring.Count >= 3)
+                holes.Add(ring);
+        }
+        return holes.Count > 0 ? holes : null;
     }
 
     static List<Point2> ReadOptionalProfile(SnapshotFeature feature, string path)
@@ -647,6 +798,45 @@ public static class ManufacturingSnapshotImporter
             area += a.X * b.Y - b.X * a.Y;
         }
         return (cx, cy, Math.Abs(area) * 0.5);
+    }
+
+    static IReadOnlyList<CadSegment>? ReadSegments(IReadOnlyList<SnapshotSegment>? raw)
+    {
+        if (raw is not { Count: > 0 }) return null;
+        var list = new List<CadSegment>();
+        foreach (var s in raw)
+        {
+            var type = (s.Type ?? "line").Trim().ToLowerInvariant();
+            if (s.Start.Count < 2 || s.End.Count < 2) continue;
+            var start = new Point2(s.Start[0], s.Start[1]);
+            var end = new Point2(s.End[0], s.End[1]);
+            if (type is "arc" or "circle")
+            {
+                if (s.Center is not { Count: >= 2 } || s.RadiusMm is null or <= 0)
+                    continue;
+                var center = new Point2(s.Center[0], s.Center[1]);
+                list.Add(type == "circle"
+                    ? CadSegment.MakeCircle(center, s.RadiusMm.Value, start, s.Cw)
+                    : CadSegment.MakeArc(start, end, center, s.RadiusMm.Value, s.Cw));
+            }
+            else
+                list.Add(CadSegment.MakeLine(start, end));
+        }
+        return list.Count > 0 ? list : null;
+    }
+
+    static IReadOnlyList<IReadOnlyList<CadSegment>>? ReadHoleSegments(SnapshotFeature feature)
+    {
+        var raw = feature.Geometry.Holes;
+        if (raw is not { Count: > 0 }) return null;
+        var holes = new List<IReadOnlyList<CadSegment>>();
+        foreach (var hole in raw)
+        {
+            var segs = ReadSegments(hole.Segments);
+            if (segs is { Count: > 0 })
+                holes.Add(segs);
+        }
+        return holes.Count > 0 ? holes : null;
     }
 
     static List<Point2> ReadPoints(
@@ -718,6 +908,7 @@ public static class ManufacturingSnapshotImporter
                 },
             Orientation = panel.Orientation,
             EdgeBanding = panel.EdgeBanding,
+            EdgeBands = panel.EdgeBands,
             Notes = panel.Notes,
             Side = panel.Side,
         };

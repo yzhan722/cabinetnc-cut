@@ -1,5 +1,7 @@
 namespace CabinetNC.Domain.Machines;
 
+using CabinetNC.Domain.Manufacturing;
+
 public sealed class MachineProfile
 {
     public required string Id { get; init; }
@@ -38,6 +40,19 @@ public static class MachineCatalog
             SpindleRpm = 18000,
             ToolDiameterMm = 6,
             OriginNote = "1325 nesting table · OSAI E4",
+        },
+        new()
+        {
+            Id = SyntecPost.MachineId,
+            Name = "新代 E4 1330",
+            Dialect = "syntec_e4_1330",
+            ProgramEnd = "M30",
+            SafeZMm = SyntecPost.RetractZMm,
+            FeedXyMmMin = SyntecPost.CutFeed,
+            FeedZMmMin = SyntecPost.PlungeFeed,
+            SpindleRpm = SyntecPost.SpindleRpm,
+            ToolDiameterMm = 6,
+            OriginNote = "G54 板尾原点 · 板长从尾部量 · Z0 台面",
         },
     ];
 

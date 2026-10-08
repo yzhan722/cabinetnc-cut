@@ -1,0 +1,22 @@
+# 补板库 is per project: empty until a plan is loaded, then a manual rectangular remnant can be
+# registered for the project's material kind. 「画余料…」opens the draft canvas (not driven here).
+# 补切密排 stays disabled until a pending piece exists.
+invoke:补板库
+wait:800
+assert-text:ModuleSubtitle=补板库
+assert-text:RemnantsEmptyTitle=先载入方案
+shot:11-recut-empty.png
+invoke:去生产加工
+wait:600
+invoke:打开示例
+wait:2500
+dismiss
+assert-status:已载入示例
+invoke:补板库
+wait:800
+assert-text:RecutLibMeta=待补 0 件 · 余料 0 块
+invoke:添加余料
+wait:600
+assert-status:已添加余料 600×400
+assert-text:RecutLibMeta=余料 1 块
+shot:12-recut-remnant-added.png

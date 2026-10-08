@@ -1,0 +1,22 @@
+# Geometry edit after a nest must mark nest/ops/out stale and offer 重新密排.
+invoke:打开示例
+wait:2500
+dismiss
+tab:2 板材与设备
+wait:600
+invoke:初始密排 →
+wait:4500
+dismiss
+tab:1 载入方案
+wait:800
+invoke:镜像X
+wait:800
+tab:3 密排
+wait:1200
+assert-title:*
+shot:05-stale-banner.png
+invoke:重新密排
+wait:4500
+dismiss
+assert-status:密排完成
+shot:06-renested.png

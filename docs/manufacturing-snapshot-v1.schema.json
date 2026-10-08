@@ -14,6 +14,8 @@
       "type": "object",
       "properties": {
         "cadApp": { "type": "string" },
+        "producer": { "type": "string", "description": "v1.1: the exporting application, e.g. fusion-plugin / the-cab-lab" },
+        "producerVersion": { "type": "string" },
         "pluginId": { "type": "string" },
         "pluginVersion": { "type": "string" },
         "designName": { "type": "string" },
@@ -77,7 +79,11 @@
         "substrateId": { "type": "string" },
         "displayName": { "type": "string" },
         "thicknessMm": { "type": "number", "exclusiveMinimum": 0 },
-        "decorId": { "type": "string" }
+        "decorId": { "type": "string" },
+        "colorName": { "type": "string" },
+        "surfaceMode": { "enum": ["SINGLE_SIDED", "DOUBLE_SIDED"] },
+        "series": { "type": "string", "description": "v1.1: decor series, e.g. melamine / acrylic / hpl" },
+        "grained": { "type": "boolean", "description": "v1.1: the sheet has a wood grain; its parts need a grain direction" }
       },
       "additionalProperties": true
     },
@@ -152,6 +158,16 @@
       },
       "additionalProperties": true
     },
+    "edgeBand": {
+      "type": "object",
+      "required": ["i", "thicknessMm"],
+      "properties": {
+        "i": { "type": "integer", "minimum": 0 },
+        "thicknessMm": { "type": "number", "exclusiveMinimum": 0 },
+        "colorName": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
     "workpiece": {
       "type": "object",
       "required": ["workpieceId", "material", "geometry", "features"],
@@ -212,6 +228,11 @@
             "machiningFace": { "enum": ["A", "B", "EITHER"] }
           },
           "additionalProperties": true
+        },
+        "edgeBands": {
+          "type": "array",
+          "description": "Tape on outline edges. Omitted or empty = not banded. i is the segment of outerProfile.points.",
+          "items": { "$ref": "#/$defs/edgeBand" }
         },
         "provenance": {
           "type": "object",

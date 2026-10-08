@@ -4,14 +4,14 @@ using SkiaSharp;
 namespace CabinetNC.Desktop;
 
 /// <summary>
-/// Shop label BMP: 236×157, 1 bpp (Excitech / thermal printer).
-/// Physical size ≈ 60×40 mm at 100 dpi. File size matches shop 1_1.bmp (5086 bytes).
+/// Shop label BMP: 600×600, 1 bpp, 300 dpi (Zebra ZM400).
+/// Artwork ≈ 50.8×50.8 mm on a 60×60 mm die-cut. Top-heavy: big title, small footer.
 /// </summary>
 static class LabelBmp
 {
-    public const int WidthPx = 236;
-    public const int HeightPx = 157;
-    public const int Dpi = 100;
+    public const int WidthPx = 600;
+    public const int HeightPx = 600;
+    public const int Dpi = 300;
     /// <summary>White if luma ≥ this; otherwise black. Keeps antialiased edges printable.</summary>
     const int WhiteLuma = 160;
 
@@ -24,51 +24,92 @@ static class LabelBmp
         {
             Color = SKColors.Black,
             IsStroke = true,
-            StrokeWidth = 2,
+            StrokeWidth = 4,
             IsAntialias = false,
         })
-            canvas.DrawRect(1, 1, WidthPx - 2, HeightPx - 2, border);
+            canvas.DrawRect(2, 2, WidthPx - 4, HeightPx - 4, border);
 
         var title = string.IsNullOrWhiteSpace(paste.Title) ? paste.Stem : paste.Title;
-        var group = paste.Group ?? "";
-        var size = $"{Fmt(paste.WidthMm)} × {Fmt(paste.HeightMm)} mm";
-        var stock = string.IsNullOrWhiteSpace(paste.Material)
-            ? (paste.ThicknessMm > 0 ? $"{Fmt(paste.ThicknessMm)} mm" : "")
-            : paste.Material;
-        var sheet = $"S{paste.SheetIndex + 1}";
+        var project = paste.Project ?? "";
+        if (project.Equals(title, StringComparison.OrdinalIgnoreCase)
+            || project.Equals(paste.Group, StringComparison.OrdinalIgnoreCase))
+            project = "";
+        var size = paste.ThicknessMm > 0
+            ? $"{Fmt(paste.WidthMm)} × {Fmt(paste.HeightMm)} × {Fmt(paste.ThicknessMm)}"
+            : $"{Fmt(paste.WidthMm)} × {Fmt(paste.HeightMm)}";
+        var stock = paste.Material ?? "";
+        var footer = $"S{paste.SheetIndex + 1}  {paste.Stem}";
 
-        DrawLine(canvas, title, 10, 38, 22, bold: true);
-        if (!string.IsNullOrWhiteSpace(group) &&
-            !group.Equals(title, StringComparison.OrdinalIgnoreCase))
-            DrawLine(canvas, group, 10, 62, 13, bold: false);
-        DrawLine(canvas, size, 10, 88, 14, bold: false);
+        const float left = 32;
+        const float maxW = WidthPx - 32 - 32;
+        const float footerY = 564;
+        float y = 72;
+
+        y = DrawWrapped(canvas, title, left, y, maxW, 66, bold: true, maxLines: 2, lineHeight: 74);
+        if (!string.IsNullOrWhiteSpace(project))
+        {
+            y += 8;
+            y = DrawWrapped(canvas, project, left, y, maxW, 28, bold: false, maxLines: 2, lineHeight: 34);
+        }
+        y += 18;
+        y = DrawWrapped(canvas, size, left, y, maxW, 42, bold: true, maxLines: 1, lineHeight: 50);
         if (!string.IsNullOrWhiteSpace(stock))
-            DrawLine(canvas, stock, 10, 110, 12, bold: false);
-        DrawLine(canvas, $"{sheet}  {paste.Stem}", 10, 140, 11, bold: false);
+        {
+            y += 6;
+            DrawWrapped(canvas, stock, left, y, maxW, 30, bold: false, maxLines: 2, lineHeight: 36);
+        }
+
+        DrawWrapped(canvas, footer, left, footerY, maxW, 20, bold: false, maxLines: 1, lineHeight: 24);
 
         return ToBmp1(bmp);
     }
 
-    static void DrawLine(SKCanvas canvas, string text, float x, float y, float size, bool bold)
+    static float DrawWrapped(
+        SKCanvas canvas, string text, float x, float y, float maxW,
+        float size, bool bold, int maxLines, float lineHeight)
     {
-        if (string.IsNullOrWhiteSpace(text)) return;
+        if (string.IsNullOrWhiteSpace(text)) return y;
         using var paint = new SKPaint { Color = SKColors.Black, IsAntialias = false };
         using var font = new SKFont(UiTypeface(bold), size);
-        var max = WidthPx - x - 8;
-        var shown = Ellipsize(text, max, font);
-        canvas.DrawText(shown, x, y, SKTextAlign.Left, font, paint);
+        foreach (var line in WrapLines(text, maxW, font, maxLines))
+        {
+            canvas.DrawText(line, x, y, SKTextAlign.Left, font, paint);
+            y += lineHeight;
+        }
+        return y;
     }
 
-    static string Ellipsize(string text, float maxWidth, SKFont font)
+    internal static List<string> WrapLines(string text, float maxWidth, SKFont font, int maxLines)
     {
-        if (font.MeasureText(text) <= maxWidth) return text;
-        const string ell = "…";
-        for (var n = text.Length - 1; n >= 1; n--)
+        var lines = new List<string>();
+        var rest = text.Trim();
+        while (rest.Length > 0 && lines.Count < maxLines)
         {
-            var cut = text[..n] + ell;
-            if (font.MeasureText(cut) <= maxWidth) return cut;
+            var last = lines.Count == maxLines - 1;
+            if (font.MeasureText(rest) <= maxWidth)
+            {
+                lines.Add(rest);
+                break;
+            }
+
+            var n = rest.Length;
+            var extra = last ? "…" : "";
+            while (n > 1 && font.MeasureText(rest[..n] + extra) > maxWidth)
+                n--;
+            if (!last)
+            {
+                var sp = rest.LastIndexOf(' ', n);
+                if (sp >= n / 3) n = sp;
+                lines.Add(rest[..n].TrimEnd());
+                rest = rest[n..].TrimStart();
+            }
+            else
+            {
+                lines.Add((rest[..n] + "…").TrimEnd());
+                break;
+            }
         }
-        return ell;
+        return lines;
     }
 
     static string Fmt(double v) =>
@@ -153,5 +194,68 @@ static class LabelBmp
             }
         }
         return bytes;
+    }
+
+    /// <summary>
+    /// Sheet preview for the label folder (<c>W*.bmp</c> large, <c>T*.bmp</c> small), drawn like the
+    /// shop samples: landscape, length to the right, width downward, program origin top-left.
+    /// That is a rotation of the nest view, not a mirror.
+    /// </summary>
+    public static byte[] RenderSheetPreview(
+        double widthMm,
+        double lengthMm,
+        string title,
+        IReadOnlyList<CutOp> ops,
+        int longSidePx)
+    {
+        var sheetW = widthMm > 1 ? widthMm : 1220;
+        var sheetL = lengthMm > 1 ? lengthMm : 2440;
+        var longSide = Math.Max(sheetW, sheetL);
+        var scale = longSidePx / longSide;
+        var w = Math.Max(48, (int)Math.Round(sheetL * scale));
+        var h = Math.Max(24, (int)Math.Round(sheetW * scale));
+        const int caption = 28;
+        using var bmp = new SKBitmap(w + 16, h + caption + 16, SKColorType.Bgra8888, SKAlphaType.Opaque);
+        using var canvas = new SKCanvas(bmp);
+        canvas.Clear(SKColors.White);
+        var ox = 8f;
+        var oy = 8f + caption;
+        using (var border = new SKPaint { Color = SKColors.Black, IsStroke = true, StrokeWidth = 2, IsAntialias = false })
+            canvas.DrawRect(ox, oy, w, h, border);
+        using (var fill = new SKPaint { Color = new SKColor(230, 230, 230), IsStroke = false, IsAntialias = false })
+        using (var edge = new SKPaint { Color = SKColors.Black, IsStroke = true, StrokeWidth = 1, IsAntialias = false })
+        {
+            foreach (var op in ops)
+            {
+                if (op.Op != "contour" || !string.IsNullOrWhiteSpace(op.FeatureId) || op.Path is not { Count: >= 3 } path)
+                    continue;
+                using var poly = new SKPath();
+                var first = true;
+                foreach (var p in path)
+                {
+                    var x = ox + (float)(p.Y / sheetL * w);
+                    var y = oy + (float)(p.X / sheetW * h);
+                    if (first)
+                    {
+                        poly.MoveTo(x, y);
+                        first = false;
+                    }
+                    else
+                        poly.LineTo(x, y);
+                }
+                poly.Close();
+                canvas.DrawPath(poly, fill);
+                canvas.DrawPath(poly, edge);
+            }
+        }
+        var captionText = string.IsNullOrWhiteSpace(title) ? "" : title.Trim();
+        if (captionText.Length > 0)
+        {
+            using var paint = new SKPaint { Color = SKColors.Black, IsAntialias = false };
+            using var font = new SKFont(UiTypeface(false), Math.Clamp(caption * 0.62f, 10, 18));
+            canvas.DrawText(captionText, ox, caption - 6, SKTextAlign.Left, font, paint);
+        }
+        canvas.Flush();
+        return ToBmp1(bmp);
     }
 }

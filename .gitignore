@@ -9,6 +9,8 @@ portable/
 !.env.example
 *-credentials.json
 service-account*.json
+cloud.json
+cloud.local.json
 
 # Native build outputs
 native/cabinetnc_core/build/
@@ -25,3 +27,5 @@ dotnet/**/*.user
 # Desktop / plugin usage logs (keep folder, ignore payloads)
 logs/*
 !logs/.gitkeep
+.cnc-pickup/
+dotnet/artifacts/

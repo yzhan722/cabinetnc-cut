@@ -1,4 +1,5 @@
 using CabinetNC.Compute.Contracts;
+using CabinetNC.Desktop.Core;
 using CabinetNC.Domain.Geometry;
 using CabinetNC.Domain.Manufacturing;
 using CabinetNC.Domain.Nesting;
@@ -57,7 +58,8 @@ static class CanvasPainter
                     fill: new SKColor(0xC4, 0x7A, 0x00, 0x66),
                     stroke: new SKColor(0x8A, 0x52, 0x00),
                     dashed: false,
-                    label: label);
+                    label: label,
+                    holes: f.Holes);
             }
             else if (PanelEdit.IsGroove(f))
             {
@@ -126,8 +128,12 @@ static class CanvasPainter
             }
         }
 
+        DrawGeomGrain(canvas, view, panel, box);
+
+        var grain = GrainAlign.NormalizePart(panel.GrainDirection ?? panel.Orientation?.GrainDirection);
         DrawText(canvas, panel.DisplayTitle, 10, 18, 13, new SKColor(0x22, 0x22, 0x22), bold: true);
-        DrawText(canvas, hoverHint ?? "Geom · 拖孔/槽端点/边手柄", 10, 36, 11, new SKColor(0x55, 0x55, 0x55));
+        var hint = hoverHint ?? "Geom · 拖孔/槽端点/边手柄";
+        DrawText(canvas, grain is null ? hint : $"{hint} · 木纹 {grain}", 10, 36, 11, new SKColor(0x55, 0x55, 0x55));
     }
 
     public readonly record struct NestHoldingItem(
@@ -165,6 +171,8 @@ static class CanvasPainter
         int ActiveSheetIndex = 0,
         IReadOnlyList<(double X, double Y)>? GuillotinePolyline = null,
         string? GuillotineLabel = null,
+        IReadOnlyList<(IReadOnlyList<(double X, double Y)> Poly, string? Label)>? GuillotineCuts = null,
+        IReadOnlyList<(double X, double Y, string Text)>? GuillotinePieceLabels = null,
         float HoldingBayLeft = 0,
         IReadOnlyList<NestHoldingItem>? HoldingItems = null,
         IReadOnlyList<NestHoldingRegion>? HoldingRegions = null,
@@ -180,9 +188,24 @@ static class CanvasPainter
         bool SelectionCrossing = false,
         CamStrategyKind? HighlightStrategy = null,
         TroyPassKind? HighlightPass = null,
+        IReadOnlyList<NestBlockedRect>? Blocked = null,
         OpsToolpathKind? HighlightToolpath = null,
         IReadOnlyList<ProfileBridge>? Bridges = null,
-        IReadOnlyDictionary<string, (double X, double Y)>? LabelOverrides = null);
+        IReadOnlyDictionary<string, (double X, double Y)>? LabelOverrides = null,
+        bool LitePaint = false,
+        IReadOnlyList<ToolStroke>? NcSimStrokes = null,
+        double NcSimTimeSec = 0,
+        bool FaintParts = false,
+        float? OriginX = null,
+        float? OriginY = null,
+        IReadOnlyDictionary<int, double>? NcSimToolDiaMm = null,
+        SheetGrainKind SheetGrain = SheetGrainKind.None,
+        // Display layers (CAD "show/hide" toggles); all on by default.
+        bool ShowGrain = true,
+        bool ShowFeatures = true,
+        bool ShowLabels = true,
+        bool ShowDims = true,
+        bool ShowRapids = true);
 
     public static void PaintNest(
         SKCanvas canvas,
@@ -194,27 +217,42 @@ static class CanvasPainter
     {
         canvas.Clear(new SKColor(0xF4, 0xF4, 0xF4));
         var pad = opts.Pad;
+        var ox = opts.OriginX ?? pad;
+        var oy = opts.OriginY ?? pad;
         var scale = opts.Scale;
         var sw = opts.SheetW;
         var sh = opts.SheetH;
-        if (scale <= 0) return;
+        // NaN/Infinity reach Skia as a native crash and never hit the managed error dialog.
+        if (!(scale > 0) || !float.IsFinite(scale)
+            || !float.IsFinite(sw) || !float.IsFinite(sh) || sw <= 0 || sh <= 0
+            || !float.IsFinite(ox) || !float.IsFinite(oy))
+            return;
 
-        float ToSx(double x) => pad + (float)x * scale;
-        float ToSy(double y) => pad + (sh - (float)y) * scale;
+        float ToSx(double x) => ox + (float)x * scale;
+        float ToSy(double y) => oy + (sh - (float)y) * scale;
 
         // sheet
         using (var fill = new SKPaint { Color = SKColors.White, IsAntialias = true })
         using (var stroke = new SKPaint { Color = SKColors.Black, IsStroke = true, StrokeWidth = 1, IsAntialias = true })
         {
-            canvas.DrawRect(pad, pad, sw * scale, sh * scale, fill);
-            DrawSheetGrid(canvas, pad, scale, sw, sh);
-            canvas.DrawRect(pad, pad, sw * scale, sh * scale, stroke);
+            canvas.DrawRect(ox, oy, sw * scale, sh * scale, fill);
+            DrawSheetGrid(canvas, ox, oy, scale, sw, sh);
+            if (opts.Blocked is { Count: > 0 } blocked)
+                DrawBlocked(canvas, ToSx, ToSy, scale, blocked);
+            canvas.DrawRect(ox, oy, sw * scale, sh * scale, stroke);
         }
+        if (opts.SheetGrain != SheetGrainKind.None)
+            DrawSheetGrain(canvas, ToSx, ToSy, sw, sh, opts.SheetGrain);
 
         DrawDimHScreen(canvas, ToSx(0), ToSx(sw), ToSy(sh) - 14, Fmt(sw));
         DrawDimVScreen(canvas, ToSy(0), ToSy(sh), ToSx(0) - 8, Fmt(sh));
 
-        var byId = panels.ToDictionary(p => p.PanelId);
+        var byId = new Dictionary<string, Panel>(StringComparer.Ordinal);
+        foreach (var panel in panels)
+        {
+            if (!string.IsNullOrEmpty(panel.PanelId))
+                byId[panel.PanelId] = panel;
+        }
         var sheetIdx = Math.Max(0, opts.ActiveSheetIndex);
         var selectedIds = opts.SelectedIds;
         var drawList = placements.Where(p => p.SheetIndex == sheetIdx).ToList();
@@ -238,14 +276,24 @@ static class CanvasPainter
                 : locked ? new SKColor(0xC0, 0x45, 0x2D)
                 : active ? new SKColor(0x00, 0x66, 0xCC) : SKColors.Black;
             var lw = active || conflict || locked ? 2f : 1f;
+            if (opts.FaintParts)
+            {
+                fillC = new SKColor(0xF4, 0xF4, 0xF4);
+                strokeC = new SKColor(0xC4, 0xC4, 0xC4);
+                lw = 1f;
+            }
 
-            using var path = BuildWorldPath(panel, place, pad, scale, sh);
+            using var path = BuildWorldPath(panel, place, ox, oy, scale, sh);
+            if (path is null) continue;
             using var fill = new SKPaint { Color = fillC, IsAntialias = true };
             using var stroke = new SKPaint { Color = strokeC, IsStroke = true, StrokeWidth = lw, IsAntialias = true };
             canvas.DrawPath(path, fill);
             canvas.DrawPath(path, stroke);
+            if (!opts.LitePaint && !opts.FaintParts && opts.ShowGrain)
+                DrawPartGrain(canvas, panel, place, ToSx, ToSy, scale);
 
             // features on nest
+            if (!opts.LitePaint && opts.ShowFeatures)
             foreach (var f in panel.Features)
             {
                 if (PanelEdit.IsHole(f))
@@ -273,7 +321,8 @@ static class CanvasPainter
                     DrawClosedFeatureOnSheet(
                         canvas, pocketRing, bounds, place, ToSx, ToSy,
                         fill: new SKColor(0xC4, 0x7A, 0x00, 0x66),
-                        stroke: new SKColor(0x8A, 0x52, 0x00));
+                        stroke: new SKColor(0x8A, 0x52, 0x00),
+                        holes: f.Holes);
                 }
                 else if (PanelEdit.IsGroove(f))
                 {
@@ -301,18 +350,20 @@ static class CanvasPainter
                 var shortName = string.IsNullOrWhiteSpace(panel.DisplayPartName)
                     ? panel.DisplayTitle
                     : panel.DisplayPartName;
-                var label = locked ? $"[锁] {shortName}" : shortName;
+                var label = locked ? UiText.T($"[锁] {shortName}") : shortName;
                 label = EllipsizeToWidth(label, Math.Max(12f, partW), fontSize, bold: active);
                 DrawText(canvas, label, lx, ly, fontSize,
                     active ? new SKColor(0x00, 0x66, 0xCC) : new SKColor(0x22, 0x22, 0x22),
                     bold: active);
             }
 
-            if (active)
+            if (active && !opts.LitePaint && opts.ShowDims)
             {
                 DrawDimHScreen(canvas, ToSx(aabb.MinX), ToSx(aabb.MaxX), ToSy(aabb.MinY) + 12, Fmt(aabb.MaxX - aabb.MinX));
                 DrawDimVScreen(canvas, ToSy(aabb.MinY), ToSy(aabb.MaxY), ToSx(aabb.MaxX) + 10, Fmt(aabb.MaxY - aabb.MinY));
             }
+
+            if (opts.LitePaint || !opts.ShowLabels) continue;
 
             (double X, double Y)? ov = opts.LabelOverrides is { } map
                 && map.TryGetValue(panel.PanelId, out var o)
@@ -339,18 +390,13 @@ static class CanvasPainter
         }
 
         if (drawList.Count == 0)
-            DrawText(canvas, $"本张大板无摆位（第 {sheetIdx + 1} 张）", pad + 8, pad + 20, 12, new SKColor(0x66, 0x66, 0x66));
+            DrawText(canvas, $"本张大板无摆位（第 {sheetIdx + 1} 张）", ox + 8, oy + 20, 12, new SKColor(0x66, 0x66, 0x66));
 
-        if (opts.GuillotinePolyline is { Count: >= 2 } gpoly)
+        var gCuts = opts.GuillotineCuts;
+        if (gCuts is null && opts.GuillotinePolyline is { Count: >= 2 } gpoly)
+            gCuts = [(gpoly, opts.GuillotineLabel)];
+        if (gCuts is { Count: > 0 })
         {
-            using var path = new SKPath();
-            for (var i = 0; i < gpoly.Count; i++)
-            {
-                var sx = ToSx(gpoly[i].X);
-                var sy = ToSy(gpoly[i].Y);
-                if (i == 0) path.MoveTo(sx, sy);
-                else path.LineTo(sx, sy);
-            }
             using var stroke = new SKPaint
             {
                 Color = new SKColor(0xC4, 0x5A, 0x00),
@@ -359,15 +405,36 @@ static class CanvasPainter
                 IsAntialias = true,
                 PathEffect = SKPathEffect.CreateDash([10f, 6f], 0),
             };
-            canvas.DrawPath(path, stroke);
-            // Endpoint markers
             using var mark = new SKPaint { Color = new SKColor(0xC4, 0x5A, 0x00), IsAntialias = true };
-            foreach (var p in gpoly)
-                canvas.DrawCircle(ToSx(p.X), ToSy(p.Y), 3.5f, mark);
-            if (!string.IsNullOrWhiteSpace(opts.GuillotineLabel))
+            foreach (var (poly, label) in gCuts)
             {
-                var mid = gpoly[gpoly.Count / 2];
-                DrawText(canvas, opts.GuillotineLabel!, ToSx(mid.X) + 6, ToSy(mid.Y) - 6, 11,
+                if (poly.Count < 2) continue;
+                using var path = new SKPath();
+                for (var i = 0; i < poly.Count; i++)
+                {
+                    var sx = ToSx(poly[i].X);
+                    var sy = ToSy(poly[i].Y);
+                    if (i == 0) path.MoveTo(sx, sy);
+                    else path.LineTo(sx, sy);
+                }
+                canvas.DrawPath(path, stroke);
+                foreach (var p in poly)
+                    canvas.DrawCircle(ToSx(p.X), ToSy(p.Y), 3.5f, mark);
+                if (!string.IsNullOrWhiteSpace(label) && opts.GuillotinePieceLabels is not { Count: > 0 })
+                {
+                    var mid = poly[poly.Count / 2];
+                    DrawText(canvas, label!, ToSx(mid.X) + 6, ToSy(mid.Y) - 6, 11,
+                        new SKColor(0x8A, 0x3E, 0x00), bold: true);
+                }
+            }
+        }
+
+        if (opts.GuillotinePieceLabels is { Count: > 0 } pieceLabels)
+        {
+            foreach (var (x, y, text) in pieceLabels)
+            {
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                DrawText(canvas, text, ToSx(x), ToSy(y), 11,
                     new SKColor(0x8A, 0x3E, 0x00), bold: true);
             }
         }
@@ -387,6 +454,9 @@ static class CanvasPainter
 
         if (opts.ShowOps && opts.Bridges is { Count: > 0 } bridges)
             PaintBridges(canvas, bridges, ToSx, ToSy, scale, opts.ActiveSheetIndex);
+
+        if (opts.NcSimStrokes is { Count: > 0 } sim)
+            PaintNcSim(canvas, sim, opts.NcSimTimeSec, ToSx, ToSy, scale, opts.NcSimToolDiaMm, opts.ShowRapids);
 
         if (opts.HoldingBayLeft > 0 && opts.HoldingBayLeft < w - 4)
             PaintHoldingBay(
@@ -881,6 +951,150 @@ static class CanvasPainter
         }
     }
 
+    static void PaintNcSim(
+        SKCanvas canvas,
+        IReadOnlyList<ToolStroke> strokes,
+        double timeSec,
+        Func<double, float> toSx,
+        Func<double, float> toSy,
+        float scale,
+        IReadOnlyDictionary<int, double>? shopDia = null,
+        bool showRapids = true)
+    {
+        var pose = NcCutSim.At(strokes, timeSec);
+
+        for (var i = 0; i < strokes.Count; i++)
+        {
+            var s = strokes[i];
+            if (!showRapids && NcCutSim.KindOf(s) == NcCutSim.StrokeKind.Rapid)
+                continue;
+            if (i > pose.StrokeIndex)
+            {
+                DrawNcStroke(canvas, s, 0, 1, false, toSx, toSy, scale, shopDia);
+                continue;
+            }
+
+            if (i == pose.StrokeIndex && pose.Along < 1 - 1e-6)
+            {
+                if (pose.Along > 1e-6)
+                    DrawNcStroke(canvas, s, 0, pose.Along, true, toSx, toSy, scale, shopDia);
+                DrawNcStroke(canvas, s, pose.Along, 1, false, toSx, toSy, scale, shopDia);
+                continue;
+            }
+
+            DrawNcStroke(canvas, s, 0, 1, true, toSx, toSy, scale, shopDia);
+        }
+
+        if (pose.StrokeIndex < 0) return;
+        var r = Math.Max(3.2f, (float)(NcCutSim.ToolDiameterMm(pose.ToolNum, shopDia) * 0.5 * scale));
+        var cx = toSx(pose.X);
+        var cy = toSy(pose.Y);
+        var fillC = pose.Rapid
+            ? new SKColor(0x88, 0x88, 0x88, 0xB0)
+            : pose.Z >= 0.25
+                ? new SKColor(0xE6, 0x7E, 0x22, 0xE0)
+                : new SKColor(0x1A, 0x6B, 0xB5, 0xE0);
+        using var fill = new SKPaint { Color = fillC, IsAntialias = true };
+        using var ring = new SKPaint
+        {
+            Color = new SKColor(0x22, 0x22, 0x22),
+            IsStroke = true,
+            StrokeWidth = 1.4f,
+            IsAntialias = true,
+        };
+        canvas.DrawCircle(cx, cy, r, fill);
+        canvas.DrawCircle(cx, cy, r, ring);
+    }
+
+    static void DrawNcStroke(
+        SKCanvas canvas,
+        ToolStroke s,
+        double a0,
+        double a1,
+        bool done,
+        Func<double, float> toSx,
+        Func<double, float> toSy,
+        float scale,
+        IReadOnlyDictionary<int, double>? shopDia = null)
+    {
+        a0 = Math.Clamp(a0, 0, 1);
+        a1 = Math.Clamp(a1, 0, 1);
+        if (a1 - a0 < 1e-6) return;
+
+        var kind = NcCutSim.KindOf(s);
+        var rapid = kind == NcCutSim.StrokeKind.Rapid;
+        var color = kind switch
+        {
+            NcCutSim.StrokeKind.Leave => done
+                ? new SKColor(0xE6, 0x7E, 0x22, 0xB8)
+                : new SKColor(0xE6, 0x7E, 0x22, 0x40),
+            NcCutSim.StrokeKind.Through => done
+                ? new SKColor(0x0B, 0x4F, 0x8C, 0xB8)
+                : new SKColor(0x1A, 0x6B, 0xB5, 0x40),
+            _ => done
+                ? new SKColor(0x88, 0x88, 0x88)
+                : new SKColor(0xBB, 0xBB, 0xBB, 0x90),
+        };
+        var dia = NcCutSim.ToolDiameterMm(s.ToolNum, shopDia);
+        var sw = NcCutSim.CutStrokeWidthPx(s.ToolNum, scale, rapid, shopDia);
+
+        if (!s.Arc && s.XyLen < 0.2)
+        {
+            if (!done) return;
+            var tip = NcCutSim.PointAlong(s, a1);
+            using var tick = new SKPaint { Color = color, IsAntialias = true };
+            canvas.DrawCircle(toSx(tip.X), toSy(tip.Y), Math.Max(1.8f, (float)(dia * 0.5 * scale)), tick);
+            return;
+        }
+
+        using var dash = rapid ? SKPathEffect.CreateDash([6f, 4f], 0) : null;
+        using var paint = new SKPaint
+        {
+            Color = color,
+            IsStroke = true,
+            StrokeWidth = sw,
+            IsAntialias = true,
+            StrokeCap = SKStrokeCap.Round,
+            StrokeJoin = SKStrokeJoin.Round,
+            PathEffect = dash,
+        };
+        if (s.Arc && s.R is double rad && rad > 1e-6
+            && OsaiTroyParser.TryArcSweep(s.X0, s.Y0, s.X1, s.Y1, rad, s.Cw, out var cx, out var cy, out _, out _))
+        {
+            var p0 = NcCutSim.PointAlong(s, a0);
+            var p1 = NcCutSim.PointAlong(s, a1);
+            var mid = NcCutSim.PointAlong(s, (a0 + a1) * 0.5);
+            var scx = toSx(cx);
+            var scy = toSy(cy);
+            var rx = Math.Abs(toSx(cx + rad) - scx);
+            var ry = Math.Abs(toSy(cy + rad) - scy);
+            if (rx > 0.5f && ry > 0.5f)
+            {
+                float Ang(double x, double y) =>
+                    (float)(Math.Atan2(toSy(y) - scy, toSx(x) - scx) * 180 / Math.PI);
+                static float CwDelta(float from, float to)
+                {
+                    var d = to - from;
+                    while (d < 0) d += 360;
+                    while (d >= 360) d -= 360;
+                    return d;
+                }
+                var sa = Ang(p0.X, p0.Y);
+                var sweepCw = CwDelta(sa, Ang(p1.X, p1.Y));
+                var midCw = CwDelta(sa, Ang(mid.X, mid.Y));
+                var sweep = midCw <= sweepCw + 1 ? sweepCw : sweepCw - 360;
+                using var path = new SKPath();
+                path.MoveTo(toSx(p0.X), toSy(p0.Y));
+                path.ArcTo(new SKRect(scx - rx, scy - ry, scx + rx, scy + ry), sa, sweep, false);
+                canvas.DrawPath(path, paint);
+                return;
+            }
+        }
+        var a = NcCutSim.PointAlong(s, a0);
+        var b = NcCutSim.PointAlong(s, a1);
+        canvas.DrawLine(toSx(a.X), toSy(a.Y), toSx(b.X), toSy(b.Y), paint);
+    }
+
     static void DrawHoldPreview(
         SKCanvas canvas,
         Panel panel,
@@ -901,7 +1115,8 @@ static class CanvasPainter
             OffsetY = oy,
             RotationDeg = rotDeg,
         };
-        using var path = BuildWorldPath(panel, place, pad, scale, sheetH);
+        using var path = BuildWorldPath(panel, place, pad, pad, scale, sheetH);
+        if (path is null) return;
         var fillC = blocked
             ? new SKColor(0xCC, 0x33, 0x33, 0x55)
             : new SKColor(0x00, 0x66, 0xCC, 0x55);
@@ -946,7 +1161,8 @@ static class CanvasPainter
         }
     }
 
-    public static SKPath BuildWorldPath(Panel panel, NestPlacementMsg place, float pad, float scale, float sheetH)
+    public static SKPath? BuildWorldPath(
+        Panel panel, NestPlacementMsg place, float padX, float padY, float scale, float sheetH)
     {
         var path = new SKPath();
         var first = true;
@@ -956,10 +1172,20 @@ static class CanvasPainter
             var (wx, wy) = NestTransform.ToSheet(
                 pt.X, pt.Y, bounds,
                 place.OffsetX, place.OffsetY, place.RotationDeg);
-            var x = pad + (float)wx * scale;
-            var y = pad + (sheetH - (float)wy) * scale;
+            var x = padX + (float)wx * scale;
+            var y = padY + (sheetH - (float)wy) * scale;
+            if (!float.IsFinite(x) || !float.IsFinite(y))
+            {
+                path.Dispose();
+                return null;
+            }
             if (first) { path.MoveTo(x, y); first = false; }
             else path.LineTo(x, y);
+        }
+        if (first)
+        {
+            path.Dispose();
+            return null;
         }
         path.Close();
         return path;
@@ -986,14 +1212,78 @@ static class CanvasPainter
         }
     }
 
-    static void DrawSheetGrid(SKCanvas canvas, float pad, float scale, float sw, float sh)
+    static void DrawSheetGrid(SKCanvas canvas, float ox, float oy, float scale, float sw, float sh)
     {
+        if (!float.IsFinite(ox) || !float.IsFinite(oy) || !(scale > 0) || !float.IsFinite(scale)
+            || !float.IsFinite(sw) || !float.IsFinite(sh) || sw <= 0 || sh <= 0)
+            return;
         using var paint = new SKPaint { Color = new SKColor(0xE8, 0xE8, 0xE8), IsStroke = true, StrokeWidth = 1 };
         const float step = 50;
-        for (float x = 0; x <= sw; x += step)
-            canvas.DrawLine(pad + x * scale, pad, pad + x * scale, pad + sh * scale, paint);
-        for (float y = 0; y <= sh; y += step)
-            canvas.DrawLine(pad, pad + (sh - y) * scale, pad + sw * scale, pad + (sh - y) * scale, paint);
+        // Cap the line count. A huge or non-advancing float step used to spin forever inside paint.
+        var nx = (int)Math.Min(2000, Math.Floor(sw / step));
+        var ny = (int)Math.Min(2000, Math.Floor(sh / step));
+        var right = ox + sw * scale;
+        var bottom = oy + sh * scale;
+        if (!float.IsFinite(right) || !float.IsFinite(bottom)) return;
+        for (var i = 0; i <= nx; i++)
+        {
+            var x = ox + i * step * scale;
+            canvas.DrawLine(x, oy, x, bottom, paint);
+        }
+        if (nx * step < sw - 0.5f)
+            canvas.DrawLine(right, oy, right, bottom, paint);
+        for (var i = 0; i <= ny; i++)
+        {
+            var y = oy + (sh - i * step) * scale;
+            canvas.DrawLine(ox, y, right, y, paint);
+        }
+    }
+
+    static void DrawBlocked(
+        SKCanvas canvas,
+        Func<double, float> toSx,
+        Func<double, float> toSy,
+        float scale,
+        IReadOnlyList<NestBlockedRect> blocked)
+    {
+        using var fill = new SKPaint { Color = new SKColor(0xE0, 0xE0, 0xE0), IsAntialias = true };
+        using var stroke = new SKPaint
+        {
+            Color = new SKColor(0xA8, 0xA8, 0xA8),
+            IsStroke = true,
+            StrokeWidth = 1,
+            IsAntialias = true,
+        };
+        using var hatch = new SKPaint
+        {
+            Color = new SKColor(0xB8, 0xB8, 0xB8),
+            IsStroke = true,
+            StrokeWidth = 1,
+            IsAntialias = true,
+        };
+        foreach (var b in blocked)
+        {
+            var x0 = toSx(b.MinX);
+            var y0 = toSy(b.MaxY);
+            var x1 = toSx(b.MaxX);
+            var y1 = toSy(b.MinY);
+            var left = Math.Min(x0, x1);
+            var top = Math.Min(y0, y1);
+            var w = Math.Abs(x1 - x0);
+            var h = Math.Abs(y1 - y0);
+            if (!float.IsFinite(w) || !float.IsFinite(h) || w < 0.5f || h < 0.5f) continue;
+            canvas.DrawRect(left, top, w, h, fill);
+            var step = Math.Max(6f, 12f * Math.Max(0.4f, scale / 2f));
+            if (!float.IsFinite(step) || step < 1f) step = 6f;
+            var span = w + 2f * h;
+            var n = (int)Math.Min(2000, Math.Ceiling(span / step));
+            for (var i = 0; i <= n; i++)
+            {
+                var t = -h + i * step;
+                canvas.DrawLine(left + t, top, left + t + h, top + h, hatch);
+            }
+            canvas.DrawRect(left, top, w, h, stroke);
+        }
     }
 
     static void DrawOutline(SKCanvas canvas, GeomInteraction.View view, Panel panel, SKColor fill, SKColor stroke, float lw)
@@ -1019,20 +1309,18 @@ static class CanvasPainter
         SKColor fill,
         SKColor stroke,
         bool dashed,
-        string label)
+        string label,
+        IReadOnlyList<IReadOnlyList<Point2>>? holes = null)
     {
-        using var sk = new SKPath();
+        using var sk = new SKPath { FillType = SKPathFillType.EvenOdd };
         double minX = double.MaxValue, maxX = double.MinValue;
         double minY = double.MaxValue, maxY = double.MinValue;
-        for (var i = 0; i < ring.Count; i++)
+        AppendRing(sk, ring, p => GeomInteraction.ToScreen(view, p.X, p.Y), ref minX, ref maxX, ref minY, ref maxY);
+        foreach (var hole in holes ?? [])
         {
-            var p = ring[i];
-            minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X);
-            minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y);
-            var (sx, sy) = GeomInteraction.ToScreen(view, p.X, p.Y);
-            if (i == 0) sk.MoveTo(sx, sy); else sk.LineTo(sx, sy);
+            if (hole.Count < 3) continue;
+            AppendRing(sk, hole, p => GeomInteraction.ToScreen(view, p.X, p.Y), ref minX, ref maxX, ref minY, ref maxY);
         }
-        sk.Close();
         using var fillPaint = new SKPaint
         {
             Style = SKPaintStyle.Fill,
@@ -1069,6 +1357,8 @@ static class CanvasPainter
         var right = toSx(sheetX + anchor.WidthMm * 0.5);
         var top = toSy(sheetY + anchor.HeightMm * 0.5);
         var bottom = toSy(sheetY - anchor.HeightMm * 0.5);
+        if (!float.IsFinite(left) || !float.IsFinite(right) || !float.IsFinite(top) || !float.IsFinite(bottom))
+            return;
         if (right < left) (left, right) = (right, left);
         if (bottom < top) (top, bottom) = (bottom, top);
         var rect = new SKRect(left, top, right, bottom);
@@ -1127,19 +1417,24 @@ static class CanvasPainter
         Func<double, float> toSx,
         Func<double, float> toSy,
         SKColor fill,
-        SKColor stroke)
+        SKColor stroke,
+        IReadOnlyList<IReadOnlyList<Point2>>? holes = null)
     {
-        using var gpath = new SKPath();
-        for (var i = 0; i < ring.Count; i++)
+        using var gpath = new SKPath { FillType = SKPathFillType.EvenOdd };
+        (float X, float Y) ToScreen(Point2 p)
         {
             var (wx, wy) = NestTransform.ToSheet(
-                ring[i].X, ring[i].Y, bounds,
+                p.X, p.Y, bounds,
                 place.OffsetX, place.OffsetY, place.RotationDeg);
-            var sx = toSx(wx);
-            var sy = toSy(wy);
-            if (i == 0) gpath.MoveTo(sx, sy); else gpath.LineTo(sx, sy);
+            return (toSx(wx), toSy(wy));
         }
-        gpath.Close();
+        double minX = 0, maxX = 0, minY = 0, maxY = 0;
+        AppendRing(gpath, ring, ToScreen, ref minX, ref maxX, ref minY, ref maxY);
+        foreach (var hole in holes ?? [])
+        {
+            if (hole.Count < 3) continue;
+            AppendRing(gpath, hole, ToScreen, ref minX, ref maxX, ref minY, ref maxY);
+        }
         using var gFill = new SKPaint
         {
             Style = SKPaintStyle.Fill,
@@ -1155,6 +1450,26 @@ static class CanvasPainter
         };
         canvas.DrawPath(gpath, gFill);
         canvas.DrawPath(gpath, gStroke);
+    }
+
+    static void AppendRing(
+        SKPath path,
+        IReadOnlyList<Point2> ring,
+        Func<Point2, (float X, float Y)> toScreen,
+        ref double minX,
+        ref double maxX,
+        ref double minY,
+        ref double maxY)
+    {
+        for (var i = 0; i < ring.Count; i++)
+        {
+            var p = ring[i];
+            minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X);
+            minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y);
+            var (sx, sy) = toScreen(p);
+            if (i == 0) path.MoveTo(sx, sy); else path.LineTo(sx, sy);
+        }
+        path.Close();
     }
 
     static void DrawMeasureGuide(
@@ -1266,6 +1581,153 @@ static class CanvasPainter
         canvas.DrawRect(x0, y0, w, h, strokePaint);
     }
 
+    static void DrawSheetGrain(
+        SKCanvas canvas,
+        Func<double, float> toSx,
+        Func<double, float> toSy,
+        float sw,
+        float sh,
+        SheetGrainKind grain)
+    {
+        var alongY = grain == SheetGrainKind.AlongLength;
+        using var paint = new SKPaint
+        {
+            Color = new SKColor(0x8A, 0x6A, 0x2B, 0x70),
+            IsStroke = true,
+            StrokeWidth = 1.2f,
+            IsAntialias = true,
+            StrokeCap = SKStrokeCap.Round,
+        };
+        const int n = 5;
+        for (var i = 1; i <= n; i++)
+        {
+            if (alongY)
+            {
+                var x = sw * i / (n + 1);
+                canvas.DrawLine(toSx(x), toSy(sh * 0.12), toSx(x), toSy(sh * 0.88), paint);
+            }
+            else
+            {
+                var y = sh * i / (n + 1);
+                canvas.DrawLine(toSx(sw * 0.12), toSy(y), toSx(sw * 0.88), toSy(y), paint);
+            }
+        }
+    }
+
+    static void DrawGeomGrain(
+        SKCanvas canvas,
+        GeomInteraction.View view,
+        Panel panel,
+        (double MinX, double MinY, double MaxX, double MaxY, double W, double H) box)
+    {
+        var grain = GrainAlign.NormalizePart(panel.GrainDirection ?? panel.Orientation?.GrainDirection);
+        if (grain is null) return;
+        var alongX = grain == "X";
+        var nx = alongX ? 1d : 0d;
+        var ny = alongX ? 0d : 1d;
+        var axis = alongX ? box.W : box.H;
+        var half = Math.Max(12, axis * 0.38);
+        DrawSlenderGrainArrow(
+            canvas,
+            x => GeomInteraction.ToScreen(view, x, box.MinY).Sx,
+            y => GeomInteraction.ToScreen(view, box.MinX, y).Sy,
+            (box.MinX + box.MaxX) * 0.5,
+            (box.MinY + box.MaxY) * 0.5,
+            nx, ny, half,
+            strokePx: 1.6f,
+            tipMm: Math.Clamp(axis * 0.06, 10, 22));
+    }
+
+    static void DrawPartGrain(
+        SKCanvas canvas,
+        Panel panel,
+        NestPlacementMsg place,
+        Func<double, float> toSx,
+        Func<double, float> toSy,
+        float scale)
+    {
+        var part = GrainAlign.NormalizePart(panel.GrainDirection ?? panel.Orientation?.GrainDirection);
+        var axis = GrainAlign.WorldAxis(part, place.RotationDeg);
+        if (axis is null) return;
+        var bounds = NestTransform.BoundsOf(panel);
+        var cx = (bounds.MinX + bounds.MaxX) * 0.5;
+        var cy = (bounds.MinY + bounds.MaxY) * 0.5;
+        var (wx, wy) = NestTransform.ToSheet(
+            cx, cy, bounds, place.OffsetX, place.OffsetY, place.RotationDeg);
+        var along = part == "X" ? bounds.MaxX - bounds.MinX : bounds.MaxY - bounds.MinY;
+        var half = Math.Max(10, along * 0.38);
+        var nx = axis.Value.X;
+        var ny = axis.Value.Y;
+        var len = Math.Sqrt(nx * nx + ny * ny);
+        if (len < 1e-9) return;
+        nx /= len;
+        ny /= len;
+        DrawSlenderGrainArrow(
+            canvas, toSx, toSy, wx, wy, nx, ny, half,
+            strokePx: Math.Clamp(0.9f * scale / 6f, 0.85f, 1.25f),
+            tipMm: Math.Clamp(along * 0.055, 7, 16));
+    }
+
+    static void DrawSlenderGrainArrow(
+        SKCanvas canvas,
+        Func<double, float> toSx,
+        Func<double, float> toSy,
+        double cx,
+        double cy,
+        double nx,
+        double ny,
+        double halfSpanMm,
+        float strokePx,
+        double tipMm)
+    {
+        var x0 = cx - nx * halfSpanMm;
+        var y0 = cy - ny * halfSpanMm;
+        var x1 = cx + nx * halfSpanMm;
+        var y1 = cy + ny * halfSpanMm;
+        var color = new SKColor(0x8A, 0x42, 0x08, 0xE6);
+        using var paint = new SKPaint
+        {
+            Color = color,
+            IsStroke = true,
+            StrokeWidth = strokePx,
+            IsAntialias = true,
+            StrokeCap = SKStrokeCap.Round,
+        };
+        canvas.DrawLine(toSx(x0), toSy(y0), toSx(x1), toSy(y1), paint);
+        DrawGrainTip(canvas, toSx, toSy, x1, y1, nx, ny, tipMm, strokePx, color);
+        DrawGrainTip(canvas, toSx, toSy, x0, y0, -nx, -ny, tipMm, strokePx, color);
+    }
+
+    static void DrawGrainTip(
+        SKCanvas canvas,
+        Func<double, float> toSx,
+        Func<double, float> toSy,
+        double x,
+        double y,
+        double nx,
+        double ny,
+        double size,
+        float strokePx,
+        SKColor color)
+    {
+        var px = -ny;
+        var py = nx;
+        var ax = x - nx * size + px * size * 0.26;
+        var ay = y - ny * size + py * size * 0.26;
+        var bx = x - nx * size - px * size * 0.26;
+        var by = y - ny * size - py * size * 0.26;
+        using var paint = new SKPaint
+        {
+            Color = color,
+            IsStroke = true,
+            StrokeWidth = strokePx,
+            IsAntialias = true,
+            StrokeCap = SKStrokeCap.Round,
+        };
+        canvas.DrawLine(toSx(x), toSy(y), toSx(ax), toSy(ay), paint);
+        canvas.DrawLine(toSx(x), toSy(y), toSx(bx), toSy(by), paint);
+    }
+
     static void DrawHandle(SKCanvas canvas, float x, float y, SKColor color)
     {
         using var fill = new SKPaint { Color = color, IsAntialias = true };
@@ -1352,6 +1814,7 @@ static class CanvasPainter
 
     static void DrawText(SKCanvas canvas, string text, float x, float y, float size, SKColor color, bool bold = false)
     {
+        text = UiText.T(text);
         using var paint = new SKPaint { Color = color, IsAntialias = true };
         using var font = new SKFont(UiTypeface(bold), size);
         canvas.DrawText(text, x, y, SKTextAlign.Left, font, paint);
@@ -1386,6 +1849,7 @@ static class CanvasPainter
 
     static void DrawCentered(SKCanvas canvas, int w, int h, string text)
     {
+        text = UiText.T(text);
         using var paint = new SKPaint { Color = new SKColor(0x88, 0x88, 0x88), IsAntialias = true };
         using var font = new SKFont(UiTypeface(bold: false), 14);
         canvas.DrawText(text, w / 2f, h / 2f, SKTextAlign.Center, font, paint);

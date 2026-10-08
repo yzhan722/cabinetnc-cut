@@ -139,4 +139,27 @@ public class RcRegressionCoverageTests
         Assert.True(nest.Placements.Count + nest.Unplaced.Count == 40);
         Assert.True(sw.ElapsedMilliseconds < 30_000, $"nest {sw.ElapsedMilliseconds}ms");
     }
+
+    [Fact]
+    public void Troy_recipe_and_sheet_tool_split_remain_distinct()
+    {
+        var panel = Rect("P", "oak", 18, 200, 150, hole: true, groove: true);
+        var places = new[] { new NestPlacement { PanelId = "P", SheetIndex = 0, OffsetX = 20, OffsetY = 20 } };
+        var ops = OpsPlanner.AttachToNest(OpsPlanner.FeaturesToOps([panel]), places);
+        var profile = MachineCatalog.Get("nesting_router_6");
+
+        var pkg = new CutPackage { SchemaName = CutPackage.Schema, JobId = "mix", Panels = [panel] };
+        var bundle = SheetBundleBuilder.Build(pkg, places, ops, profile);
+        Assert.All(bundle.Sheets.SelectMany(s => s.ToolPrograms), p =>
+        {
+            var tools = p.NcText.Replace("\r\n", "\n").Split('\n')
+                .Count(l => l.StartsWith("(tool ", StringComparison.Ordinal));
+            Assert.Equal(1, tools);
+        });
+
+        var troy = NcEmitter.OpsToNc(ops, profile, recipe: PostRecipe.TroyDefault());
+        Assert.Contains("M6 T", troy, StringComparison.Ordinal);
+        var headerTools = bundle.Sheets.SelectMany(s => s.ToolPrograms).Select(p => p.ToolId).Distinct().Count();
+        Assert.True(headerTools >= 2, "split export should keep multiple single-tool files");
+    }
 }

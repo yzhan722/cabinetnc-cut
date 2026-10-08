@@ -28,7 +28,16 @@ public sealed record BridgeClickResult(
 public static class ProfileBridgePlanner
 {
     public const int MaxPerPanel = 100;
+    /// <summary>Remaining web in the middle of the tab. Tool-centre skip adds 2× radius.</summary>
     public const double DefaultWidthMm = 5;
+
+    /// <summary>
+    /// Shop width is the leftover web. Tool centre must lift across
+    /// <paramref name="webMm"/> plus one diameter (two radii) so the
+    /// through-cuts on each side do not eat the tab.
+    /// </summary>
+    public static double ToolCenterSpanMm(double webMm, double toolDiameterMm) =>
+        Math.Max(0, webMm) + Math.Max(0, toolDiameterMm);
     /// <summary>Long/short &gt; this counts as a strip.</summary>
     public const double StripAspect = 12;
     public const double TinyAreaM2 = 0.1;
@@ -412,12 +421,112 @@ public static class ProfileBridgePlanner
             PlaceSmall(list, contours, outlinesByPanel, p, panels, sheetIndex, toolDiameterMm, width,
                 pairLimit, tinyAreaM2, ShouldPair);
 
+        list = EnsureFacingPairs(list, contours, outlinesByPanel, toolDiameterMm).ToList();
         var n = list.Count(b => b.SheetIndex == sheetIndex);
         var paired = list.Count(b => b.SheetIndex == sheetIndex && b.PairId is not null);
         return new BridgeClickResult(
             list,
             n == 0 ? "自动计算未找到可放位置" : $"自动布桥 {n} 个" + (paired > 0 ? $"（成对 {paired}）" : ""),
             true);
+    }
+
+    /// <summary>
+    /// If a tab already faces a neighbor closer than 2× tool Ø, the neighbor
+    /// must skip on the last pass too — otherwise its through-cut eats the web.
+    /// </summary>
+    public static IReadOnlyList<ProfileBridge> EnsureFacingPairs(
+        IReadOnlyList<ProfileBridge> existing,
+        IReadOnlyList<CutOp> ops,
+        IReadOnlyDictionary<string, IReadOnlyList<Point2>>? outlinesByPanel,
+        double toolDiameterMm)
+    {
+        if (existing.Count == 0) return existing;
+        var list = existing.ToList();
+        var pairLimit = PairClearanceLimitMm(toolDiameterMm);
+        var sheets = list.Select(b => b.SheetIndex).Distinct().ToList();
+        foreach (var sheet in sheets)
+            EnsureFacingPairsOnSheet(list, ops, outlinesByPanel, sheet, pairLimit);
+        return list;
+    }
+
+    static void EnsureFacingPairsOnSheet(
+        List<ProfileBridge> list,
+        IReadOnlyList<CutOp> ops,
+        IReadOnlyDictionary<string, IReadOnlyList<Point2>>? outlinesByPanel,
+        int sheetIndex,
+        double pairLimit)
+    {
+        var contours = ContoursOnSheet(ops, sheetIndex)
+            .Where(o => o.FeatureId is null)
+            .ToList();
+        if (contours.Count == 0) return;
+
+        var outlines = new Dictionary<string, IReadOnlyList<Point2>>(StringComparer.Ordinal);
+        foreach (var op in contours)
+        {
+            if (outlinesByPanel is not null
+                && outlinesByPanel.TryGetValue(op.PanelId, out var ring)
+                && ring.Count >= 2)
+                outlines[op.PanelId] = ring;
+            else if (op.Path is { Count: >= 2 } path)
+                outlines[op.PanelId] = path.Select(p => new Point2(p.X, p.Y)).ToList();
+        }
+
+        var pending = list.Where(b => b.SheetIndex == sheetIndex && b.FeatureId is null).ToList();
+        foreach (var b in pending)
+        {
+            if (b.PairId is not null && list.Any(x => x.Id == b.PairId))
+                continue;
+
+            var neighbor = FindForcedNeighbor(
+                b.PanelId, new Point2(b.X, b.Y), outlines, pairLimit);
+            if (neighbor is not { } nb)
+                continue;
+            if (outlines.TryGetValue(nb.PanelId, out var nbRing)
+                && IsLargeBoard(BoundsOf(nbRing).W, BoundsOf(nbRing).H))
+                continue;
+
+            var pairOp = contours.FirstOrDefault(o =>
+                o.PanelId == nb.PanelId && o.Path is { Count: >= 2 });
+            if (pairOp?.Path is not { Count: >= 2 } pairPath)
+                continue;
+
+            var pairHit = PolylineQuery.Nearest(pairPath, nb.Point.X, nb.Point.Y, pairOp.ClosePath);
+            if (pairHit is null)
+                continue;
+
+            var already = NearestSymbolOnPanel(
+                list, pairOp.PanelId, pairOp.FeatureId, pairHit.Value.X, pairHit.Value.Y);
+            if (already is not null && already.Dist <= DedupMm)
+            {
+                if (already.Bridge.PairId is not null && already.Bridge.PairId != b.Id)
+                    continue;
+                var idxSelf = list.FindIndex(x => x.Id == b.Id);
+                var idxNb = list.FindIndex(x => x.Id == already.Bridge.Id);
+                if (idxSelf >= 0)
+                    list[idxSelf] = list[idxSelf] with { PairId = already.Bridge.Id };
+                if (idxNb >= 0)
+                    list[idxNb] = list[idxNb] with { PairId = b.Id };
+                continue;
+            }
+
+            var id = NewId();
+            var idx = list.FindIndex(x => x.Id == b.Id);
+            if (idx >= 0)
+                list[idx] = list[idx] with { PairId = id };
+            list.Add(new ProfileBridge
+            {
+                Id = id,
+                PanelId = pairOp.PanelId,
+                FeatureId = pairOp.FeatureId,
+                SheetIndex = sheetIndex,
+                ArcLengthMm = pairHit.Value.ArcLengthMm,
+                X = pairHit.Value.X,
+                Y = pairHit.Value.Y,
+                WidthMm = b.WidthMm,
+                PairId = b.Id,
+            });
+        }
     }
 
     /// <summary>Auto-place on every sheet that has a profile contour.</summary>

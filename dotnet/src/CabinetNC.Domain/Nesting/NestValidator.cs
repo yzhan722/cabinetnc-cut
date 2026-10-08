@@ -9,6 +9,8 @@ public sealed record NestCollision(string PanelIdA, string PanelIdB, int SheetIn
 public static class NestValidator
 {
     const double Scale = 1000;
+    /// <summary>Max chord error of the round offset, mm. Bounds vertex count; far inside the 0.5 mm export slack.</summary>
+    const double ArcToleranceMm = 0.02;
 
     public static IReadOnlyList<NestCollision> FindAabbCollisions(
         IReadOnlyList<NestPart> parts,
@@ -46,7 +48,12 @@ public static class NestValidator
         double spacingMm = 0,
         IReadOnlySet<(string A, string B)>? ignorePairs = null)
     {
-        var byId = panels.ToDictionary(p => p.PanelId, p => p);
+        var byId = new Dictionary<string, Panel>(StringComparer.Ordinal);
+        foreach (var panel in panels)
+        {
+            if (!string.IsNullOrEmpty(panel.PanelId))
+                byId[panel.PanelId] = panel;
+        }
         var paths = new Dictionary<string, Path64>(StringComparer.Ordinal);
         foreach (var place in placements)
         {
@@ -72,6 +79,46 @@ public static class NestValidator
         return hits;
     }
 
+    /// <summary>True-shape overlap of one moving pose against others on the same sheet.</summary>
+    public static bool HasPolygonConflict(
+        Panel moving,
+        string panelId,
+        double ox,
+        double oy,
+        double rotDeg,
+        int sheetIndex,
+        IReadOnlyDictionary<string, Panel> byId,
+        IEnumerable<(string PanelId, int SheetIndex, double Ox, double Oy, double Rot)> others,
+        double spacingMm,
+        IReadOnlySet<(string A, string B)>? ignorePairs = null)
+    {
+        var pathA = WorldPath(moving, new NestPlacement
+        {
+            PanelId = panelId,
+            SheetIndex = sheetIndex,
+            OffsetX = ox,
+            OffsetY = oy,
+            RotationDeg = rotDeg,
+        });
+        foreach (var op in others)
+        {
+            if (op.PanelId == panelId || op.SheetIndex != sheetIndex) continue;
+            if (ignorePairs is not null && ignorePairs.Contains((panelId, op.PanelId))) continue;
+            if (!byId.TryGetValue(op.PanelId, out var other)) continue;
+            var pathB = WorldPath(other, new NestPlacement
+            {
+                PanelId = op.PanelId,
+                SheetIndex = op.SheetIndex,
+                OffsetX = op.Ox,
+                OffsetY = op.Oy,
+                RotationDeg = op.Rot,
+            });
+            if (PolygonsConflict(pathA, pathB, spacingMm))
+                return true;
+        }
+        return false;
+    }
+
     public static (double minX, double minY, double maxX, double maxY) PlacementAabb(NestPart part, NestPlacement place)
     {
         var rot = place.RotationDeg % 180;
@@ -91,17 +138,27 @@ public static class NestValidator
 
     static bool PolygonsConflict(Path64 a, Path64 b, double spacingMm)
     {
-        var gap = Math.Max(0, spacingMm);
-        Paths64 aa = new() { a };
-        Paths64 bb = new() { b };
-        if (gap > 0)
+        try
         {
-            var delta = gap * Scale / 2;
-            aa = Clipper.InflatePaths(aa, delta, JoinType.Round, EndType.Polygon);
-            bb = Clipper.InflatePaths(bb, delta, JoinType.Round, EndType.Polygon);
+            var gap = Math.Max(0, spacingMm);
+            Paths64 aa = new() { a };
+            Paths64 bb = new() { b };
+            if (gap > 0)
+            {
+                var delta = gap * Scale / 2;
+                // Round = true shortest distance, the same measure the NFP engine packs to.
+                // Miter grew corners by up to 2× and flagged diagonal neighbours at exactly
+                // the spacing. Explicit arc tolerance keeps the vertex count small.
+                aa = Clipper.InflatePaths(aa, delta, JoinType.Round, EndType.Polygon, 2.0, ArcToleranceMm * Scale);
+                bb = Clipper.InflatePaths(bb, delta, JoinType.Round, EndType.Polygon, 2.0, ArcToleranceMm * Scale);
+            }
+            return Clipper.Intersect(aa, bb, FillRule.NonZero)
+                .Any(p => Math.Abs(Clipper.Area(p)) > 1);
         }
-        return Clipper.Intersect(aa, bb, FillRule.NonZero)
-            .Any(p => Math.Abs(Clipper.Area(p)) > 1);
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     static Path64 WorldPath(Panel panel, NestPlacement place)

@@ -14,6 +14,8 @@ public sealed class OsaiLine
     public string? Paren { get; init; }
     public IReadOnlyList<OsaiWord> Words { get; init; } = [];
     public bool IsComment { get; init; }
+    /// <summary>0-based line in the original text (blank lines counted) so a viewer can highlight it.</summary>
+    public int SourceLine { get; init; } = -1;
 }
 
 public static class OsaiTroyLexer
@@ -22,11 +24,13 @@ public static class OsaiTroyLexer
     {
         if (string.IsNullOrWhiteSpace(text)) return [];
         var lines = new List<OsaiLine>();
+        var index = 0;
         foreach (var raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
         {
-            var line = ParseLine(raw);
+            var line = ParseLine(raw, index);
             if (line is not null)
                 lines.Add(line);
+            index++;
         }
         return lines;
     }
@@ -62,18 +66,18 @@ public static class OsaiTroyLexer
         line.Paren is not null
         && line.Paren.StartsWith("GTO", StringComparison.OrdinalIgnoreCase);
 
-    static OsaiLine? ParseLine(string raw)
+    static OsaiLine? ParseLine(string raw, int sourceLine)
     {
         var t = raw.Trim();
         if (t.Length == 0) return null;
         if (t[0] == ';')
-            return new OsaiLine { Raw = raw, IsComment = true };
+            return new OsaiLine { Raw = raw, IsComment = true, SourceLine = sourceLine };
 
         if (t[0] == '"')
         {
             var end = t.IndexOf('"', 1);
             var label = end > 1 ? t[1..end] : t.Trim('"');
-            return new OsaiLine { Raw = raw, Label = label };
+            return new OsaiLine { Raw = raw, Label = label, SourceLine = sourceLine };
         }
 
         var n = (int?)null;
@@ -92,7 +96,7 @@ public static class OsaiTroyLexer
         {
             var close = t.LastIndexOf(')');
             var body = close > i ? t[(i + 1)..close] : t[(i + 1)..];
-            return new OsaiLine { Raw = raw, N = n, Paren = body.Trim() };
+            return new OsaiLine { Raw = raw, N = n, Paren = body.Trim(), SourceLine = sourceLine };
         }
 
         var words = new List<OsaiWord>();
@@ -135,7 +139,7 @@ public static class OsaiTroyLexer
             words.Add(new OsaiWord(letter, num));
         }
 
-        return new OsaiLine { Raw = raw, N = n, Words = words };
+        return new OsaiLine { Raw = raw, N = n, Words = words, SourceLine = sourceLine };
     }
 
     public static string WordDump(OsaiLine line)

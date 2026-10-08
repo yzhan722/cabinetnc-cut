@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>Independent geometry verifier: CAD intent vs emitted G-code sweep. Must not reference CAM generators.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Clipper2" Version="2.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CabinetNC.Domain\CabinetNC.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

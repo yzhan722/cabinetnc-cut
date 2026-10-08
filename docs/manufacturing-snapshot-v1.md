@@ -39,6 +39,38 @@ CabinetNC v1 only supports single-side machining:
 
 There is no flip axis, secondary setup, or dual-face NC in this contract.
 
+## v1.1 (additive; 1.0 files still import)
+
+Every CAD exporter (the Fusion plugin, The Cab Lab) writes the same `.cnjob`.
+The producer is named in `source.producer` / `source.producerVersion`; the
+cutting station treats every producer alike.
+
+- **`materialId` = one sheet.** Two parts share a `materialId` only when they can be
+  cut from the same sheet; different sheets never share one. Recommended form:
+  `{series}-{decor}-{1s|2s}-{thickness}`, lower-case, hyphen-separated — e.g.
+  `pvc-white-stipple-2s-15`, `acrylic-gloss-white-1s-16`, `hpl-chestnut-1s-16`.
+  The part's use (door, side, shelf) is `identity.role`, never part of the id.
+  CabinetNC groups the nest by `materialId` + thickness and matches its material
+  library by `materialId` only (not by display name). For a v1.1 id the stock-card
+  label starts with the series (`HPL_Chestnut_SS · 16mm`), so a group's label no
+  longer depends on which part's role happened to come first.
+- **Material facts:** `colorName` (the real decor name), `surfaceMode`
+  (`SINGLE_SIDED` / `DOUBLE_SIDED`), `series`, and `grained` (the sheet has a wood
+  grain). A grained material whose part has no `grainDirection` imports with a
+  `grain_missing` warning.
+- **`manufacturing.machiningFace: "EITHER"`**: the part has no blind features and
+  neither face is `NOT_ALLOWED`, so either face may lie on the table. CabinetNC keeps
+  it as `orientation.allowMirror = true` for nesting. With blind features, or a
+  `NOT_ALLOWED` face, EITHER is ignored (`machining_face_either_ignored` warning).
+- **Face permissions:** single-sided stock marks its colour face `NOT_ALLOWED` and the
+  back `PRIMARY`; double-sided stock marks both faces `ALLOWED` (or the one carrying
+  blind work `PRIMARY`).
+- **`edgeBands`:** tape on outline edges. Each entry is `{ i, thicknessMm, colorName? }`.
+  `i` is the segment of `outerProfile.points` (edge i runs point i → point (i + 1) mod n).
+  Omitted or `[]` means the part is not banded. A 1.0 file has no field and imports
+  the same way. An index outside the outline, a duplicate index, or a thickness
+  ≤ 0 rejects the workpiece.
+
 ## Canonical workpiece shape
 
 ```json

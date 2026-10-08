@@ -1,0 +1,13 @@
+{
+  "schemaName": "cabinetnc.library",
+  "version": 1,
+  "materials": [],
+  "tools": [],
+  "remnants": [
+    { "id": "REM-SMOKE-1", "material": "Left_White_SS", "widthMm": 420, "lengthMm": 880, "thicknessMm": 18, "note": "smoke fixture", "useInNest": true }
+  ],
+  "nest": { "spacingMm": 12, "borderMm": 15, "allowRotation": true, "defaultSheetWidthMm": 1200, "defaultSheetLengthMm": 2400 },
+  "labeler": { "machinePictureDir": "D:\\CNC" },
+  "recentFiles": [],
+  "display": { "grain": true, "features": true, "labels": true, "dims": true, "rapids": true }
+}

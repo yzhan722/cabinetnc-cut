@@ -65,17 +65,7 @@ public static class NcPreflight
         issues.AddRange(GrooveClearIssues(placed));
 
         if (panelsById is not null)
-        {
             issues.AddRange(CamSafety.DepthIssues(placed, panelsById));
-            foreach (var panel in panelsById.Values)
-            {
-                if (Parts.PanelEdit.IsSmallPanel(panel, out var reason))
-                {
-                    issues.Add(new("warn", "small_panel",
-                        $"{panel.PanelId}: 小板策略 — {reason}"));
-                }
-            }
-        }
 
         // Dual-face: B ops require registration (Day 11). Default session has no strategy → block B.
         issues.AddRange(DoubleSideGate.CheckBackSideOps(placed, registration));
@@ -105,8 +95,13 @@ public static class NcPreflight
                 || (op.PathSegments is null or { Count: 0 }
                     && op.FinishLoop is null or { Count: < 3 }))
             {
+                // Tell the operator what would fix it, not just that it is wrong.
+                var tool = string.IsNullOrWhiteSpace(op.ToolId) ? "刀具" : $"{op.ToolId} Ø{ClearanceToolPick.DiameterOf(op.ToolId):0.##}";
+                var size = op.DiameterMm is double d && d > 0 ? $"Ø{d:0.##} " : "";
                 issues.Add(new("error", "pocket_too_small_for_tool",
-                    $"pocket/{op.PanelId}/{op.FeatureId ?? "-"}: 型腔过小，刀具无法加工（禁止静默跳过）"));
+                    $"pocket/{op.PanelId}/{op.FeatureId ?? "-"}: {size}型腔过小，{tool} 进不去。" +
+                    $"圆孔小于 Ø{ClearanceToolPick.DrillMaxExclusiveMm:0.#} 会用 T3 钻孔；更大的孔或口袋需要比刀径至少大 1mm，" +
+                    "否则请改特征尺寸，或在「工艺模版」添加更小的铣刀"));
             }
         }
         return issues;

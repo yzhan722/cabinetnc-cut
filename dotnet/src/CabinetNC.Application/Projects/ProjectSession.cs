@@ -188,6 +188,23 @@ public sealed class ProjectSession
         return true;
     }
 
+    public bool TryChangePanelMaterials(
+        IReadOnlyList<string> panelIds,
+        NestGroupKey target,
+        BlindFeatureDepthPolicy blindPolicy)
+    {
+        if (Package is null || panelIds.Count == 0)
+            return false;
+        var next = MaterialCorrect.RetargetPanels(Package, panelIds, target, blindPolicy);
+        if (ReferenceEquals(next, Package))
+            return false;
+        History.PushBeforeEdit(PackageJson ?? CutPackageJson.Serialize(Package));
+        Package = next;
+        PackageJson = CutPackageJson.Serialize(Package);
+        ManufacturingDirty = true;
+        return true;
+    }
+
     public void RemovePanel(string panelId, bool recordHistory = true)
     {
         if (Package is null) return;
@@ -198,6 +215,26 @@ public sealed class ProjectSession
         ManufacturingDirty = true;
     }
 
+    /// <summary>Unload one imported .cnjob from the merged nest list. Last package clears the session.</summary>
+    public bool TryRemovePackage(string packageKey)
+    {
+        if (Package is null || string.IsNullOrWhiteSpace(packageKey))
+            return false;
+        var next = PackageMerge.Remove(Package, packageKey);
+        if (ReferenceEquals(next, Package))
+            return false;
+        if (next.Panels.Count == 0)
+        {
+            Clear();
+            return true;
+        }
+        History.PushBeforeEdit(PackageJson ?? CutPackageJson.Serialize(Package));
+        Package = next;
+        PackageJson = CutPackageJson.Serialize(Package);
+        ManufacturingDirty = true;
+        return true;
+    }
+
     public string NextCopyPanelId(string baseId)
     {
         if (Package is null) return $"{baseId}_copy";
@@ -205,6 +242,15 @@ public sealed class ProjectSession
         string id;
         do { id = n == 1 ? $"{baseId}_copy" : $"{baseId}_copy{n}"; n++; }
         while (Package.Panels.Any(p => p.PanelId.Equals(id, StringComparison.OrdinalIgnoreCase)));
+        return id;
+    }
+
+    public string NextDraftPanelId()
+    {
+        var n = 1;
+        string id;
+        do { id = $"DRAFT-{n++}"; }
+        while (Package?.Panels.Any(p => p.PanelId.Equals(id, StringComparison.OrdinalIgnoreCase)) == true);
         return id;
     }
 

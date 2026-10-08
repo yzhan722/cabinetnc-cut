@@ -161,7 +161,7 @@ class SmokeSuite:
     def test_seven_modules(self) -> None:
         mapping = [
             ("ModProductionBtn", "EmptyDemoBtn", "Button"),
-            ("ModRemnantsBtn", "RemnantsList", "List"),
+            ("ModRemnantsBtn", "RemnantsEmptyTitle", "Text"),
             ("ModEquipmentBtn", "EquipmentList", "List"),
             ("ModRoutesBtn", "RoutesMeta", "Text"),
             ("ModMaterialsBtn", "MaterialsList", "List"),

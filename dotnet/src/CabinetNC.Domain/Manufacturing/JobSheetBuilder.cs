@@ -24,22 +24,22 @@ public static class JobSheetBuilder
         var mats = string.Join(", ", pkg.Panels.Select(p => p.Material ?? "—").Distinct());
         var sb = new StringBuilder();
         sb.AppendLine("<!DOCTYPE html>");
-        sb.AppendLine("<html lang=\"zh-CN\"><head><meta charset=\"utf-8\"/>");
+        sb.AppendLine("<html lang=\"en\"><head><meta charset=\"utf-8\"/>");
         sb.AppendLine($"<title>Job · {Esc(name)}</title>");
         sb.AppendLine("<style>body{font:13px/1.4 system-ui,sans-serif;margin:24px}table{border-collapse:collapse;width:100%;max-width:720px}");
         sb.AppendLine("th,td{border:1px solid #ccc;padding:4px 8px;text-align:left}th{background:#f4f4f4}@media print{button{display:none}}</style></head><body>");
-        sb.AppendLine("<button onclick=\"print()\">打印</button>");
+        sb.AppendLine("<button onclick=\"print()\">Print</button>");
         sb.AppendLine($"<h1>OmniCam · {Esc(name)}</h1>");
         sb.AppendLine("<div style=\"color:#444;margin-bottom:16px;white-space:pre-wrap\">");
-        sb.AppendLine($"格式: {Esc(pkg.SchemaName)} v{pkg.Version}");
-        sb.AppendLine($"机型: {Esc(profile.Name)} · Ø{profile.ToolDiameterMm}");
-        sb.AppendLine($"板件: {pkg.Panels.Count} · 已排: {placeBy.Count} · 未排: {unplacedCount}");
-        if (utilizationPct is double u) sb.AppendLine($"利用率: {u.ToString("0.0", CultureInfo.InvariantCulture)}%");
-        sb.AppendLine($"材料: {Esc(mats)}");
+        sb.AppendLine($"Format: {Esc(pkg.SchemaName)} v{pkg.Version}");
+        sb.AppendLine($"Machine: {Esc(profile.Name.Replace("新代", "Syntec", StringComparison.Ordinal))} · Ø{profile.ToolDiameterMm}");
+        sb.AppendLine($"Parts: {pkg.Panels.Count} · placed: {placeBy.Count} · unplaced: {unplacedCount}");
+        if (utilizationPct is double u) sb.AppendLine($"Utilization: {u.ToString("0.0", CultureInfo.InvariantCulture)}%");
+        sb.AppendLine($"Material: {Esc(mats)}");
         if (!string.IsNullOrWhiteSpace(preflightText))
-            sb.AppendLine("预检:\n" + Esc(preflightText));
+            sb.AppendLine("Preflight:\n" + Esc(preflightText));
         sb.AppendLine("</div>");
-        sb.AppendLine("<table><thead><tr><th>板件</th><th>尺寸</th><th>板</th><th>锁</th></tr></thead><tbody>");
+        sb.AppendLine("<table><thead><tr><th>Part</th><th>Size</th><th>Sheet</th><th>Lock</th></tr></thead><tbody>");
         foreach (var p in pkg.Panels)
         {
             var (w, h) = BBox(p);

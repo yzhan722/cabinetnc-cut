@@ -53,6 +53,47 @@ public class SqliteProjectStoreTests
     }
 
     [Fact]
+    public void Save_overwrites_the_same_file_and_releases_the_lock()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cabinetnc-proj-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var db = Path.Combine(dir, "job.db");
+            var store = new SqliteProjectStore();
+            var pkgJson = """
+                {"schema":"cabinetnc.cut-package","schemaVersion":1,"panels":[{"panelId":"P1","thicknessMm":18,"outline":{"points":[[0,0],[10,0],[10,10],[0,10]],"closed":true},"features":[]}]}
+                """;
+            store.Save(db, new ProjectDocument
+            {
+                Name = "v1",
+                PackageJson = pkgJson,
+                MachineId = "osai_e4_1325",
+            });
+            var first = store.Load(db);
+            Assert.Equal("v1", first!.Name);
+
+            store.Save(db, new ProjectDocument
+            {
+                Name = "v2",
+                PackageJson = pkgJson,
+                MachineId = "osai_e4_1325",
+                NcText = "G21\nM2\n",
+            });
+            var second = store.Load(db);
+            Assert.Equal("v2", second!.Name);
+            Assert.Contains("G21", second.NcText);
+
+            using var exclusive = new FileStream(db, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            Assert.True(exclusive.Length > 0);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch { /* ignore */ }
+        }
+    }
+
+    [Fact]
     public void Round_trips_session_cam_bridges_and_ops()
     {
         var dir = Path.Combine(Path.GetTempPath(), "cabinetnc-proj-" + Guid.NewGuid().ToString("N"));
@@ -139,6 +180,137 @@ public class SqliteProjectStoreTests
             Assert.Equal("contour", op.Op);
             Assert.Equal(0.12346, op.Path![0].X);
             Assert.Equal("oak", Assert.Single(round.StockKinds).MaterialId);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch { /* ignore */ }
+        }
+    }
+
+    [Fact]
+    public void Round_trips_holding_pip_label_anchors_and_leftover_stock()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cabinetnc-proj-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var db = SqliteProjectStore.DbPathForFolder(dir);
+            var store = new SqliteProjectStore();
+            var pkgJson = """
+                {"schema":"cabinetnc.cut-package","schemaVersion":1,"panels":[{"panelId":"P1","thicknessMm":18,"outline":{"points":[[0,0],[10,0],[10,10],[0,10]],"closed":true},"features":[]}]}
+                """;
+            var session = new ProjectSessionState
+            {
+                Stage = "nest",
+                Holding =
+                [
+                    new HeldPartDto
+                    {
+                        PanelId = "H1",
+                        Material = "oak",
+                        ThicknessMm = 18,
+                        RotationDeg = 90,
+                        WidthMm = 120,
+                        HeightMm = 80,
+                    },
+                ],
+                PartInPart =
+                [
+                    new PartInPartDto
+                    {
+                        HostPanelId = "P1",
+                        ChildPanelId = "C1",
+                        FeatureId = "CUT1",
+                        SheetIndex = 0,
+                        Enabled = true,
+                    },
+                ],
+                LabelAnchors =
+                [
+                    new LabelAnchorDto { PanelId = "P1", LocalX = 12.5, LocalY = 8.25 },
+                ],
+                StockKinds =
+                [
+                    new StockKindDto
+                    {
+                        MaterialId = "oak",
+                        ThicknessMm = 18,
+                        WidthMm = 1220,
+                        LengthMm = 2440,
+                        UseLeftoverPieces = true,
+                        LeftoverXMm = 600,
+                        LeftoverYMm = 800,
+                    },
+                ],
+                RecutPending =
+                [
+                    new RecutPendingDto
+                    {
+                        Id = "RC-1",
+                        SourcePanelId = "P1",
+                        PanelJson = pkgJson,
+                        Title = "P1",
+                        Material = "oak",
+                        ThicknessMm = 18,
+                        WidthMm = 10,
+                        LengthMm = 10,
+                    },
+                ],
+                RecutRemnants =
+                [
+                    new RecutRemnantDto
+                    {
+                        Id = "REM-1",
+                        Material = "oak",
+                        ThicknessMm = 18,
+                        WidthMm = 800,
+                        LengthMm = 800,
+                        Source = "drawn",
+                        Note = "手画 L",
+                        Outline =
+                        [
+                            new XyDto { X = 0, Y = 0 },
+                            new XyDto { X = 800, Y = 0 },
+                            new XyDto { X = 800, Y = 400 },
+                            new XyDto { X = 400, Y = 400 },
+                            new XyDto { X = 400, Y = 800 },
+                            new XyDto { X = 0, Y = 800 },
+                        ],
+                    },
+                ],
+            };
+            store.Save(db, new ProjectDocument
+            {
+                Name = "hold",
+                PackageJson = pkgJson,
+                MachineId = "osai_e4_1325",
+                SessionJson = ProjectSessionCodec.Serialize(session),
+            });
+
+            var loaded = store.Load(db);
+            var round = ProjectSessionCodec.Deserialize(loaded!.SessionJson);
+            Assert.NotNull(round);
+            var held = Assert.Single(round!.Holding);
+            Assert.Equal("H1", held.PanelId);
+            Assert.Equal(90, held.RotationDeg);
+            var pip = Assert.Single(round.PartInPart);
+            Assert.Equal("C1", pip.ChildPanelId);
+            Assert.Equal("CUT1", pip.FeatureId);
+            var anchor = Assert.Single(round.LabelAnchors);
+            Assert.Equal(12.5, anchor.LocalX);
+            var stock = Assert.Single(round.StockKinds);
+            Assert.True(stock.UseLeftoverPieces);
+            Assert.Equal(600, stock.LeftoverXMm);
+            Assert.Equal(800, stock.LeftoverYMm);
+            var pending = Assert.Single(round.RecutPending);
+            Assert.Equal("P1", pending.SourcePanelId);
+            Assert.Equal(pkgJson, pending.PanelJson);
+            var remnant = Assert.Single(round.RecutRemnants);
+            Assert.Equal("drawn", remnant.Source);
+            Assert.Equal(800, remnant.WidthMm);
+            Assert.Equal(800, remnant.LengthMm);
+            Assert.Equal(6, remnant.Outline!.Count);
+            Assert.Equal(400, remnant.Outline[3].X);
         }
         finally
         {

@@ -1,0 +1,35 @@
+<Window x:Class="CabinetNC.Desktop.CloudJobsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="车间云端"
+        Width="640" Height="480"
+        MinWidth="520" MinHeight="360"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource WindowBrush}" FontFamily="Segoe UI" FontSize="13"
+        ShowInTaskbar="False">
+  <DockPanel Margin="16">
+    <TextBlock DockPanel.Dock="Top" Text="车间云端" Style="{StaticResource H1Text}" />
+    <TextBlock DockPanel.Dock="Top" Margin="0,4,0,12" Style="{StaticResource SecondaryText}"
+               Text="这里是已经传到云端的工程。上传只带工程文件，程序和标签在车间导出时再生成。" />
+
+    <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+        <Button x:Name="DeleteBtn" Content="删除" Padding="14,6" Margin="0,0,8,0" Click="OnDeleteClick" IsEnabled="False" />
+        <Button x:Name="OpenBtn" Content="打开" Padding="14,6" Margin="0,0,8,0" Click="OnOpenClick" IsEnabled="False" />
+        <Button x:Name="RefreshBtn" Content="刷新" Padding="14,6" Margin="0,0,8,0" Click="OnRefreshClick" />
+        <Button x:Name="UploadBtn" Content="上传当前工程" Style="{StaticResource PrimaryButton}" Padding="14,6" Click="OnUploadClick" />
+      </StackPanel>
+      <TextBlock x:Name="StatusText" Style="{StaticResource CaptionText}" VerticalAlignment="Center" TextWrapping="Wrap" />
+    </DockPanel>
+
+    <ListView x:Name="JobList" SelectionChanged="OnJobSelected" MouseDoubleClick="OnJobDoubleClick">
+      <ListView.View>
+        <GridView>
+          <GridViewColumn Header="工程" Width="280" DisplayMemberBinding="{Binding Name}" />
+          <GridViewColumn Header="上传时间" Width="160" DisplayMemberBinding="{Binding When}" />
+          <GridViewColumn Header="大板" Width="80" DisplayMemberBinding="{Binding Sheets}" />
+        </GridView>
+      </ListView.View>
+    </ListView>
+  </DockPanel>
+</Window>

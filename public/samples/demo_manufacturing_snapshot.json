@@ -72,7 +72,7 @@
           "sourceFace": "A",
           "geometry": {
             "center": [37, 80],
-            "diameterMm": 5
+            "diameterMm": 4
           },
           "depthMm": 12,
           "through": false,

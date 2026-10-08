@@ -1,0 +1,13 @@
+(sheet S1 · ToolId=T3 · DiameterMm=3 · FeedXY=1200 · FeedZ=400 · RPM=6000)
+G21
+G90
+S6000 M3
+G0 Z8
+(tool T3)
+S6000 M3
+(drill P dia=3)
+G0 X75 Y60
+G1 Z-16 F400
+G0 Z8
+M5
+M2

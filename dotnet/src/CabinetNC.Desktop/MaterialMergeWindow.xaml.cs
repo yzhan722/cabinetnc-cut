@@ -63,7 +63,7 @@ public partial class MaterialMergeWindow : Window
     {
         if (ChosenKey is null)
         {
-            MessageBox.Show(this, "请选择合并后的材料。", "合并材料", MessageBoxButton.OK, MessageBoxImage.Information);
+            UiDialog.Show(this, "请选择合并后的材料。", "合并材料", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         BlindPolicy = BlindScale.IsChecked == true

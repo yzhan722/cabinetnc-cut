@@ -65,6 +65,29 @@ public static class PackageMerge
             .WithJobId(jobId);
     }
 
+    /// <summary>Drop every panel stamped as <paramref name="packageKey"/> (left-rail Package node).</summary>
+    public static CutPackage Remove(CutPackage pkg, string packageKey)
+    {
+        if (string.IsNullOrWhiteSpace(packageKey)) return pkg;
+        var key = packageKey.Trim();
+        var remain = pkg.Panels.Where(p => !MatchesKey(p, key)).ToList();
+        if (remain.Count == pkg.Panels.Count) return pkg;
+        var sheets = PruneSheets(pkg.Sheets, remain);
+        var jobId = pkg.JobId;
+        if (string.Equals(jobId, key, StringComparison.OrdinalIgnoreCase))
+            jobId = remain.Select(p => p.DisplayPackage).FirstOrDefault();
+        return pkg.WithPanels(remain).WithSheets(sheets).WithJobId(jobId);
+    }
+
+    public static bool MatchesKey(Panel panel, string? packageKey)
+    {
+        if (string.IsNullOrWhiteSpace(packageKey)) return false;
+        var key = packageKey.Trim();
+        return string.Equals(panel.DisplayPackage, key, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(panel.Identity?.PackageId, key, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(panel.Identity?.PackageLabel, key, StringComparison.OrdinalIgnoreCase);
+    }
+
     static Panel StampPanel(
         Panel panel,
         string packageId,
@@ -131,6 +154,17 @@ public static class PackageMerge
             });
         }
         return list;
+    }
+
+    /// <summary>Keep sheet kinds still used by remaining panels; if none match, leave stock as-is.</summary>
+    static IReadOnlyList<SheetStock> PruneSheets(IReadOnlyList<SheetStock> sheets, IReadOnlyList<Panel> panels)
+    {
+        if (sheets.Count == 0 || panels.Count == 0) return sheets;
+        var kept = sheets.Where(s =>
+            panels.Any(p =>
+                string.Equals(p.Material ?? "", s.Material ?? "", StringComparison.OrdinalIgnoreCase)
+                && Math.Abs(p.ThicknessMm - s.ThicknessMm) < 0.05)).ToList();
+        return kept.Count == 0 ? sheets : kept;
     }
 
     /// <summary>Same shop part across packages: name + material + thickness + outline size.</summary>

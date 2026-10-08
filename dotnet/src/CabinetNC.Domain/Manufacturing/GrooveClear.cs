@@ -1,6 +1,7 @@
 namespace CabinetNC.Domain.Manufacturing;
 
 using CabinetNC.Domain.Geometry;
+using CabinetNC.Domain.Nesting;
 using CabinetNC.Domain.Parts;
 
 /// <summary>
@@ -9,9 +10,6 @@ using CabinetNC.Domain.Parts;
 /// </summary>
 public static class GrooveClear
 {
-    /// <summary>No onion skin — dado width must match CAD (16mm board into 16mm slot).</summary>
-    public const double OnionSkinMm = 0;
-
     public static bool NeedsClear(double widthMm, double toolDiameterMm) =>
         CamStrategy.NeedsGrooveClear(widthMm, toolDiameterMm);
 
@@ -32,11 +30,18 @@ public static class GrooveClear
         return [];
     }
 
-    public static PocketClearer.PocketClearResult? TryClear(PanelFeature f, double toolDiameterMm)
+    public static PocketClearer.PocketClearResult? TryClear(
+        PanelFeature f,
+        double toolDiameterMm,
+        LocalBounds? panelBounds = null,
+        bool force = false,
+        double? stepoverMm = null)
     {
         var width = ResolveWidthMm(f);
-        if (!NeedsClear(width, toolDiameterMm))
+        if (!force && !NeedsClear(width, toolDiameterMm))
             return null;
+        if (force && !(width > toolDiameterMm + 0.05))
+            return null; // narrower than the tool: a centreline pass is already the full cut
         var outline = Outline(f, width);
         if (outline.Count < 3)
         {
@@ -51,7 +56,8 @@ public static class GrooveClear
         {
             Outline = outline,
             ToolDiameterMm = toolDiameterMm,
-            OnionSkinMm = OnionSkinMm,
+            PanelBounds = panelBounds,
+            StepoverMm = stepoverMm,
         });
     }
 }

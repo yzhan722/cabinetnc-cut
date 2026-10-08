@@ -72,6 +72,11 @@ public sealed class NestEngineRequest
     public string EnginePreference { get; init; } = "preferred";
     public TimeSpan AdvancedTimeout { get; init; } = TimeSpan.FromSeconds(2);
     public IProgress<NestProgressReport>? Progress { get; init; }
+    /// <summary>
+    /// Sheet origin stays bottom-left on screen, but the pack sits on the bottom-right.
+    /// Part outlines are not mirrored.
+    /// </summary>
+    public bool OriginRight { get; init; }
 }
 
 public sealed class NestEngineRunLog
@@ -111,9 +116,7 @@ public sealed class NestEngineRouter
         if (pref is "blf" or "grouped_blf" or "grouped_blf_v0")
         {
             Report("BLF 密排…");
-            var r = ApplyPartsInPart(
-                TagEngine(_blf.Pack(req.Panels, req.Settings, req.StockTemplates, req.SizeOf, ct, req.Progress), _blf.Name),
-                req);
+            var r = PackAndFinish(_blf, _blf.Name, req, ct);
             sw.Stop();
             return (r, new NestEngineRunLog
             {
@@ -131,11 +134,7 @@ public sealed class NestEngineRouter
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(req.AdvancedTimeout);
                 Report($"{_advanced.Name} 密排…");
-                var adv = ApplyPartsInPart(
-                    TagEngine(
-                        _advanced.Pack(req.Panels, req.Settings, req.StockTemplates, req.SizeOf, cts.Token, req.Progress),
-                        _advanced.Name),
-                    req);
+                var adv = PackAndFinish(_advanced, _advanced.Name, req, cts.Token);
                 sw.Stop();
                 return (adv, new NestEngineRunLog
                 {
@@ -148,11 +147,7 @@ public sealed class NestEngineRouter
             catch (Exception ex) when (ex is InvalidOperationException or TimeoutException or OperationCanceledException)
             {
                 Report("超时/失败 → BLF 回退…");
-                var fallback = ApplyPartsInPart(
-                    TagEngine(
-                        _blf.Pack(req.Panels, req.Settings, req.StockTemplates, req.SizeOf, ct, req.Progress),
-                        "blf_fallback"),
-                    req);
+                var fallback = PackAndFinish(_blf, "blf_fallback", req, ct);
                 sw.Stop();
                 return (fallback, new NestEngineRunLog
                 {
@@ -167,9 +162,7 @@ public sealed class NestEngineRouter
 
         // Unknown preference → BLF
         Report("BLF 密排…");
-        var def = ApplyPartsInPart(
-            TagEngine(_blf.Pack(req.Panels, req.Settings, req.StockTemplates, req.SizeOf, ct, req.Progress), _blf.Name),
-            req);
+        var def = PackAndFinish(_blf, _blf.Name, req, ct);
         sw.Stop();
         return (def, new NestEngineRunLog
         {
@@ -179,6 +172,17 @@ public sealed class NestEngineRouter
             ElapsedMs = sw.ElapsedMilliseconds,
             UtilizationHintPct = UtilHint(def),
         });
+    }
+
+    static NestResult PackAndFinish(INestingEngine engine, string tag, NestEngineRequest req, CancellationToken ct)
+    {
+        var frame = req.OriginRight ? NestOrigin.ToMirrorFrame(req) : req;
+        var raw = TagEngine(
+            engine.Pack(frame.Panels, frame.Settings, frame.StockTemplates, frame.SizeOf, ct, frame.Progress),
+            tag);
+        if (req.OriginRight)
+            raw = NestOrigin.FromMirrorFrame(raw, req.Panels, req.StockTemplates);
+        return ApplyPartsInPart(raw, req);
     }
 
     static NestResult TagEngine(NestResult r, string engine) =>

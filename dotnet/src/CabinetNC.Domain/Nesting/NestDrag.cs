@@ -334,6 +334,90 @@ public static class NestDrag
         return true;
     }
 
+    /// <summary>
+    /// Nearest legal pose for the grabbed part of a rigid group. Candidates are the positions
+    /// that touch a sheet inset or a neighbour AABB (+ spacing), crossed with the desired X/Y,
+    /// tried closest-first. AABB only, so a hit is also legal under the true-shape check.
+    /// </summary>
+    public static (double Ox, double Oy, bool Found) FindNearestPose(
+        IReadOnlyList<SlideMember> moving,
+        string grabbedId,
+        double desiredOx,
+        double desiredOy,
+        int sheetIndex,
+        IReadOnlyList<(string PanelId, int SheetIndex, double Ox, double Oy, double Rot)> others,
+        IReadOnlyDictionary<string, Panel> byId,
+        double sheetW,
+        double sheetH,
+        double spacingMm,
+        SheetInsets inset,
+        IReadOnlySet<(string A, string B)>? ignorePairs = null)
+    {
+        if (moving.Count == 0) return (desiredOx, desiredOy, false);
+        var grabbed = moving.FirstOrDefault(m => m.Id == grabbedId);
+        if (grabbed.Id is null)
+        {
+            grabbed = moving[0];
+            grabbedId = grabbed.Id;
+        }
+
+        double minRelX = double.MaxValue, minRelY = double.MaxValue;
+        double maxRelX = double.MinValue, maxRelY = double.MinValue;
+        foreach (var m in moving)
+        {
+            var (w, h) = SizeRotated(m.Panel, m.Rot);
+            var rx = m.RelOx - grabbed.RelOx;
+            var ry = m.RelOy - grabbed.RelOy;
+            minRelX = Math.Min(minRelX, rx);
+            minRelY = Math.Min(minRelY, ry);
+            maxRelX = Math.Max(maxRelX, rx + w);
+            maxRelY = Math.Max(maxRelY, ry + h);
+        }
+
+        var loX = inset.Left - minRelX;
+        var hiX = sheetW - inset.Right - maxRelX;
+        var loY = inset.Bottom - minRelY;
+        var hiY = sheetH - inset.Top - maxRelY;
+        if (hiX < loX - 1e-6 || hiY < loY - 1e-6) return (desiredOx, desiredOy, false);
+
+        // Nudge past the neighbour so float noise cannot re-trigger the spacing test.
+        const double eps = 0.01;
+        var movingIds = new HashSet<string>(moving.Select(m => m.Id), StringComparer.Ordinal);
+        var xs = new List<double> { loX, hiX, Clamp(desiredOx, loX, hiX) };
+        var ys = new List<double> { loY, hiY, Clamp(desiredOy, loY, hiY) };
+        foreach (var op in others)
+        {
+            if (op.SheetIndex != sheetIndex || movingIds.Contains(op.PanelId)) continue;
+            if (!byId.TryGetValue(op.PanelId, out var other)) continue;
+            var b = Aabb(other, op.Ox, op.Oy, op.Rot);
+            xs.Add(b.MaxX + spacingMm + eps - minRelX);
+            xs.Add(b.MinX - spacingMm - eps - maxRelX);
+            ys.Add(b.MaxY + spacingMm + eps - minRelY);
+            ys.Add(b.MinY - spacingMm - eps - maxRelY);
+        }
+
+        var cx = xs.Where(x => x >= loX - 1e-6 && x <= hiX + 1e-6).Distinct().ToList();
+        var cy = ys.Where(y => y >= loY - 1e-6 && y <= hiY + 1e-6).Distinct().ToList();
+        var candidates = new List<(double X, double Y, double D)>(cx.Count * cy.Count);
+        foreach (var x in cx)
+        {
+            foreach (var y in cy)
+            {
+                var dx = x - desiredOx;
+                var dy = y - desiredOy;
+                candidates.Add((x, y, dx * dx + dy * dy));
+            }
+        }
+        candidates.Sort((a, b) => a.D.CompareTo(b.D));
+        foreach (var c in candidates)
+        {
+            if (PoseFits(moving, grabbedId, c.X, c.Y, sheetIndex, others, byId,
+                    sheetW, sheetH, spacingMm, inset, ignorePairs))
+                return (c.X, c.Y, true);
+        }
+        return (desiredOx, desiredOy, false);
+    }
+
     static (double Ox, double Oy) SearchPose(
         Func<double, double, bool> ok,
         double fromOx,
@@ -414,10 +498,11 @@ public static class NestDrag
         double borderMm,
         (double Ox, double Oy) fallback,
         bool allowOverlap,
-        IReadOnlySet<(string A, string B)>? ignorePairs = null) =>
+        IReadOnlySet<(string A, string B)>? ignorePairs = null,
+        bool trueShape = false) =>
         Resolve(
             panel, panelId, ox, oy, rotDeg, sheetIndex, others, byId, sheetW, sheetH, spacingMm,
-            SheetInsets.Uniform(borderMm), fallback, allowOverlap, ignorePairs);
+            SheetInsets.Uniform(borderMm), fallback, allowOverlap, ignorePairs, trueShape);
 
     public static (double Ox, double Oy, bool Blocked) Resolve(
         Panel panel,
@@ -434,10 +519,20 @@ public static class NestDrag
         SheetInsets inset,
         (double Ox, double Oy) fallback,
         bool allowOverlap,
-        IReadOnlySet<(string A, string B)>? ignorePairs = null)
+        IReadOnlySet<(string A, string B)>? ignorePairs = null,
+        bool trueShape = false)
     {
         var clamped = ClampOnSheet(panel, ox, oy, rotDeg, sheetW, sheetH, inset);
         if (allowOverlap) return (clamped.Ox, clamped.Oy, false);
+
+        if (trueShape)
+        {
+            if (NestValidator.HasPolygonConflict(
+                    panel, panelId, clamped.Ox, clamped.Oy, rotDeg, sheetIndex,
+                    byId, others, spacingMm, ignorePairs))
+                return (fallback.Ox, fallback.Oy, true);
+            return (clamped.Ox, clamped.Oy, false);
+        }
 
         var box = Aabb(panel, clamped.Ox, clamped.Oy, rotDeg);
         foreach (var op in others)

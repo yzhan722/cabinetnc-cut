@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- UI logic that does not need WPF: testable on Linux, referenced by CabinetNC.Desktop.
+       Rule (guarded by Desktop.Core.Tests): no reference to PresentationFramework /
+       PresentationCore / WindowsBase / System.Xaml. -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\CabinetNC.Domain\CabinetNC.Domain.csproj" />
+    <ProjectReference Include="..\CabinetNC.Infrastructure\CabinetNC.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

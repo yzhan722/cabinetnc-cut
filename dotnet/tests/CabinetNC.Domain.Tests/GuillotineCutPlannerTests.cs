@@ -128,6 +128,105 @@ public class GuillotineCutPlannerTests
     }
 
     [Fact]
+    public void PlanSheet_keeps_L_as_one_cut_when_both_arms_meet_min_edge()
+    {
+        // Used ~ (0,0)-(500,500) on 1220×2440 after clearance — both arms ≥ 400.
+        // Must stay one L leftover, not two rectangles meeting at the elbow.
+        var panel = Rect("A", 460, 460);
+        var places = new[]
+        {
+            new NestPlacement
+            {
+                PanelId = "A", SheetIndex = 0,
+                OffsetX = 20, OffsetY = 20, RotationDeg = 0,
+            },
+        };
+        var plan = GuillotineCutPlanner.PlanSheet(
+            [panel], places, 0, 1220, 2440, clearanceMm: 20, minRemnantEdgeMm: 400);
+
+        Assert.NotNull(plan);
+        Assert.Contains(plan!.Pieces, p => p.Shape == "L");
+        Assert.DoesNotContain(plan.Pieces, p => p.Shape == "RECT");
+        var lCut = Assert.Single(plan.Cuts);
+        Assert.Equal("L", lCut.Kind);
+        Assert.Equal(3, lCut.Polyline.Count);
+        // Hug the nest (500,500) and run to the near edges — not the empty far corner.
+        Assert.Equal((500, 0), lCut.Polyline[0]);
+        Assert.Equal((500, 500), lCut.Polyline[1]);
+        Assert.Equal((0, 500), lCut.Polyline[2]);
+        Assert.All(plan.Pieces, p => Assert.True(p.MinEdgeMm >= 400 - 1e-6));
+        Assert.Single(GuillotineCutPlanner.ToCutOps(plan, 0, 1220, 2440, 18, 10));
+    }
+
+    [Fact]
+    public void PlanSheet_L_hugs_nest_when_used_is_top_right()
+    {
+        var panel = Rect("A", 460, 460);
+        var places = new[]
+        {
+            new NestPlacement
+            {
+                PanelId = "A", SheetIndex = 0,
+                OffsetX = 740, OffsetY = 1960, RotationDeg = 0,
+            },
+        };
+        var plan = GuillotineCutPlanner.PlanSheet(
+            [panel], places, 0, 1220, 2440, clearanceMm: 20, minRemnantEdgeMm: 400);
+
+        Assert.NotNull(plan);
+        var lCut = Assert.Single(plan!.Cuts, c => c.Kind == "L");
+        Assert.Equal((720, 2440), lCut.Polyline[0]);
+        Assert.Equal((720, 1940), lCut.Polyline[1]);
+        Assert.Equal((1220, 1940), lCut.Polyline[2]);
+    }
+
+    [Fact]
+    public void PlanSheet_keeps_L_when_split_would_make_a_piece_under_400()
+    {
+        // Used ~ (0,0)-(240,240): remaining after a split is only 240 mm wide.
+        var panel = Rect("A", 200, 200);
+        var places = new[]
+        {
+            new NestPlacement
+            {
+                PanelId = "A", SheetIndex = 0,
+                OffsetX = 20, OffsetY = 20, RotationDeg = 0,
+            },
+        };
+        var plan = GuillotineCutPlanner.PlanSheet(
+            [panel], places, 0, 1220, 2440, clearanceMm: 20, minRemnantEdgeMm: 400);
+
+        Assert.NotNull(plan);
+        Assert.Contains(plan!.Pieces, p => p.Shape == "L");
+        Assert.All(plan.Pieces, p => Assert.True(p.MinEdgeMm >= 400 - 1e-6));
+        Assert.True(plan.Pieces.Count(p => p.Shape == "L") == 1);
+    }
+
+    [Fact]
+    public void PlanSheet_can_return_four_rects_around_a_center_cluster()
+    {
+        // Used after +20 must leave four strips and a mid band all ≥ 400.
+        var panel = Rect("A", 370, 500);
+        var places = new[]
+        {
+            new NestPlacement
+            {
+                PanelId = "A", SheetIndex = 0,
+                OffsetX = 430, OffsetY = 800, RotationDeg = 0,
+            },
+        };
+        // used: (410,780)-(820,1320) on 1220×2440
+        // left 410, right 400, midW 410, bot 780, top 1120, midH 540
+        var plan = GuillotineCutPlanner.PlanSheet(
+            [panel], places, 0, 1220, 2440, clearanceMm: 20, minRemnantEdgeMm: 400);
+
+        Assert.NotNull(plan);
+        Assert.Equal(4, plan!.Pieces.Count);
+        Assert.All(plan.Pieces, p => Assert.Equal("RECT", p.Shape));
+        Assert.Equal(4, GuillotineCutPlanner.ToCutOps(plan, 0, 1220, 2440, 18, 10).Count);
+    }
+
+    [Fact]
     public void ToCutOp_is_open_through_remnant_with_edge_overshoot()
     {
         var plan = new GuillotineCutPlanner.Result
@@ -157,5 +256,34 @@ public class GuillotineCutPlannerTests
             1220, 1000);
         Assert.True(report.Ok, NcPreflight.Format(report));
         Assert.DoesNotContain(report.Issues, i => i.Code == "out_of_sheet");
+    }
+
+    [Fact]
+    public void L_cut_nc_stays_down_through_the_corner()
+    {
+        var plan = new GuillotineCutPlanner.Result
+        {
+            Kind = "L",
+            Polyline = [(500, 0), (500, 500), (0, 500)],
+            RemnantAreaMm2 = 1,
+            RemnantMinEdgeMm = 500,
+            Label = "L切",
+        };
+        var op = GuillotineCutPlanner.ToCutOp(plan, 0, 1220, 2440, 18, toolDiameterMm: 10);
+        Assert.NotNull(op);
+        Assert.Equal(3, op!.Path!.Count);
+        var nc = NcEmitter.OpsToNc(
+            [op],
+            CabinetNC.Domain.Machines.MachineCatalog.Get("osai_e4_1325"),
+            recipe: PostRecipe.TroyDefault());
+        var through = nc.IndexOf("Z-0.5500", StringComparison.Ordinal);
+        Assert.True(through >= 0, nc);
+        var afterPlunge = nc[(through + 1)..];
+        var retract = afterPlunge.IndexOf("G0 Z30", StringComparison.Ordinal);
+        Assert.True(retract >= 0, nc);
+        var cut = afterPlunge[..retract];
+        Assert.DoesNotContain("G0 Z", cut);
+        Assert.Contains("Y500.0000", cut);
+        Assert.Contains("X-5.0000", cut);
     }
 }
