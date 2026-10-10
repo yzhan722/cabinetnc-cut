@@ -35,15 +35,40 @@ dotnet run --project dotnet/tools/VerifyJob -- --demo
 3. `ProjectSession.ManufacturingDirty` 用于标识编辑后 Nest/CAM 过期；现有内部调用不等于具有 revision 检查的 Agent 并发会话。
 4. `VerifyJob` 是验证/回放工具，不等于生产应用的完整用户交互、工艺审核或机床发送许可。
 
-## 3. 本机 ComputeWorker 协议 v1
+## 3. 发布门（唯一真实定义，实码核对 @8f856779）
+
+桌面导出是唯一完整发布路，`MainWindow.xaml.cs` + `MainWindow.Verify.cs` 内三段门缺一不可：
+
+~~~text
+NestExportGate.CheckForExport（间距/碰撞/混组硬门，不可被操作员绕过）
+      ↓
+NcPreflight.Check
+   ├─ 硬错误（pocket_depth_missing / pocket_too_small_for_tool /
+   │   missing_tool_id / groove_too_deep / depth_spoilboard / no_registration）
+   │   → 直接禁止导出
+   └─ 软错误 → 操作员在 OverrideReasonWindow 填原因后可放行
+       （记 export.preflight.override 日志——"导出成功"不代表零告警）
+      ↓
+ExportVerifier（几何回放：NC 是否真能切出 CAD 意图）
+   ├─ 失败 → RepairPlanner 白名单收紧工艺，≤DefaultRepairRounds 轮重算
+   └─ 仍失败 → 禁止导出，无操作员跳过口
+~~~
+
+**三个关键事实，Agent 必须知道：**
+
+1. **ExportVerifier 只懂 OSAI 方言**。`GuardExportVerify` 开头 `if (IsSyntecPost()) return true;`（`MainWindow.Verify.cs:62`）——新代 NC 完全不经过几何验算，只剩 Preflight + NestGate 两道门。车间实际吃的就是新代包，这是当前最大的验证覆盖缺口，不是文档笔误。
+2. **机床身份决定方言**（`IsSyntecPost()` ⇔ `SelectedMachineId == SyntecPost.MachineId`）。同一包换机床，门的数量和结论都可能翻转；`MachineCatalog` 默认 `osai_e4_1325`，云 meta 默认 `syntec_e4_1330`。
+3. **`VerifyJob` 整管线回放刻意关门**：`RunPipeline` 传 `enforcePreflight:false, enforceVerify:false`（`Program.cs:249`），是测量不是拦截；真正默认开的是 `SheetBundleBuilder.Build`（`enforcePreflight:true, enforceVerify:true`）和桌面流程。
+
+## 4. 本机 ComputeWorker 协议 v1
 
 - 命名管道 `cabinetnc.compute.v1`；契约类 `CabinetNC.Compute.Contracts/WorkerPipes.cs`，Proto 真源 `dotnet/protos/worker.proto`。
 - RPC：`WorkerHealth.Ping`、`WorkerHealth.GetWorkerVersion`、`Nesting.StartNesting`、`Operations.GenerateOperations`、`PostProcessor.GenerateNc`。
 - `StartNestingRequest` 当前传 `parts: {panel_id,width_mm,height_mm,may_rotate,material,thickness_mm}[]` 与板材长宽、边距、间距、旋转开关；`StartNestingReply` 含 `placements`、`unplaced`、`warnings`。
 - **关键几何边界**：Worker 的 `StartNesting` 当前按宽高重建矩形板件；它不是可接受真实异形、多孔轮廓的完整制造 Snapshot 契约，不应在 Agent 中宣称 true-shape parity。
-- `GenerateOperations` 根据给定面板与排版生成操作；`GenerateNc` 返回 NC 字符串和机器信息。这两条 RPC 均**不能替代安全验证与人工发布审批**。
+- `GenerateOperations` 根据给定面板与排版生成操作；`GenerateNc` 返回 NC 字符串和机器信息（`PostProcessorServiceImpl` 只调 `NcEmitter.OpsToNc`：不跑 Preflight、不跑 Verify、不落盘）。这两条 RPC 均**不能替代安全验证与人工发布审批**——拿到 `ok:true` 只代表 post 没抛异常。
 
-## 4. 车间 CloudApi 已实现 HTTP 入口
+## 5. 车间 CloudApi 已实现 HTTP 入口
 
 | 路由 | 作用 |
 |---|---|
@@ -53,9 +78,11 @@ dotnet run --project dotnet/tools/VerifyJob -- --demo
 | `GET /v1/jobs/{id}/project` | 获取工程下载地址 |
 | `DELETE /v1/jobs/{id}` | 删除工程 |
 
-以 `X-OmniCam-Token` 做简单服务端授权；GCS 是对象存储，不等同独立租户 IAM、受限 Agent 授权或 Cloud Compute。**v1 不允许 Agent 通过这些路由自动执行删除、上传 NC 或车间操作。**
+以 `X-OmniCam-Token` 做简单服务端授权；GCS 是对象存储，不等同独立租户 IAM、受限 Agent 授权或 Cloud Compute。
 
-## 5. 制造契约与测试
+服务端边界（实码 `Program.cs`）：上传对象白名单只允许 `project.db` 与 `syntec/` 前缀（`1.xml`、`cnc/*.nc`、`label/*.cyc|.bmp`）；**服务不读文件内容**——错误 G-code 与正确 G-code 同样被接受。当前桌面端 `PrepareCloudUpload` 实际上传只有 `project.db`（`MainWindow.Cloud.cs:66`），syntec 包路径是 API 预留面、非已验证通路。**v1 不允许 Agent 通过这些路由自动执行删除、上传 NC 或车间操作。**
+
+## 6. 制造契约与测试
 
 - 输入：`.cnjob` = ZIP `manifest.json` + `snapshot.json`，Schema `cabinetnc.manufacturing-snapshot 1.1`；mm，板局部 XY，Snapshot A 为加工面，盲特征只允许单面。
 - v1.1 附加 `source.producer/producerVersion`、`materialId` 分组、`colorName/surfaceMode/series/grained`、`edgeBands`、`EITHER` 条件；旧 1.0 可导入。制造 Schema 与 Agent API 版本分离。
@@ -63,6 +90,6 @@ dotnet run --project dotnet/tools/VerifyJob -- --demo
 - CI：`.github/workflows/regression.yml`、`windows-desktop.yml`；当前 `8f856779` 的 Regression 和 Windows Desktop 均通过。
 - 推荐验证：`dotnet test dotnet/tests/CabinetNC.Domain.Tests -c Release`、`dotnet test dotnet/tests/CabinetNC.Verify.Tests -c Release`、`dotnet test dotnet/tests/CabinetNC.Package.Tests -c Release`，另执行 `VerifyJob <real.cnjob>`。
 
-## 6. 当前不存在的 Agent 接口
+## 7. 当前不存在的 Agent 接口
 
 没有正式 `omni.inspect/validate/nest/cam/verify` 的统一 JSON Tool Registry；没有完整事务会话/租户分权/人工审批的 Agent Facade；本机 Worker 不能当远程多租户 Cloud Worker。它们是 v2 开发目标，不能要求编程 AI“接入一个已存在的 Omni Agent Server”。
