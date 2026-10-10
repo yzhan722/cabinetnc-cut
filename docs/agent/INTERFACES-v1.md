@@ -1,6 +1,6 @@
 # OmniCam Agent 接口 v1 — 已实现基线
 
-> CURRENT / 对应 `yzhan722/cabinetnc-cut@sprint/14d-rc`，审计锚点 `8f856779`（2026-10-10）。**此处 v1 是 Agent 接口文档版本，不是制造快照版本**；跨系统 `cnjob` Schema 的权威文件仍是 `docs/manufacturing-snapshot-v1.schema.json`（当前 1.1）。
+> CURRENT / 对应 `yzhan722/cabinetnc-cut@devops`，审计锚点 `8f856779`（2026-10-10）。**此处 v1 是 Agent 接口文档版本，不是制造快照版本**；跨系统 `cnjob` Schema 的权威文件仍是 `docs/manufacturing-snapshot-v1.schema.json`（当前 1.1）。
 > 目标架构见 [INTERFACES-v2.md](INTERFACES-v2.md)，开发任务统一见 [Cab Lab Agent PRD](https://github.com/yzhan722/the-cab-lab/blob/devops/docs/agent/PRD-2026-10.md)。
 
 ## 1. 实际存在的调用面

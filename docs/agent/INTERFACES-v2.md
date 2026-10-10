@@ -1,6 +1,6 @@
 # OmniCam Agent 接口 v2 — 目标契约（未实现）
 
-> TARGET / 基于 `sprint/14d-rc@8f856779`。当前实际能力见 [v1](INTERFACES-v1.md)；实施验收见 [跨项目 Agent PRD](https://github.com/yzhan722/the-cab-lab/blob/devops/docs/agent/PRD-2026-10.md) 的 A04/A05。
+> TARGET / 基于 `devops@8f856779`。当前实际能力见 [v1](INTERFACES-v1.md)；实施验收见 [跨项目 Agent PRD](https://github.com/yzhan722/the-cab-lab/blob/devops/docs/agent/PRD-2026-10.md) 的 A04/A05。
 > **不修改 `cnjob 1.1` 的核心制造数据模型，不复制 Nest/CAM 算法，不把 Worker gRPC 直接开放给公网。**
 
 ## 1. 目标链路
