@@ -1,5 +1,7 @@
 # CabinetNC Manufacturing Snapshot v1
 
+> **版本区分（2026-10-10）**：本文记录**制造数据协议**（当前 Snapshot 1.1）；它不等于 Agent 接口版本。OmniCam Agent 接口实况请读 [Agent v1](agent/INTERFACES-v1.md)，下一阶段设计请读 [Agent v2](agent/INTERFACES-v2.md)。
+
 `cabinetnc.manufacturing-snapshot` is a vendor-neutral, immutable CAD-to-shop handoff.
 The shipping container uses the `.cnjob` extension and is a ZIP archive:
 

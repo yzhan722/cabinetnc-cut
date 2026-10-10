@@ -19,6 +19,12 @@ dotnet run --project src\CabinetNC.Desktop
 
 Pack a runnable folder + zip: `powershell -ExecutionPolicy Bypass -File dotnet/scripts/pack.ps1` (see `dotnet/README.md`).
 
+## Agent 接口文档（开发分支）
+
+- [接口 v1：当前已实现能力与边界](docs/agent/INTERFACES-v1.md)
+- [接口 v2：下一阶段 Agent Facade 目标](docs/agent/INTERFACES-v2.md)
+- [双项目 Agent 开发 PRD](https://github.com/yzhan722/the-cab-lab/blob/devops/docs/agent/PRD-2026-10.md)（统一任务和验收）
+
 ## Quality gates (what "green" means)
 
 ```powershell
